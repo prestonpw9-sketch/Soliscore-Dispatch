@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 1. CSS Variables for easy color management */
+:root {
+  --bg-color: #f8fafc; 
+  --text-color: #0f172a; 
+  --card-bg: rgba(20, 184, 166, 0.02);
+  --card-border: rgba(20, 184, 166, 0.1);
+  --card-hover-border: rgba(20, 184, 166, 0.3);
+  --card-shadow: rgba(20, 184, 166, 0.1);
+}
+
+/* 2. Automatic Dark Mode based on system settings */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-color: #0f172a; 
+    --text-color: #f8fafc; 
+    --card-bg: rgba(20, 184, 166, 0.1);
+    --card-border: rgba(20, 184, 166, 0.2);
+    --card-hover-border: rgba(20, 184, 166, 0.5);
+    --card-shadow: rgba(20, 184, 166, 0.2);
+  }
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}
+
+.card {
+  padding: 2em;
+  border-radius: 0.5rem;
+  border: 1px solid var(--card-border);
+  background-color: var(--card-bg);
+  transition: all 0.3s ease;
+}
+
+/* 3. The subtle 2px lift on hover */
+.card:hover {
+  border-color: var(--card-hover-border);
+  box-shadow: 0 4px 12px var(--card-shadow);
+  transform: translateY(-2px);
+}

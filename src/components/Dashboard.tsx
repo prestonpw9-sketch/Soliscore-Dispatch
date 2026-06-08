@@ -1,0 +1,135 @@
+import React from 'react';
+import { ArrowRight, Clock, TrendingUp, Calculator, CalendarDays, CheckCircle2 } from 'lucide-react';
+import type { Job, Technician } from '@/lib/data';
+import StatsCards from './StatsCards';
+import JobCard from './JobCard';
+import { BlueprintCard } from './BlueprintCard';
+import { SitePhotosCard } from './SitePhotosCard';
+// 1. THIS IS THE INTERFACE (The blueprint)
+interface Props {
+  jobs: Job[];
+  technicians: Technician[];
+  todayStr: string;
+  weekDates: string[];
+  onViewCalendar: () => void;
+  onViewTasks: () => void;
+  onOpenEstimator?: () => void; 
+  onPhaseChange?: (jobId: string, newPhase: string) => void;
+}
+
+// 2. THIS IS THE COMPONENT
+const Dashboard: React.FC<Props> = ({ 
+  jobs, 
+  technicians, 
+  todayStr, 
+  weekDates, 
+  onViewCalendar, 
+  onViewTasks,
+  onOpenEstimator,
+  onPhaseChange
+}) => {
+  // Core Operational Data Filtering
+  const todayJobs = jobs.filter(j => j.date === todayStr);
+  const weekJobs = jobs.filter(j => weekDates.includes(j.date));
+  const completedWeek = weekJobs.filter(j => j.status === 'completed').length;
+  const completionRate = weekJobs.length ? Math.round((completedWeek / weekJobs.length) * 100) : 0;
+  
+  // Repurposed Layout Matrix Assets
+  const upcomingJobs = todayJobs.filter(j => j.status !== 'completed').slice(0, 5);
+
+  return (
+    <div className="w-full space-y-6">
+      
+      {/* DASHBOARD HEADER WITH QUICK BID BUTTON */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-black text-slate-900 dark:text-white">Overview</h1>
+          <p className="text-slate-500 text-sm">Solidcore Plumbing Dispatch Control</p>
+        </div>
+        <button 
+          type="button"
+          onClick={onOpenEstimator}
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold shadow-sm transition-colors shrink-0"
+        >
+          <Calculator className="w-5 h-5" />
+          New Estimate
+        </button>
+      </div>
+      
+      {/* STATS CONTROL HEADER MAPPING BAR */}
+      <StatsCards 
+        jobsToday={todayJobs.length} 
+        activeBlueprints={4} 
+        completedThisWeek={completedWeek} 
+        sitePhotos={12} 
+        completionRate={completionRate} 
+      />
+      
+      {/* BALANCED STRUCTURAL TWO-COLUMN LAYOUT */}
+      <div className="grid lg:grid-cols-3 gap-6">
+        
+        {/* COLUMN 1 & 2: UPCOMING DAILY SCHEDULE */}
+        <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-indigo-600" /> Today's Remaining Schedule
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">Incomplete field deployment routing</p>
+            </div>
+            <button 
+              type="button"
+              onClick={onViewCalendar} 
+              className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1"
+            >
+              Open Calendar <ArrowRight className="w-3 h-3" />
+            </button>
+          </div>
+
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {upcomingJobs.length === 0 ? (
+              <div className="p-8 text-center text-sm text-slate-400 font-medium">
+                🎉 No remaining pending jobs on the schedule for today!
+              </div>
+            ) : (
+              upcomingJobs.map(job => {
+                const tech = technicians.find(t => t.id === job.technicianId);
+                // Inject the actual tech name into the job object for the card
+                const jobWithTech = { ...job, tech: tech?.name || "Unassigned" };
+                
+                return (
+                  <div key={job.id} className="p-4 border-b border-slate-100 dark:border-slate-800/50 last:border-0 flex justify-center hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                    <JobCard 
+                      job={jobWithTech} 
+                      onPhaseChange={onPhaseChange} 
+                    />
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* COLUMN 3: RIGHT SIDEBAR STACK */}
+           <div className="flex flex-col gap-6">
+             
+             {/* TOP BOX: TECHNICIAN WORKLOAD TRACKER */}
+             <div className="bg-white dark:bg-slate-900 border...">
+                {/* ... existing tracker code ... */}
+             </div>
+   
+             {/* MIDDLE BOX: BLUEPRINT COMMAND CENTER */}
+             <BlueprintCard />
+             
+             {/* BOTTOM BOX: SITE PHOTOS GALLERY */}
+             <SitePhotosCard />
+   
+           </div>
+        {/* END OF COLUMN 3 */}
+
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
