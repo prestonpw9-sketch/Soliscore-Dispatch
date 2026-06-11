@@ -10,6 +10,7 @@ interface Props {
   weekDates: string[];
   onJobClick: (job: Job) => void;
   onJobDrop: (jobId: string, newDate: string, newStartHour: number) => void;
+  onEmptySlotClick?: (date: string, hour: number) => void;
 }
 
 const typeColors: Record<string, string> = {
@@ -19,7 +20,7 @@ const typeColors: Record<string, string> = {
   inspection: 'bg-purple-500 border-purple-600',
 };
 
-const CalendarView: React.FC<Props> = ({ jobs, technicians, weekDates, onJobClick, onJobDrop }) => {
+const CalendarView: React.FC<Props> = ({ jobs, technicians, weekDates, onJobClick, onJobDrop, onEmptySlotClick }) => {
   const [techFilter, setTechFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [draggedJob, setDraggedJob] = useState<string | null>(null);
@@ -87,7 +88,17 @@ const CalendarView: React.FC<Props> = ({ jobs, technicians, weekDates, onJobClic
                 {weekDates.map(date => {
                   const cellJobs = filteredJobs.filter(j => parseInt(j.startTime.split(':')[0]) === hour && j.date === date);
                   return (
-                    <div key={date + hour} onDragOver={(e) => e.preventDefault()} onDrop={() => { if (draggedJob) { onJobDrop(draggedJob, date, hour); setDraggedJob(null); } }} className={`border-l border-slate-200 dark:border-slate-800 p-1 relative ${isToday(date) ? 'bg-teal-50/30 dark:bg-teal-900/10' : ''}`}>
+                    <div 
+                      key={date + hour} 
+                      onDragOver={(e) => e.preventDefault()} 
+                      onDrop={() => { if (draggedJob) { onJobDrop(draggedJob, date, hour); setDraggedJob(null); } }} 
+                      onClick={(e) => {
+                        if (e.target === e.currentTarget && onEmptySlotClick) {
+                          onEmptySlotClick(date, hour);
+                        }
+                      }}
+                      className={`border-l border-slate-200 dark:border-slate-800 p-1 relative cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${isToday(date) ? 'bg-teal-50/30 dark:bg-teal-900/10' : ''}`}
+                    >
                       {cellJobs.map(job => {
                         const tech = technicians.find(t => t.id === job.technicianId);
                         const startH = parseInt(job.startTime.split(':')[0]);
