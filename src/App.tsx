@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { SpeedInsights } from "@vercel/speed-insights/react"
 import AppLayout from "./components/AppLayout";
 
 // Inline ThemeProvider Fallback
@@ -12,6 +13,7 @@ const App = () => (
         <Route path="*" element={<AppLayout />} />
       </Routes>
     </BrowserRouter>
+    <SpeedInsights />
   </ThemeProvider>
 );
 
