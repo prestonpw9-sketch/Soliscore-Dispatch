@@ -19,7 +19,7 @@ const StatsCards: React.FC<Props> = ({
   // Rich, solid colors that pop beautifully in both Light and Dark mode
   const cards = [
     { 
-      label: "Today's Jobs", 
+      label: "Active Jobs", 
       value: jobsToday, 
       icon: Briefcase, 
       colorBg: 'bg-indigo-600 dark:bg-indigo-500',
