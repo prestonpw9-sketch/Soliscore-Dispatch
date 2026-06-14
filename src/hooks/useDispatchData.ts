@@ -1,88 +1,110 @@
 import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase'; 
-import { mockJobs, mockCustomers, mockTechnicians } from '@/lib/data';
+// Notice we removed the mock data imports completely!
 import type { Job, Customer, Technician } from '@/lib/data';
 
 export const useDispatchData = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Core Data State
+  // Core Data State - Starting completely clean, no dummy data
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>(mockCustomers);
-  const [technicians, setTechnicians] = useState<Technician[]>(mockTechnicians);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [technicians, setTechnicians] = useState<Technician[]>([]);
 
-  // 1. Core function to fetch live jobs from the database
+  // 1. Fetch Real Jobs from Database
   const fetchJobs = useCallback(async () => {
     setLoading(true);
-    setError(null);
-
     try {
       const { data: dbRows, error: supabaseError } = await supabase
         .from('jobs')
         .select('*');
 
-      if (supabaseError) {
-        console.error("Error fetching jobs from Supabase:", supabaseError);
-        setError(supabaseError.message);
-        // Fallback to mock data if the database fetch fails entirely
-        setJobs(mockJobs);
-      } else if (dbRows) {
-        // Map the database rows to fit your calendar layout perfectly
-const localizedJobs = dbRows.map((j: any) => ({
-  ...j,
-  id: j.id?.toString() || `job-${Math.random()}`,
-  customerName: j.title || j.customerName || "New AI Job",
-  address: j.location || j.address || "Tucson, AZ",
-  phase: j.phase || "Rough-In",
-  status: j.status || "pending",
-  startTime: j.startTime || "08:00", 
-  endTime: j.endTime || "10:00",
-  date: j.date || "2026-06-04",       // Ensures it lands on today's date grid if blank
-  tech: j.tech || "Unassigned",       // 👈 CRITICAL: Gives the calendar a column lane to render in
-  estimatedDuration: j.estimatedDuration || 120 // Tells the calendar how tall to make the box
-}));
-        
-        // Merge live database jobs with your local mock jobs so the screen looks full!
-        setJobs([...mockJobs, ...localizedJobs]);
+      if (supabaseError) throw supabaseError;
+
+      if (dbRows) {
+        const liveJobs = dbRows.map((j: any) => ({
+          ...j,
+          id: j.id?.toString(),
+          customerName: j.title || j.customerName || "New Field Job",
+          address: j.location || j.address || "Tucson, AZ",
+          phase: j.phase || "Rough-In",
+          status: j.status || "pending",
+          startTime: j.startTime || "08:00", 
+          endTime: j.endTime || "10:00",
+          date: j.date || new Date().toISOString().split('T')[0], 
+          technicianId: j.technicianId || j.tech || "unassigned",
+          type: j.type || "maintenance", // Drives calendar colors
+          estimatedDuration: j.estimatedDuration || 120
+        }));
+        // Only load real database jobs
+        setJobs(liveJobs);
       }
     } catch (err: any) {
-      console.error("Unexpected error in fetchJobs:", err);
-      setError(err.message || "An unexpected error occurred");
-      setJobs(mockJobs);
+      console.error("Error fetching jobs:", err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // 2. Fetch live data when the app loads
+  // 2. Fetch Real Team from Database
+  const fetchTeam = useCallback(async () => {
+    try {
+      // Looks for a 'technicians' table in Supabase. 
+      const { data, error } = await supabase.from('technicians').select('*');
+      if (data && !error) {
+        setTechnicians(data);
+      }
+    } catch (err) {
+      console.error("Error fetching team:", err);
+    }
+  }, []);
+
+  // Run on startup
   useEffect(() => {
     fetchJobs();
-  }, [fetchJobs]);
+    fetchTeam();
+  }, [fetchJobs, fetchTeam]);
 
-  // 3. Clean refresh wrapper
   const refresh = useCallback(async () => {
     await fetchJobs();
-  }, [fetchJobs]);
+    await fetchTeam();
+  }, [fetchJobs, fetchTeam]);
 
-  const createJob = useCallback(async (job: Omit<Job, 'id'>) => {
-    const newJob = { ...job, id: `job-${Date.now()}` } as Job;
-    setJobs(prev => [...prev, newJob]);
-  }, []);
+  // 3. CREATE JOB - Now securely fires directly to Supabase!
+  const createJob = useCallback(async (jobData: any) => {
+    const dbPayload = {
+      title: jobData.customerName,
+      location: jobData.address || "Tucson, AZ",
+      phase: jobData.phase || "Rough-In",
+      status: "pending",
+      date: jobData.date,
+      startTime: jobData.startTime,
+      endTime: jobData.endTime,
+      technicianId: jobData.technicianId || "unassigned",
+      type: jobData.type || "maintenance"
+    };
 
-  const toggleJobStatus = useCallback(async (id: string) => {
-    setJobs(prev => prev.map(j => {
-      if (j.id === id) {
-        return { ...j, status: j.status === 'completed' ? 'pending' : 'completed' };
-      }
-      return j;
-    }));
-  }, []);
+    const { error } = await supabase
+      .from('jobs')
+      .insert([dbPayload]);
 
+    if (error) {
+      console.error("Error saving job to DB:", error);
+      return;
+    }
+    
+    // Refresh the board so the new job instantly pops up
+    refresh();
+  }, [refresh]);
+
+  // 4. RESCHEDULE JOB (Drag & Drop) - Now saves the new time to Supabase!
   const rescheduleJob = useCallback(async (id: string, newDate: string, newStartHour: number) => {
+    // 1. Optimistic UI update: Instantly moves it on the screen so it feels fast
     setJobs(prev => prev.map(j => {
       if (j.id === id) {
-        const currentDuration = j.estimatedDuration || 60;
+        const currentDuration = j.estimatedDuration || 120;
         const endHour = newStartHour + Math.floor(currentDuration / 60);
         const endMin = currentDuration % 60;
         return {
@@ -94,9 +116,39 @@ const localizedJobs = dbRows.map((j: any) => ({
       }
       return j;
     }));
-  }, []);
 
-  // Optimistic UI Phase Update to Supabase
+    // 2. Background Database Update: Locks the new time in
+    const currentJob = jobs.find(j => j.id === id);
+    const duration = currentJob?.estimatedDuration || 120;
+    const endHour = newStartHour + Math.floor(duration / 60);
+    const endMin = duration % 60;
+    
+    const { error } = await supabase
+      .from('jobs')
+      .update({
+        date: newDate,
+        startTime: `${String(newStartHour).padStart(2, '0')}:00`,
+        endTime: `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error("Failed to save new schedule:", error);
+      refresh(); // Snaps the job back to original spot if the database fails
+    }
+  }, [jobs, refresh]);
+
+  // 5. TOGGLE STATUS - Now saves completed status to Supabase!
+  const toggleJobStatus = useCallback(async (id: string) => {
+    const job = jobs.find(j => j.id === id);
+    if (!job) return;
+    
+    const newStatus = job.status === 'completed' ? 'pending' : 'completed';
+
+    setJobs(prev => prev.map(j => j.id === id ? { ...j, status: newStatus } : j));
+    await supabase.from('jobs').update({ status: newStatus }).eq('id', id);
+  }, [jobs]);
+
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
     setJobs(currentJobs => 
       currentJobs.map(job => 

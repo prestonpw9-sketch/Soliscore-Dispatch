@@ -1,11 +1,11 @@
 import React from 'react';
-import { ArrowRight, Clock, TrendingUp, Calculator, CalendarDays, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, Calculator, CalendarDays } from 'lucide-react';
 import type { Job, Technician } from '@/lib/data';
 import StatsCards from './StatsCards';
 import JobCard from './JobCard';
 import { BlueprintCard } from './BlueprintCard';
 import { SitePhotosCard } from './SitePhotosCard';
-// 1. THIS IS THE INTERFACE (The blueprint)
+
 interface Props {
   jobs: Job[];
   technicians: Technician[];
@@ -17,7 +17,6 @@ interface Props {
   onPhaseChange?: (jobId: string, newPhase: string) => void;
 }
 
-// 2. THIS IS THE COMPONENT
 const Dashboard: React.FC<Props> = ({ 
   jobs, 
   technicians, 
@@ -30,12 +29,12 @@ const Dashboard: React.FC<Props> = ({
 }) => {
   // Core Operational Data Filtering
   const todayJobs = jobs.filter(j => j.date === todayStr);
-  const weekJobs = jobs.filter(j => weekDates.includes(j.date));
-  const completedWeek = weekJobs.filter(j => j.status === 'completed').length;
-  const completionRate = weekJobs.length ? Math.round((completedWeek / weekJobs.length) * 100) : 0;
-  
-  // Repurposed Layout Matrix Assets
   const upcomingJobs = todayJobs.filter(j => j.status !== 'completed').slice(0, 5);
+
+  // Team Metrics (We will count the technicians array for now. 
+  // Later you can filter this by role if you add an 'Apprentice' tag in the database!)
+  const activePlumbers = technicians.length;
+  const activeApprentices = 2; // Placeholder until roles are added to the DB
 
   return (
     <div className="w-full space-y-6">
@@ -44,12 +43,12 @@ const Dashboard: React.FC<Props> = ({
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white">Overview</h1>
-          <p className="text-slate-500 text-sm">Solidcore Plumbing Dispatch Control</p>
+          <p className="text-slate-500 dark:text-slate-400 text-sm">Dispatch Control</p>
         </div>
         <button 
           type="button"
           onClick={onOpenEstimator}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold shadow-sm transition-colors shrink-0"
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-md transition-colors shrink-0"
         >
           <Calculator className="w-5 h-5" />
           New Estimate
@@ -60,22 +59,22 @@ const Dashboard: React.FC<Props> = ({
       <StatsCards 
         jobsToday={todayJobs.length} 
         activeBlueprints={4} 
-        completedThisWeek={completedWeek} 
-        sitePhotos={12} 
-        completionRate={completionRate} 
+        sitePhotos={12}
+        activePlumbers={technicians.length} 
+        activeApprentices={2} 
       />
       
       {/* BALANCED STRUCTURAL TWO-COLUMN LAYOUT */}
       <div className="grid lg:grid-cols-3 gap-6">
         
         {/* COLUMN 1 & 2: UPCOMING DAILY SCHEDULE */}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
           <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <div>
               <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <CalendarDays className="w-4 h-4 text-indigo-600" /> Today's Remaining Schedule
+                <CalendarDays className="w-4 h-4 text-indigo-500" /> Today's Remaining Schedule
               </h3>
-              <p className="text-xs text-slate-500 mt-0.5">Incomplete field deployment routing</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Incomplete field deployment routing</p>
             </div>
             <button 
               type="button"
@@ -94,7 +93,6 @@ const Dashboard: React.FC<Props> = ({
             ) : (
               upcomingJobs.map(job => {
                 const tech = technicians.find(t => t.id === job.technicianId);
-                // Inject the actual tech name into the job object for the card
                 const jobWithTech = { ...job, tech: tech?.name || "Unassigned" };
                 
                 return (
@@ -112,21 +110,9 @@ const Dashboard: React.FC<Props> = ({
 
         {/* COLUMN 3: RIGHT SIDEBAR STACK */}
            <div className="flex flex-col gap-6">
-             
-             {/* TOP BOX: TECHNICIAN WORKLOAD TRACKER */}
-             <div className="bg-white dark:bg-slate-900 border...">
-                {/* ... existing tracker code ... */}
-             </div>
-   
-             {/* MIDDLE BOX: BLUEPRINT COMMAND CENTER */}
              <BlueprintCard />
-             
-             {/* BOTTOM BOX: SITE PHOTOS GALLERY */}
              <SitePhotosCard />
-   
            </div>
-        {/* END OF COLUMN 3 */}
-
       </div>
     </div>
   );
