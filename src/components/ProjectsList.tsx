@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "../lib/supabaseClient";
+import { supabase } from '../lib/supabase';
 import {
   Building2,
   FolderKanban,
