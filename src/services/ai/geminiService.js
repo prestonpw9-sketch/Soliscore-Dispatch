@@ -14,7 +14,7 @@ export class GeminiService {
     }
     async sendMessage(messages, context, options = {}) {
         const model = this.client.getGenerativeModel({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-3.5-flash',
             safetySettings: [
                 { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
                 { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
