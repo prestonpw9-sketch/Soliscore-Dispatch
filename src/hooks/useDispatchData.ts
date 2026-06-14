@@ -1,13 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase'; 
-// Notice we removed the mock data imports completely!
 import type { Job, Customer, Technician } from '@/lib/data';
 
 export const useDispatchData = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Core Data State - Starting completely clean, no dummy data
+  // Core Data State - Starting completely clean, NO DUMMY DATA
   const [jobs, setJobs] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
@@ -34,10 +33,10 @@ export const useDispatchData = () => {
           endTime: j.endTime || "10:00",
           date: j.date || new Date().toISOString().split('T')[0], 
           technicianId: j.technicianId || j.tech || "unassigned",
-          type: j.type || "maintenance", // Drives calendar colors
+          type: j.type || "maintenance", 
           estimatedDuration: j.estimatedDuration || 120
         }));
-        // Only load real database jobs
+        // ONLY load real database jobs
         setJobs(liveJobs);
       }
     } catch (err: any) {
@@ -51,7 +50,6 @@ export const useDispatchData = () => {
   // 2. Fetch Real Team from Database
   const fetchTeam = useCallback(async () => {
     try {
-      // Looks for a 'technicians' table in Supabase. 
       const { data, error } = await supabase.from('technicians').select('*');
       if (data && !error) {
         setTechnicians(data);
@@ -72,7 +70,7 @@ export const useDispatchData = () => {
     await fetchTeam();
   }, [fetchJobs, fetchTeam]);
 
-  // 3. CREATE JOB - Now securely fires directly to Supabase!
+  // 3. CREATE JOB - Instantly saves to Supabase
   const createJob = useCallback(async (jobData: any) => {
     const dbPayload = {
       title: jobData.customerName,
@@ -86,22 +84,14 @@ export const useDispatchData = () => {
       type: jobData.type || "maintenance"
     };
 
-    const { error } = await supabase
-      .from('jobs')
-      .insert([dbPayload]);
-
-    if (error) {
-      console.error("Error saving job to DB:", error);
-      return;
-    }
-    
-    // Refresh the board so the new job instantly pops up
+    const { error } = await supabase.from('jobs').insert([dbPayload]);
+    if (error) console.error("Error saving job to DB:", error);
     refresh();
   }, [refresh]);
 
-  // 4. RESCHEDULE JOB (Drag & Drop) - Now saves the new time to Supabase!
+  // 4. RESCHEDULE JOB (Drag & Drop) - Locks new time in Supabase
   const rescheduleJob = useCallback(async (id: string, newDate: string, newStartHour: number) => {
-    // 1. Optimistic UI update: Instantly moves it on the screen so it feels fast
+    // Optimistic fast UI update
     setJobs(prev => prev.map(j => {
       if (j.id === id) {
         const currentDuration = j.estimatedDuration || 120;
@@ -117,7 +107,7 @@ export const useDispatchData = () => {
       return j;
     }));
 
-    // 2. Background Database Update: Locks the new time in
+    // Background Database Lock-in
     const currentJob = jobs.find(j => j.id === id);
     const duration = currentJob?.estimatedDuration || 120;
     const endHour = newStartHour + Math.floor(duration / 60);
@@ -134,49 +124,32 @@ export const useDispatchData = () => {
 
     if (error) {
       console.error("Failed to save new schedule:", error);
-      refresh(); // Snaps the job back to original spot if the database fails
+      refresh(); 
     }
   }, [jobs, refresh]);
 
-  // 5. TOGGLE STATUS - Now saves completed status to Supabase!
+  // 5. TOGGLE STATUS - Saves to Supabase
   const toggleJobStatus = useCallback(async (id: string) => {
     const job = jobs.find(j => j.id === id);
     if (!job) return;
-    
     const newStatus = job.status === 'completed' ? 'pending' : 'completed';
-
     setJobs(prev => prev.map(j => j.id === id ? { ...j, status: newStatus } : j));
     await supabase.from('jobs').update({ status: newStatus }).eq('id', id);
   }, [jobs]);
 
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
     setJobs(currentJobs => 
-      currentJobs.map(job => 
-        job.id === jobId ? { ...job, phase: newPhase } : job
-      )
+      currentJobs.map(job => job.id === jobId ? { ...job, phase: newPhase } : job)
     );
-
-    const { error: supabaseError } = await supabase
-      .from('jobs')
-      .update({ phase: newPhase })
-      .eq('id', jobId);
-
-    if (supabaseError) {
-      console.error("Failed to update job phase:", supabaseError);
+    const { error } = await supabase.from('jobs').update({ phase: newPhase }).eq('id', jobId);
+    if (error) {
+      console.error("Failed to update job phase:", error);
       refresh(); 
     }
   }, [refresh]);
 
   return {
-    loading,
-    error,
-    jobs,
-    customers,
-    technicians,
-    refresh,
-    createJob,
-    toggleJobStatus,
-    rescheduleJob,
-    updateJobPhase 
+    loading, error, jobs, customers, technicians,
+    refresh, createJob, toggleJobStatus, rescheduleJob, updateJobPhase 
   };
 };
