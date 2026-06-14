@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabase';
 import { X, Send, Bot, Smartphone, MessageSquare } from 'lucide-react';
 
-// Ensure your environment variables are set in your .env file!
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+
 
 export default function SMSPanel({ onClose }: { onClose: () => void }) {
   const [messages, setMessages] = useState<any[]>([]);
@@ -48,16 +45,27 @@ export default function SMSPanel({ onClose }: { onClose: () => void }) {
   const uniquePhones = Array.from(new Set(messages.map((m) => m.phone_number)));
   const activeMessages = messages.filter((m) => m.phone_number === activePhone);
 
-  const handleSendManualMessage = async () => {
+const handleSendManualMessage = async () => {
     if (!manualText.trim() || !activePhone) return;
 
-    const { error } = await supabase.from('dispatch_messages').insert([
+    // 1. Save it to the database so it shows up in the chat window
+    const { error: insertError } = await supabase.from('dispatch_messages').insert([
       { phone_number: activePhone, message: manualText, direction: 'outbound' }
     ]);
 
-    if (!error) {
+    if (!insertError) {
       setManualText('');
-      // Note: We still need to tell Twilio to actually text the customer's phone!
+      
+      // 2. FIRE THE EDGE FUNCTION TO BING TWILIO!
+      const { data, error: functionError } = await supabase.functions.invoke('send-outbound-sms', {
+        body: { phone: activePhone, message: manualText }
+      });
+
+      if (functionError) {
+        console.error("Failed to send text via Twilio:", functionError);
+      } else {
+        console.log("Text successfully sent to Twilio!", data);
+      }
     }
   };
 

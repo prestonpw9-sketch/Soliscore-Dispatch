@@ -1,11 +1,7 @@
 import { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabase';
 declare const process: any;
-// Initialize Supabase
-// Safely check for variables, but provide a dummy fallback so the app NEVER crashes
-const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL || 'https://placeholder-project.supabase.co';
-const supabaseKey = import.meta.env?.VITE_SUPABASE_ANON_KEY || 'placeholder-key';
-const supabase = createClient(supabaseUrl, supabaseKey);
+
 // --- TYPESCRIPT DEFINITIONS ---
 type BidItem = {
   id: number;
