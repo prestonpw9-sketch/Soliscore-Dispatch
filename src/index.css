@@ -2,27 +2,53 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 1. CSS Variables for easy color management */
-:root {
-  --bg-color: #f8fafc; 
-  --text-color: #0f172a; 
-  --card-bg: rgba(20, 184, 166, 0.02);
-  --card-border: rgba(20, 184, 166, 0.1);
+/*
+  Dark mode strategy: class-based via data-theme attribute on <html>.
+  AppLayout's toggle sets data-theme="dark" / data-theme="light".
+  The [data-theme="dark"] selector below mirrors Tailwind's `dark:` variant.
+
+  FIX: @media (prefers-color-scheme: dark) on :root conflicts with Tailwind's
+  class-based dark mode. When Tailwind uses `darkMode: 'class'` (or selector),
+  the `dark:` utilities only activate when `.dark` / [data-theme="dark"] is
+  present on <html>. A media-query override on :root ignores the JS toggle
+  and permanently locks the theme to system preference, making the manual
+  toggle in AppLayout non-functional.
+*/
+
+/* ── CSS custom properties ─────────────────────────────────────────────── */
+
+:root,
+[data-theme="light"] {
+  --bg-color:          #f8fafc;
+  --text-color:        #0f172a;
+  --card-bg:           rgba(20, 184, 166, 0.02);
+  --card-border:       rgba(20, 184, 166, 0.1);
   --card-hover-border: rgba(20, 184, 166, 0.3);
-  --card-shadow: rgba(20, 184, 166, 0.1);
+  --card-shadow:       rgba(20, 184, 166, 0.1);
 }
 
-/* 2. Automatic Dark Mode based on system settings */
+[data-theme="dark"] {
+  --bg-color:          #0f172a;
+  --text-color:        #f8fafc;
+  --card-bg:           rgba(20, 184, 166, 0.1);
+  --card-border:       rgba(20, 184, 166, 0.2);
+  --card-hover-border: rgba(20, 184, 166, 0.5);
+  --card-shadow:       rgba(20, 184, 166, 0.2);
+}
+
+/* System preference fallback for users who haven't toggled manually */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg-color: #0f172a; 
-    --text-color: #f8fafc; 
-    --card-bg: rgba(20, 184, 166, 0.1);
-    --card-border: rgba(20, 184, 166, 0.2);
+  :root:not([data-theme]) {
+    --bg-color:          #0f172a;
+    --text-color:        #f8fafc;
+    --card-bg:           rgba(20, 184, 166, 0.1);
+    --card-border:       rgba(20, 184, 166, 0.2);
     --card-hover-border: rgba(20, 184, 166, 0.5);
-    --card-shadow: rgba(20, 184, 166, 0.2);
+    --card-shadow:       rgba(20, 184, 166, 0.2);
   }
 }
+
+/* ── Root ──────────────────────────────────────────────────────────────── */
 
 #root {
   width: 100%;
@@ -34,17 +60,53 @@
   color: var(--text-color);
 }
 
+/* ── Card ──────────────────────────────────────────────────────────────── */
+
 .card {
   padding: 2em;
   border-radius: 0.5rem;
   border: 1px solid var(--card-border);
   background-color: var(--card-bg);
-  transition: all 0.3s ease;
+
+  /*
+    FIX: `transition: all` forces the browser to check every animatable CSS
+    property on every frame, including layout-triggering properties like width,
+    height, and margin. Enumerate only the properties that actually change.
+  */
+  transition:
+    border-color 200ms ease,
+    box-shadow   200ms ease,
+    transform    200ms ease;
+
+  /*
+    FIX: `will-change: transform` moves the card to its own compositor layer
+    so the hover lift animation doesn't trigger a repaint of surrounding
+    content. Remove if cards are numerous (one layer per card = memory cost).
+  */
+  will-change: transform;
 }
 
-/* 3. The subtle 2px lift on hover */
 .card:hover {
   border-color: var(--card-hover-border);
   box-shadow: 0 4px 12px var(--card-shadow);
+
+  /*
+    FIX: translateY(-2px) physically shifts the element and causes surrounding
+    siblings to repaint. The lift effect is preserved but uses the compositor
+    layer so it doesn't affect layout flow. If layout shift is observed, remove
+    this and use box-shadow growth alone as the hover signal.
+  */
   transform: translateY(-2px);
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+    will-change: auto;
+  }
+
+  .card:hover {
+    transform: none;
+  }
 }
