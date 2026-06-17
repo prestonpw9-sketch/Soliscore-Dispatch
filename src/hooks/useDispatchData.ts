@@ -1,169 +1,212 @@
-import { useState, useCallback, useEffect } from 'react';
-import { supabase } from '@/lib/supabase'; 
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
 import type { Job, Customer, Technician } from '@/lib/data';
 
-export const useDispatchData = () => {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-  // Core Data State - Starting completely clean, NO DUMMY DATA
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+function getErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
+}
+
+function formatTime(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+// ── Hook ───────────────────────────────────────────────────────────────────
+
+export const useDispatchData = () => {
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
+  const [jobs, setJobs]               = useState<Job[]>([]);
+  const [customers, setCustomers]     = useState<Customer[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
 
-  // 1. Fetch Real Jobs from Database
+  // FIX: keep a stable ref to jobs so rescheduleJob's DB write
+  // always reads the latest job without needing `jobs` in its dep array.
+  const jobsRef = useRef<Job[]>(jobs);
+  jobsRef.current = jobs;
+
+  // ── Fetchers ─────────────────────────────────────────────────────────────
+
   const fetchJobs = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const { data: dbRows, error: supabaseError } = await supabase
-        .from('jobs')
-        .select('*');
-
-      if (supabaseError) throw supabaseError;
-
-      if (dbRows) {
-        const liveJobs = dbRows.map((j: any) => ({
-          ...j,
-          id: j.id?.toString(),
-          customerName: j.title || j.customerName || "New Field Job",
-          address: j.location || j.address || "Tucson, AZ",
-          phase: j.phase || "Rough-In",
-          status: j.status || "pending",
-          startTime: j.startTime || "08:00", 
-          endTime: j.endTime || "10:00",
-          date: j.date || new Date().toISOString().split('T')[0], 
-          technicianId: j.technicianId || j.tech || "unassigned",
-          type: j.type || "maintenance", 
-          estimatedDuration: j.estimatedDuration || 120
-        }));
-        // ONLY load real database jobs
-        setJobs(liveJobs);
-      }
-    } catch (err: any) {
-      console.error("Error fetching jobs:", err);
-      setError(err.message);
+      const { data, error: sbError } = await supabase.from('jobs').select('*');
+      if (sbError) throw sbError;
+      const liveJobs: Job[] = (data ?? []).map(j => ({
+        ...j,
+        id:                j.id?.toString() ?? '',
+        customerName:      j.title ?? j.customerName ?? 'New Field Job',
+        address:           j.location ?? j.address ?? 'Tucson, AZ',
+        phase:             j.phase ?? 'Rough-In',
+        status:            j.status ?? 'pending',
+        startTime:         j.startTime ?? '08:00',
+        endTime:           j.endTime ?? '10:00',
+        date:              j.date ?? new Date().toISOString().split('T')[0],
+        technicianId:      j.technicianId ?? j.tech ?? 'unassigned',
+        type:              j.type ?? 'maintenance',
+        estimatedDuration: j.estimatedDuration ?? 120,
+      }));
+      setJobs(liveJobs);
+    } catch (err) {
+      // FIX: no `catch (err: any)` — narrow with helper
+      const msg = getErrorMessage(err, 'Failed to load jobs.');
+      console.error('Error fetching jobs:', err);
+      setError(msg);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // 2. Fetch Real Team from Database
   const fetchTeam = useCallback(async () => {
     try {
-      const { data, error } = await supabase.from('technicians').select('*');
-      if (data && !error) {
-        setTechnicians(data);
-      }
+      const { data, error: sbError } = await supabase.from('technicians').select('*');
+      if (sbError) throw sbError;
+      setTechnicians(data ?? []);
     } catch (err) {
-      console.error("Error fetching team:", err);
+      console.error('Error fetching team:', err);
     }
   }, []);
 
-  // Run on startup
+  // FIX: customers were fetched nowhere — the state was always [].
+  const fetchCustomers = useCallback(async () => {
+    try {
+      const { data, error: sbError } = await supabase.from('customers').select('*');
+      if (sbError) throw sbError;
+      setCustomers(data ?? []);
+    } catch (err) {
+      console.error('Error fetching customers:', err);
+    }
+  }, []);
+
   useEffect(() => {
-    fetchJobs();
-    fetchTeam();
-  }, [fetchJobs, fetchTeam]);
+    void Promise.all([fetchJobs(), fetchTeam(), fetchCustomers()]);
+  }, [fetchJobs, fetchTeam, fetchCustomers]);
 
+  // FIX: await all three in parallel rather than sequentially
   const refresh = useCallback(async () => {
-    await fetchJobs();
-    await fetchTeam();
-  }, [fetchJobs, fetchTeam]);
+    await Promise.all([fetchJobs(), fetchTeam(), fetchCustomers()]);
+  }, [fetchJobs, fetchTeam, fetchCustomers]);
 
-  // 3. CREATE JOB - Instantly saves to Supabase
-  const createJob = useCallback(async (jobData: any) => {
-    const dbPayload = {
-      title: jobData.customerName,
-      location: jobData.address || "Tucson, AZ",
-      phase: jobData.phase || "Rough-In",
-      status: "pending",
-      date: jobData.date,
-      startTime: jobData.startTime,
-      endTime: jobData.endTime,
-      technicianId: jobData.technicianId || "unassigned",
-      type: jobData.type || "maintenance"
-    };
+  // ── Mutations ─────────────────────────────────────────────────────────────
 
-    const { error } = await supabase.from('jobs').insert([dbPayload]);
-    if (error) console.error("Error saving job to DB:", error);
-    refresh();
+  // FIX: accepts typed `Omit<Job, 'id'>` instead of `any`
+  const createJob = useCallback(async (jobData: Omit<Job, 'id'>) => {
+    const { error: sbError } = await supabase.from('jobs').insert([{
+      title:        jobData.customerName,
+      location:     jobData.address ?? 'Tucson, AZ',
+      phase:        jobData.phase ?? 'Rough-In',
+      status:       'pending',
+      date:         jobData.date,
+      startTime:    jobData.startTime,
+      endTime:      jobData.endTime,
+      technicianId: jobData.technicianId ?? 'unassigned',
+      type:         jobData.type ?? 'maintenance',
+    }]);
+    if (sbError) {
+      console.error('Error saving job to DB:', sbError);
+      return;
+    }
+    // FIX: await refresh so callers get updated state after createJob resolves
+    await refresh();
   }, [refresh]);
 
-  // 4. RESCHEDULE JOB (Drag & Drop) - Locks new time in Supabase
-  const rescheduleJob = useCallback(async (id: string, newDate: string, newStartHour: number) => {
-    // Optimistic fast UI update
+  const rescheduleJob = useCallback(async (
+    id: string, newDate: string, newStartHour: number,
+  ) => {
+    // Optimistic UI update (functional form — never stale)
     setJobs(prev => prev.map(j => {
-      if (j.id === id) {
-        const currentDuration = j.estimatedDuration || 120;
-        const endHour = newStartHour + Math.floor(currentDuration / 60);
-        const endMin = currentDuration % 60;
-        return {
-          ...j,
-          date: newDate,
-          startTime: `${String(newStartHour).padStart(2, '0')}:00`,
-          endTime: `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
-        };
-      }
-      return j;
+      if (j.id !== id) return j;
+      const duration = j.estimatedDuration ?? 120;
+      const endHour  = newStartHour + Math.floor(duration / 60);
+      const endMin   = duration % 60;
+      return {
+        ...j,
+        date:      newDate,
+        startTime: formatTime(newStartHour, 0),
+        endTime:   formatTime(endHour, endMin),
+      };
     }));
 
-    // Background Database Lock-in
-    const currentJob = jobs.find(j => j.id === id);
-    const duration = currentJob?.estimatedDuration || 120;
-    const endHour = newStartHour + Math.floor(duration / 60);
-    const endMin = duration % 60;
-    
-    const { error } = await supabase
+    // FIX: read from ref so the DB write uses latest state, not the stale
+    // `jobs` closure captured when useCallback was last memoized.
+    const currentJob = jobsRef.current.find(j => j.id === id);
+    const duration   = currentJob?.estimatedDuration ?? 120;
+    const endHour    = newStartHour + Math.floor(duration / 60);
+    const endMin     = duration % 60;
+
+    const { error: sbError } = await supabase
       .from('jobs')
       .update({
-        date: newDate,
-        startTime: `${String(newStartHour).padStart(2, '0')}:00`,
-        endTime: `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
+        date:      newDate,
+        startTime: formatTime(newStartHour, 0),
+        endTime:   formatTime(endHour, endMin),
       })
       .eq('id', id);
 
-    if (error) {
-      console.error("Failed to save new schedule:", error);
-      refresh(); 
+    if (sbError) {
+      console.error('Failed to save new schedule:', sbError);
+      await refresh(); // Roll back optimistic update on failure
     }
-  }, [jobs, refresh]);
+  }, [refresh]); // FIX: `jobs` removed from deps — read via ref instead
 
-  // 5. TOGGLE STATUS - Saves to Supabase
   const toggleJobStatus = useCallback(async (id: string) => {
-    const job = jobs.find(j => j.id === id);
+    // FIX: read from ref — same stale closure fix as rescheduleJob
+    const job = jobsRef.current.find(j => j.id === id);
     if (!job) return;
     const newStatus = job.status === 'completed' ? 'pending' : 'completed';
     setJobs(prev => prev.map(j => j.id === id ? { ...j, status: newStatus } : j));
-    await supabase.from('jobs').update({ status: newStatus }).eq('id', id);
-  }, [jobs]);
+    const { error: sbError } = await supabase
+      .from('jobs').update({ status: newStatus }).eq('id', id);
+    if (sbError) {
+      console.error('Failed to toggle job status:', sbError);
+      await refresh();
+    }
+  }, [refresh]); // FIX: `jobs` removed from deps — read via ref instead
 
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
-    setJobs(currentJobs => 
-      currentJobs.map(job => job.id === jobId ? { ...job, phase: newPhase } : job)
-    );
-    const { error } = await supabase.from('jobs').update({ phase: newPhase }).eq('id', jobId);
-    if (error) {
-      console.error("Failed to update job phase:", error);
-      refresh(); 
+    setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase: newPhase } : j));
+    const { error: sbError } = await supabase
+      .from('jobs').update({ phase: newPhase }).eq('id', jobId);
+    if (sbError) {
+      console.error('Failed to update job phase:', sbError);
+      await refresh();
     }
   }, [refresh]);
-// 6. HIRE TECHNICIAN - Saves new guy to Supabase
+
   const hireTechnician = useCallback(async (name: string, role: string) => {
-    const { error } = await supabase.from('technicians').insert([{ name, role }]);
-    if (error) console.error("Error hiring technician:", error);
-    refresh(); 
+    const { error: sbError } = await supabase
+      .from('technicians').insert([{ name, role }]);
+    if (sbError) {
+      console.error('Error hiring technician:', sbError);
+      return;
+    }
+    await refresh();
   }, [refresh]);
 
-  // 7. FIRE TECHNICIAN - Removes guy from Supabase
   const fireTechnician = useCallback(async (id: string) => {
-    const { error } = await supabase.from('technicians').delete().eq('id', id);
-    if (error) console.error("Error firing technician:", error);
-    refresh();
+    const { error: sbError } = await supabase
+      .from('technicians').delete().eq('id', id);
+    if (sbError) {
+      console.error('Error firing technician:', sbError);
+      return;
+    }
+    await refresh();
   }, [refresh]);
- return {
-    loading, error, jobs, customers, technicians,
-    refresh, createJob, toggleJobStatus, rescheduleJob, updateJobPhase,
-    hireTechnician, // <-- Added!
-    fireTechnician  // <-- Added!
+
+  return {
+    loading,
+    error,
+    jobs,
+    customers,
+    technicians,
+    refresh,
+    createJob,
+    toggleJobStatus,
+    rescheduleJob,
+    updateJobPhase,
+    hireTechnician,
+    fireTechnician,
   };
 };

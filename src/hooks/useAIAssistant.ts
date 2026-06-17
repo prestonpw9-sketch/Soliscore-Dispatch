@@ -1,15 +1,26 @@
-import { useState, useCallback }          from 'react';
-import { useMutation }                    from '@tanstack/react-query';
-import { useAIProviderContext }            from '@/services/ai/aiProviderFactory';
+import { useState, useCallback, useRef } from 'react';
+import { useMutation }                   from '@tanstack/react-query';
+import { useAIProviderContext }           from '@/services/ai/aiProviderFactory';
 import type { AIMessage, AIRequestOptions } from '@/services/ai/types';
 
-function makeId() {
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
+
+// ── Hook ───────────────────────────────────────────────────────────────────
 
 export function useAIAssistant() {
   const { activeProvider, getActiveProvider, solidcoreContext } = useAIProviderContext();
   const [messages, setMessages] = useState<AIMessage[]>([]);
+
+  // FIX: keep a ref in sync with messages so mutationFn always reads
+  // the latest history without needing `messages` in its closure.
+  // Reading messages directly inside mutationFn captures the stale value
+  // from the render when useMutation was last called — not the current value.
+  const messagesRef = useRef<AIMessage[]>(messages);
+  messagesRef.current = messages;
 
   const { mutateAsync, isPending, error } = useMutation({
     mutationFn: async ({
@@ -27,9 +38,14 @@ export function useAIAssistant() {
         timestamp: new Date(),
       };
 
+      // FIX: use the functional updater form so the new state is based on
+      // the latest committed messages, not the stale closure value.
       setMessages(prev => [...prev, userMessage]);
 
-      const history  = [...messages, userMessage];
+      // FIX: read current history from the ref, not from the stale `messages`
+      // closure. messagesRef.current is updated synchronously on every render,
+      // so it always reflects the latest committed state.
+      const history  = [...messagesRef.current, userMessage];
       const provider = getActiveProvider();
       const reply    = await provider.sendMessage(history, solidcoreContext, options);
 
@@ -48,7 +64,7 @@ export function useAIAssistant() {
 
   const sendMessage = useCallback(
     (content: string, options?: AIRequestOptions) => mutateAsync({ content, options }),
-    [mutateAsync]
+    [mutateAsync],
   );
 
   const clearHistory = useCallback(() => setMessages([]), []);
