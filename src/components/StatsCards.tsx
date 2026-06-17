@@ -7,6 +7,7 @@ interface Props {
   sitePhotos: number;
   activePlumbers: number;
   activeApprentices: number;
+  onOpenTeam: () => void; // <-- Wire 1: Tell the file to expect the command
 }
 
 const StatsCards: React.FC<Props> = ({ 
@@ -14,7 +15,8 @@ const StatsCards: React.FC<Props> = ({
   activeBlueprints, 
   sitePhotos, 
   activePlumbers, 
-  activeApprentices 
+  activeApprentices,
+  onOpenTeam // <-- Wire 1.5: Accept the command
 }) => {
   // Rich, solid colors that pop beautifully in both Light and Dark mode
   const cards = [
@@ -60,8 +62,8 @@ const StatsCards: React.FC<Props> = ({
       {cards.map((c) => (
         <div 
           key={c.label} 
+          onClick={c.label === 'Active Plumbers' || c.label === 'Apprentices' ? onOpenTeam : undefined} // <-- Wire 2: The actual trigger!
           className={`${c.colorBg} rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group cursor-pointer hover:-translate-y-1 active:scale-95 flex flex-col justify-between text-white border border-white/10`}
-        
         >
           {/* Top Row: Icon Badge & Trend Indicator */}
           <div className="flex justify-between items-start mb-4">
