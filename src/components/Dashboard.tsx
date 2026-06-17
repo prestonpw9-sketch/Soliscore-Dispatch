@@ -13,19 +13,16 @@ interface Props {
   weekDates: string[];
   onViewCalendar: () => void;
   onViewTasks: () => void;
-  onOpenEstimator?: () => void; 
-  onPhaseChange?: (jobId: string, newPhase: string) => void;
+  onOpenEstimator: () => void;
+  onPhaseChange: (jobId: string, newPhase: string) => void;
+  onHire: (name: string, role: string) => void; // <-- Add this!
+  onFire: (id: string) => void;                 // <-- Add this!
 }
 
 const Dashboard: React.FC<Props> = ({ 
-  jobs, 
-  technicians, 
-  todayStr, 
-  weekDates, 
-  onViewCalendar, 
-  onViewTasks,
-  onOpenEstimator,
-  onPhaseChange
+  jobs, technicians, todayStr, weekDates, 
+  onViewCalendar, onViewTasks, onOpenEstimator, onPhaseChange,
+  onHire, onFire // <-- ADD THEM HERE TOO
 }) => {
   // Core Operational Data Filtering
   const todayJobs = jobs.filter(j => j.date === todayStr);

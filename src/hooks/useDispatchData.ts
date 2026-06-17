@@ -147,9 +147,23 @@ export const useDispatchData = () => {
       refresh(); 
     }
   }, [refresh]);
+// 6. HIRE TECHNICIAN - Saves new guy to Supabase
+  const hireTechnician = useCallback(async (name: string, role: string) => {
+    const { error } = await supabase.from('technicians').insert([{ name, role }]);
+    if (error) console.error("Error hiring technician:", error);
+    refresh(); 
+  }, [refresh]);
 
-  return {
+  // 7. FIRE TECHNICIAN - Removes guy from Supabase
+  const fireTechnician = useCallback(async (id: string) => {
+    const { error } = await supabase.from('technicians').delete().eq('id', id);
+    if (error) console.error("Error firing technician:", error);
+    refresh();
+  }, [refresh]);
+ return {
     loading, error, jobs, customers, technicians,
-    refresh, createJob, toggleJobStatus, rescheduleJob, updateJobPhase 
+    refresh, createJob, toggleJobStatus, rescheduleJob, updateJobPhase,
+    hireTechnician, // <-- Added!
+    fireTechnician  // <-- Added!
   };
 };
