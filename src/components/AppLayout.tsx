@@ -36,7 +36,8 @@ const AppLayout: React.FC = () => {
   const {
     loading, error,
     jobs, customers, technicians,
-    refresh, createJob, toggleJobStatus, rescheduleJob, updateJobPhase // <-- Added this!
+    refresh, createJob, toggleJobStatus, rescheduleJob, updateJobPhase,
+    hireTechnician, fireTechnician // <-- Add these two right here!
   } = useDispatchData();
   const [modalOpen, setModalOpen] = useState(false);
   const [modalDefaults, setModalDefaults] = useState<Partial<Job> | undefined>(undefined);
@@ -176,7 +177,7 @@ const handlePhaseChange = async (jobId: string, newPhase: string) => {
             <>
               {view === 'settings' && <SettingsView />}
               
-              {view === 'dashboard' && (
+           {view === 'dashboard' && (
                 <Dashboard
                   jobs={jobs}
                   technicians={technicians}
@@ -185,7 +186,9 @@ const handlePhaseChange = async (jobId: string, newPhase: string) => {
                   onViewCalendar={() => setView('calendar')}
                   onViewTasks={() => setView('tasks')}
                   onOpenEstimator={() => setEstimatorPanelOpen(true)}
-                  onPhaseChange={handlePhaseChange} // <--- Add this!
+                  onPhaseChange={handlePhaseChange} 
+                  onHire={hireTechnician}
+                  onFire={fireTechnician}
                 />
               )}
               
