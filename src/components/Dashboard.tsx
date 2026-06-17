@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ArrowRight, Calculator, CalendarDays } from 'lucide-react';
 import type { Job, Technician } from '@/lib/data';
 import StatsCards from './StatsCards';
 import JobCard from './JobCard';
 import { BlueprintCard } from './BlueprintCard';
 import { SitePhotosCard } from './SitePhotosCard';
+import TeamModal from './TeamModal';
 
 interface Props {
   jobs: Job[];
@@ -15,20 +16,24 @@ interface Props {
   onViewTasks: () => void;
   onOpenEstimator: () => void;
   onPhaseChange: (jobId: string, newPhase: string) => void;
-  onHire: (name: string, role: string) => void; // <-- Add this!
-  onFire: (id: string) => void;                 // <-- Add this!
+  onHire: (name: string, role: string) => void;
+  onFire: (id: string) => void;
 }
 
 const Dashboard: React.FC<Props> = ({ 
   jobs, technicians, todayStr, weekDates, 
   onViewCalendar, onViewTasks, onOpenEstimator, onPhaseChange,
-  onHire, onFire // <-- ADD THEM HERE TOO
+  onHire, onFire
 }) => {
+  
+  // The switch that controls the Roster Modal
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+
   // Core Operational Data Filtering
   const todayJobs = jobs.filter(j => j.date === todayStr);
   const upcomingJobs = todayJobs.filter(j => j.status !== 'completed').slice(0, 5);
 
-  // Team Metrics - Now reading live roles directly from Supabase!
+  // Team Metrics - Reading live roles directly from Supabase
   const activePlumbers = technicians.filter(t => t.role === 'Plumber').length;
   const activeApprentices = technicians.filter(t => t.role === 'Apprentice').length;
 
@@ -51,13 +56,14 @@ const Dashboard: React.FC<Props> = ({
         </button>
       </div>
       
-     {/* STATS CONTROL HEADER MAPPING BAR */}
+      {/* STATS CONTROL HEADER MAPPING BAR */}
       <StatsCards 
         jobsToday={todayJobs.length} 
         activeBlueprints={4} 
         sitePhotos={12}
         activePlumbers={activePlumbers} 
         activeApprentices={activeApprentices} 
+        onOpenTeam={() => setIsTeamModalOpen(true)}
       />
       
       {/* BALANCED STRUCTURAL TWO-COLUMN LAYOUT */}
@@ -105,11 +111,22 @@ const Dashboard: React.FC<Props> = ({
         </div>
 
         {/* COLUMN 3: RIGHT SIDEBAR STACK */}
-           <div className="flex flex-col gap-6">
-             <BlueprintCard />
-             <SitePhotosCard />
-           </div>
+        <div className="flex flex-col gap-6">
+          <BlueprintCard />
+          <SitePhotosCard />
+        </div>
       </div>
+
+      {/* THE HIDDEN ROSTER MODAL */}
+      <TeamModal 
+        isOpen={isTeamModalOpen}
+        onClose={() => setIsTeamModalOpen(false)}
+        technicians={technicians}
+        todayJobs={todayJobs}
+        onHire={onHire} 
+        onFire={onFire}
+      />
+      
     </div>
   );
 };
