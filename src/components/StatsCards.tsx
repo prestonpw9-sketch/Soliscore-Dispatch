@@ -60,7 +60,8 @@ const StatsCards: React.FC<Props> = ({
       {cards.map((c) => (
         <div 
           key={c.label} 
-          className={`${c.colorBg} rounded-2xl p-5 shadow-md hover:brightness-110 transition-all group cursor-default flex flex-col justify-between text-white border border-white/10`}
+          className={`${c.colorBg} rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group cursor-pointer hover:-translate-y-1 active:scale-95 flex flex-col justify-between text-white border border-white/10`}
+        
         >
           {/* Top Row: Icon Badge & Trend Indicator */}
           <div className="flex justify-between items-start mb-4">
