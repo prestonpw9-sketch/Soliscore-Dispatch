@@ -31,10 +31,9 @@ const Dashboard: React.FC<Props> = ({
   const todayJobs = jobs.filter(j => j.date === todayStr);
   const upcomingJobs = todayJobs.filter(j => j.status !== 'completed').slice(0, 5);
 
-  // Team Metrics (We will count the technicians array for now. 
-  // Later you can filter this by role if you add an 'Apprentice' tag in the database!)
-  const activePlumbers = technicians.length;
-  const activeApprentices = 2; // Placeholder until roles are added to the DB
+  // Team Metrics - Now reading live roles directly from Supabase!
+  const activePlumbers = technicians.filter(t => t.role === 'Plumber').length;
+  const activeApprentices = technicians.filter(t => t.role === 'Apprentice').length;
 
   return (
     <div className="w-full space-y-6">

@@ -35,8 +35,9 @@ export interface Job {
 export interface Technician {
   id: string;
   name: string;
-  color: string;
-  skills: string[];
+  role: string;
+  color?: string;
+  skills?: string[];
 }
 
 export interface Customer {
@@ -64,13 +65,6 @@ export const weekDates = Array.from({ length: 7 }).map((_, i) => {
 
 export const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export const hours = Array.from({ length: 12 }).map((_, i) => i + 7);
-
-// Mock Data
-export const mockTechnicians: Technician[] = [
-  { id: 't1', name: 'Preston Watson', color: 'bg-teal-500', skills: ['plumbing', 'fabrication'] },
-  { id: 't2', name: 'Dave Williamson', color: 'bg-emerald-500', skills: ['plumbing', 'commercial'] },
-  { id: 't3', name: 'Apprentice Mike', color: 'bg-orange-500', skills: ['rough-in'] },
-];
 
 export const mockCustomers: Customer[] = [
   { id: 'c1', name: 'Canyon Ranch', phone: '(520) 555-0192', email: 'facilities@canyon.com', address: '8600 E Rockcliff Rd', city: 'Tucson', propertyType: 'Commercial', totalJobs: 14, lastService: '2026-04-15', notes: 'TIG welding required for custom washboards.' },
