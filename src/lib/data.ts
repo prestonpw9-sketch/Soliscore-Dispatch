@@ -25,9 +25,11 @@ export interface Job {
   endTime: string;
   technicianId: string;
   status: 'pending' | 'completed';
-  type?: string;
+  type?: JobType | string;
   estimatedDuration?: number;
   phase: string;
+  description?: string;
+  priority?: Priority | string;
 }
 
 export interface Technician {
@@ -75,6 +77,6 @@ export const mockCalls: Call[] = [
 ];
 
 export const mockJobs: Job[] = [
-  { id: 'j1', customerId: 'c1', customerName: 'Canyon Ranch', address: '8600 E Rockcliff Rd', type: 'installation', status: 'pending', technicianId: 't1', date: todayStr, startTime: '08:00', endTime: '12:00', estimatedDuration: 240, phase: 'Rough-In' },
-  { id: 'j2', customerId: 'c2', customerName: 'Sarah Jenkins', address: '1423 W Baseline Rd', type: 'maintenance', status: 'pending', technicianId: 't2', date: todayStr, startTime: '13:00', endTime: '15:00', estimatedDuration: 120, phase: 'Trim' }
+  { id: 'j1', customerId: 'c1', customerName: 'Canyon Ranch', address: '8600 E Rockcliff Rd', type: 'installation', status: 'pending', technicianId: 't1', date: todayStr, startTime: '08:00', endTime: '12:00', estimatedDuration: 240, phase: 'Rough-In', description: 'Commercial kitchen modifications. TIG weld custom washboards to three-compartment sink.', priority: 'high' },
+  { id: 'j2', customerId: 'c2', customerName: 'Sarah Jenkins', address: '1423 W Baseline Rd', type: 'maintenance', status: 'pending', technicianId: 't2', date: todayStr, startTime: '13:00', endTime: '15:00', estimatedDuration: 120, phase: 'Trim', description: 'Install new Brizo thermostatic valve and high-flow diverter.', priority: 'normal' }
 ];
