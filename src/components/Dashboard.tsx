@@ -54,13 +54,13 @@ const Dashboard: React.FC<Props> = ({
         </button>
       </div>
       
-      {/* STATS CONTROL HEADER MAPPING BAR */}
+     {/* STATS CONTROL HEADER MAPPING BAR */}
       <StatsCards 
         jobsToday={todayJobs.length} 
         activeBlueprints={4} 
         sitePhotos={12}
-        activePlumbers={technicians.length} 
-        activeApprentices={2} 
+        activePlumbers={activePlumbers} 
+        activeApprentices={activeApprentices} 
       />
       
       {/* BALANCED STRUCTURAL TWO-COLUMN LAYOUT */}
