@@ -1,6 +1,5 @@
 import * as XLSX from 'xlsx';
 
-// A row from sheet_to_json: keys are column headers, values are cell contents.
 export type SheetRow = Record<string, unknown>;
 
 export interface SheetData {
@@ -10,7 +9,6 @@ export interface SheetData {
 
 export async function parseFileToSheets(file: File): Promise<SheetData[]> {
   const buffer = await file.arrayBuffer();
-
   const workbook = XLSX.read(buffer, { cellDates: true });
 
   return workbook.SheetNames.map(name => {
