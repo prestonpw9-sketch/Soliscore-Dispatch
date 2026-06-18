@@ -31,11 +31,10 @@ export default function ProjectView({ projectId }: Props) {
       </div>
 
       <EstimatorPanel
-        id="project-estimator-panel"
         open={open}
         onClose={() => setOpen(false)}
       >
-        <QuickBidEstimator mode="project" projectId={projectId} />
+        <QuickBidEstimator mode="standalone" />
       </EstimatorPanel>
     </div>
   );
