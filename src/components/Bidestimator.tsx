@@ -1,6 +1,4 @@
-Several real issues here: alert() again, declare const process: any (unused and wrong — Vite uses import.meta.env), handleQuantityChange mutates state directly with updatedData[page][index].quantity = ... instead of producing a new array, and handleSaveAsNewJob is an async event handler returning a floating promise. Here's the corrected version:
 
-tsx
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
