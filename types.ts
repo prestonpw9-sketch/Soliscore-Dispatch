@@ -4,5 +4,5 @@ export const PLUMBING_PHASES = [
   "Top-Out",
   "Trim/Finish",
   "Service Call",
-  "T&M"
-  export type ViewKey = 'dashboard' | 'calls' | 'calendar' | 'tasks' | 'customers' | 'estimator';
+  "T&M",
+];
