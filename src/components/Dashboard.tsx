@@ -30,10 +30,10 @@ const Dashboard: React.FC<Props> = ({
 }) => {
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
 
-  const todayJobs    = jobs.filter(j => j.date === todayStr);
-  const upcomingJobs = todayJobs.filter(j => j.status !== 'completed').slice(0, 5);
-
-  const activePlumbers    = technicians.filter(t => t.role === 'Plumber').length;
+  const todayJobs      = jobs.filter(j => j.date === todayStr);
+  const upcomingJobs   = todayJobs.filter(j => j.status !== 'completed').slice(0, 5);
+  const activeJobCount = jobs.filter(j => j.status !== 'completed').length;
+  const activePlumbers = technicians.filter(t => t.role === 'Plumber').length;
 
   return (
     <div className="w-full space-y-6">
@@ -54,7 +54,7 @@ const Dashboard: React.FC<Props> = ({
 
       <StatsCards
         jobs={jobs}
-        jobsToday={todayJobs.length}
+        activeJobCount={activeJobCount}
         activeBlueprints={4}
         sitePhotos={12}
         activePlumbers={activePlumbers}
@@ -116,10 +116,9 @@ const Dashboard: React.FC<Props> = ({
       <TeamModal
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
-    
-       /> 
-      
+      />
     </div>
   );
 };
+
 export default Dashboard;
