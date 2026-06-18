@@ -95,7 +95,7 @@ const estimates  = jobs.filter(j => j.status === 'scheduled'); // scheduled = no
         <button
           type="button"
           onClick={() => setQuickRefOpen(!quickRefOpen)}
-          className={`w-full bg-orange-500 dark:bg-orange-600 rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group flex flex-col justify-between text-white border border-white/10 text-left h-full ${
+          className={`w-full bg-blue-600 dark:bg-blue-500 rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group flex flex-col justify-between text-white border border-white/10 text-left h-full ${
             quickRefOpen ? 'ring-2 ring-white/30' : ''
           }`}
         >
@@ -112,7 +112,7 @@ const estimates  = jobs.filter(j => j.status === 'scheduled'); // scheduled = no
             <h4 className="text-3xl font-black text-white tracking-tight leading-none">
               {activeJobs.length + submittals.length + estimates.length}
             </h4>
-            <p className="text-sm font-bold text-white/90 mt-2">Quick Reference</p>
+           <p className="text-sm font-bold text-white/90 mt-2">Submittals</p>
           </div>
         </button>
 
