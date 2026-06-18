@@ -1,6 +1,4 @@
-Clean component with two real crash risks. Here's the corrected version:
 
-tsx
 import { clsx }                            from 'clsx';
 import { AI_PROVIDER_CONFIGS }             from '@/services/ai/types';
 import type { AIMessage as AIMessageType } from '@/services/ai/types';
