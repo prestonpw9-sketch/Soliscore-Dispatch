@@ -6,7 +6,7 @@ import type { Job } from '@/lib/data';
 
 interface Props {
   jobs: Job[];
-  jobsToday: number;
+  activeJobCount: number;
   activeBlueprints: number;
   sitePhotos: number;
   activePlumbers: number;
@@ -15,7 +15,7 @@ interface Props {
 
 const StatsCards: React.FC<Props> = ({
   jobs,
-  jobsToday,
+  activeJobCount,
   activeBlueprints,
   sitePhotos,
   activePlumbers,
@@ -23,10 +23,14 @@ const StatsCards: React.FC<Props> = ({
 }) => {
   const [quickRefOpen, setQuickRefOpen] = useState(false);
 
+  const activeJobs = jobs.filter(j => j.status === 'active');
+  const submittals = jobs.filter(j => j.status === 'pending');
+  const estimates  = jobs.filter(j => j.status === 'scheduled');
+
   const cards = [
     {
       label: 'Active Jobs',
-      value: jobsToday,
+      value: activeJobCount,
       icon: Briefcase,
       colorBg: 'bg-indigo-600 dark:bg-indigo-500',
       trend: 'Live',
@@ -57,10 +61,6 @@ const StatsCards: React.FC<Props> = ({
       clickable: true,
     },
   ] as const;
-
-  const activeJobs = jobs.filter(j => j.status === 'active');
-const submittals = jobs.filter(j => j.status === 'pending');   // pending = awaiting dispatch
-const estimates  = jobs.filter(j => j.status === 'scheduled'); // scheduled = not yet started
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 w-full">
@@ -112,7 +112,7 @@ const estimates  = jobs.filter(j => j.status === 'scheduled'); // scheduled = no
             <h4 className="text-3xl font-black text-white tracking-tight leading-none">
               {activeJobs.length + submittals.length + estimates.length}
             </h4>
-           <p className="text-sm font-bold text-white/90 mt-2">Submittals</p>
+            <p className="text-sm font-bold text-white/90 mt-2">Submittals</p>
           </div>
         </button>
 
@@ -189,4 +189,5 @@ const estimates  = jobs.filter(j => j.status === 'scheduled'); // scheduled = no
     </div>
   );
 };
+
 export default StatsCards;
