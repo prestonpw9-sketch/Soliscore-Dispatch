@@ -17,19 +17,20 @@ export interface Call {
 
 export interface Job {
   id: string;
-  customerId?: string;
+  customerId: string;
   customerName: string;
   address: string;
+  type: JobType;
+  status: JobStatus;
+  priority: Priority;
+  technicianId: string;
   date: string;
+  endDate?: string;       
   startTime: string;
   endTime: string;
-  technicianId: string;
-  status: JobStatus;
-  type: JobType;
-  estimatedDuration?: number;
+  description: string;
   phase: string;
-  description?: string;
-  priority: Priority;
+  estimatedDuration: number;
 }
 
 export interface Technician {
@@ -114,6 +115,8 @@ export const mockCalls: Call[] = [
     status: 'missed',
     priority: 'normal',
     time: '07:45 AM',
+  
+    duration: '02:15',
   },
 ];
 

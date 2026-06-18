@@ -1,19 +1,21 @@
-The two errors are almost certainly the same ones from your data.ts discussion: status: 'scheduled' not being in the Job type, and the local JobType/Priority redeclarations shadowing the imported ones. Here's the full fixed file:
-
-tsx
 import React, { useEffect, useState } from 'react';
 import { X, MapPin, Sparkles, Loader2, User, Clock, CalendarDays } from 'lucide-react';
 import type { Customer, Technician, Job, JobType, Priority, JobStatus } from '@/lib/data';
 
+
 // ── Guard functions ────────────────────────────────────────────────────────
+
 
 const isJobType = (v: string): v is JobType =>
   ['emergency', 'maintenance', 'installation', 'inspection'].includes(v);
 
+
 const isPriority = (v: string): v is Priority =>
   ['emergency', 'high', 'normal', 'low'].includes(v);
 
+
 // ── Types ──────────────────────────────────────────────────────────────────
+
 
 interface Props {
   open: boolean;
@@ -26,6 +28,7 @@ interface Props {
   onCreate: (job: Omit<Job, 'id'>) => void;
 }
 
+
 interface Recommendation {
   technicianId: string;
   technicianName: string;
@@ -33,7 +36,9 @@ interface Recommendation {
   confidence: 'high' | 'medium' | 'low';
 }
 
+
 // ── Constants ──────────────────────────────────────────────────────────────
+
 
 const sampleAddresses = [
   '1245 Maple Avenue, Springfield',
@@ -43,7 +48,9 @@ const sampleAddresses = [
   '2100 Innovation Way, Westfield',
 ];
 
+
 // ── Component ──────────────────────────────────────────────────────────────
+
 
 const QuickAddJobModal: React.FC<Props> = ({
   open,
@@ -58,9 +65,11 @@ const QuickAddJobModal: React.FC<Props> = ({
   const [customerSuggestions, setCustomerSuggestions]   = useState<Customer[]>([]);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
+
   const [address, setAddress]                           = useState('');
   const [addressSuggestions, setAddressSuggestions]     = useState<string[]>([]);
-  const [showAddressDropdown, setShowAddressDropdown]   = useState(false);
+  const [showAddressDropdown, setShowAddressDropdown]     = useState(false);
+
 
   const [type, setType]               = useState<JobType>('maintenance');
   const [priority, setPriority]       = useState<Priority>('normal');
@@ -70,10 +79,12 @@ const QuickAddJobModal: React.FC<Props> = ({
   const [duration, setDuration]       = useState(60);
   const [description, setDescription] = useState('');
 
+
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [recommending, setRecommending]     = useState(false);
   const [recError, setRecError]             = useState<string | null>(null);
   const [recApplied, setRecApplied]         = useState(false);
+
 
   const resetState = () => {
     setCustomerName('');
@@ -94,6 +105,7 @@ const QuickAddJobModal: React.FC<Props> = ({
     setShowAddressDropdown(false);
   };
 
+
   useEffect(() => {
     if (!open) return;
     if (defaults) {
@@ -111,13 +123,17 @@ const QuickAddJobModal: React.FC<Props> = ({
     }
   }, [open, defaults, technicians, weekDates]);
 
+
   useEffect(() => {
     if (!open) resetState();
   }, [open]);
 
+
   if (!open) return null;
 
+
   // ── Handlers ─────────────────────────────────────────────────────────────
+
 
   const handleCustomerChange = (v: string) => {
     setCustomerName(v);
@@ -128,11 +144,13 @@ const QuickAddJobModal: React.FC<Props> = ({
     setShowCustomerDropdown(matches.length > 0);
   };
 
+
   const selectCustomer = (c: Customer) => {
     setCustomerName(c.name);
     setAddress(`${c.address}, ${c.city}`);
     setShowCustomerDropdown(false);
   };
+
 
   const handleAddressChange = (v: string) => {
     setAddress(v);
@@ -144,10 +162,12 @@ const QuickAddJobModal: React.FC<Props> = ({
     setShowAddressDropdown(matches.length > 0);
   };
 
+
   const selectAddress = (a: string) => {
     setAddress(a);
     setShowAddressDropdown(false);
   };
+
 
   const handleRecommend = async () => {
     if (!description.trim()) {
@@ -172,18 +192,30 @@ const QuickAddJobModal: React.FC<Props> = ({
     setRecommending(false);
   };
 
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+
     const [h, m] = startTime.split(':').map(Number);
     const totalMinutes = h * 60 + m + duration;
-    const endTime = `${String(Math.floor(totalMinutes / 60) % 24).padStart(2, '0')}:${String(
-      totalMinutes % 60
-    ).padStart(2, '0')}`;
+    const endHours = Math.floor(totalMinutes / 60);
+    const endMinutes = totalMinutes % 60;
+    const endTime = `${String(endHours % 24).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
+
+    // FIX: If endHours >= 24, add days to the date
+    const startDate = new Date(date.replace(/-/g, '/'));
+    const daysToAdd = Math.floor(endHours / 24);
+    if (daysToAdd > 0) {
+      startDate.setDate(startDate.getDate() + daysToAdd);
+    }
+    const endDate = startDate.toISOString().split('T')[0];
+
 
     const customer = customers.find(
       c => c.name.toLowerCase() === customerName.toLowerCase()
     );
+
 
     const job: Omit<Job, 'id'> = {
       customerId: customer?.id ?? `new-${Date.now()}`,
@@ -194,6 +226,7 @@ const QuickAddJobModal: React.FC<Props> = ({
       priority,
       technicianId,
       date,
+      endDate,
       startTime,
       endTime,
       description,
@@ -201,11 +234,14 @@ const QuickAddJobModal: React.FC<Props> = ({
       estimatedDuration: duration,
     };
 
+
     onCreate(job);
     onClose();
   };
 
+
   // ── Render ────────────────────────────────────────────────────────────────
+
 
   return (
     <div
@@ -228,6 +264,7 @@ const QuickAddJobModal: React.FC<Props> = ({
             <X className="w-4 h-4" />
           </button>
         </div>
+
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {/* Customer */}
@@ -265,6 +302,7 @@ const QuickAddJobModal: React.FC<Props> = ({
             )}
           </div>
 
+
           {/* Address */}
           <div className="relative">
             <label htmlFor="serviceAddress" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -298,6 +336,7 @@ const QuickAddJobModal: React.FC<Props> = ({
               </div>
             )}
           </div>
+
 
           {/* Type + Priority */}
           <div className="grid grid-cols-2 gap-3">
@@ -335,6 +374,7 @@ const QuickAddJobModal: React.FC<Props> = ({
             </div>
           </div>
 
+
           {/* Description */}
           <div>
             <label htmlFor="description" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -350,6 +390,7 @@ const QuickAddJobModal: React.FC<Props> = ({
               className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none resize-none"
             />
           </div>
+
 
           {/* AI Recommendation */}
           <div className="space-y-2">
@@ -392,6 +433,7 @@ const QuickAddJobModal: React.FC<Props> = ({
             )}
           </div>
 
+
           {/* Scheduling */}
           <div className="space-y-3 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800/60">
             <div>
@@ -409,6 +451,7 @@ const QuickAddJobModal: React.FC<Props> = ({
                 ))}
               </select>
             </div>
+
 
             <div className="grid grid-cols-3 gap-2">
               <div>
@@ -456,10 +499,18 @@ const QuickAddJobModal: React.FC<Props> = ({
                   <option value={60}>1 hour</option>
                   <option value={120}>2 hours</option>
                   <option value={180}>3 hours</option>
+                  <option value={240}>4 hours</option>
+                  <option value={300}>5 hours</option>
+                  <option value={360}>6 hours</option>
+                  <option value={420}>7 hours</option>
+                  <option value={480}>8 hours</option>
+                  <option value={540}>9 hours</option>
+                  <option value={600}>10 hours</option>
                 </select>
               </div>
             </div>
           </div>
+
 
           {/* Actions */}
           <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -482,5 +533,6 @@ const QuickAddJobModal: React.FC<Props> = ({
     </div>
   );
 };
+
 
 export default QuickAddJobModal;

@@ -7,8 +7,6 @@ import { BlueprintCard } from './BlueprintCard';
 import { SitePhotosCard } from './SitePhotosCard';
 import TeamModal from './TeamModal';
 
-// ── Types ──────────────────────────────────────────────────────────────────
-
 interface Props {
   jobs: Job[];
   technicians: Technician[];
@@ -19,8 +17,6 @@ interface Props {
   onHire: (name: string, role: string) => void;
   onFire: (id: string) => void;
 }
-
-// ── Component ──────────────────────────────────────────────────────────────
 
 const Dashboard: React.FC<Props> = ({
   jobs,
@@ -38,12 +34,9 @@ const Dashboard: React.FC<Props> = ({
   const upcomingJobs = todayJobs.filter(j => j.status !== 'completed').slice(0, 5);
 
   const activePlumbers    = technicians.filter(t => t.role === 'Plumber').length;
-  const activeApprentices = technicians.filter(t => t.role === 'Apprentice').length;
 
   return (
     <div className="w-full space-y-6">
-
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white">Overview</h1>
@@ -59,20 +52,16 @@ const Dashboard: React.FC<Props> = ({
         </button>
       </div>
 
-      {/* Stats */}
       <StatsCards
+        jobs={jobs}
         jobsToday={todayJobs.length}
         activeBlueprints={4}
         sitePhotos={12}
         activePlumbers={activePlumbers}
-        activeApprentices={activeApprentices}
         onOpenTeam={() => setIsTeamModalOpen(true)}
       />
 
-      {/* Main grid */}
       <div className="grid lg:grid-cols-3 gap-6">
-
-        {/* Today's schedule */}
         <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
           <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <div>
@@ -100,7 +89,6 @@ const Dashboard: React.FC<Props> = ({
               </div>
             ) : (
               upcomingJobs.map(job => {
-                // FIX: pass technicianName as a separate prop — Job no longer has a `tech` field
                 const techName = technicians.find(t => t.id === job.technicianId)?.name ?? 'Unassigned';
                 return (
                   <div
@@ -119,24 +107,19 @@ const Dashboard: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Right sidebar */}
         <div className="flex flex-col gap-6">
           <BlueprintCard />
           <SitePhotosCard />
         </div>
       </div>
 
-      {/* Team modal */}
       <TeamModal
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
-        technicians={technicians}
-        todayJobs={todayJobs}
-        onHire={onHire}
-        onFire={onFire}
-      />
+    
+       /> 
+      
     </div>
   );
 };
-
 export default Dashboard;
