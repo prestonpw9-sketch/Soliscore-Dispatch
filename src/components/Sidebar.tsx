@@ -1,10 +1,4 @@
-Absolutely — let’s do it all at once. Your current Sidebar types are too loose because they use string, which is why AppLayout and Sidebar are fighting each other. The clean fix is to make both files use the same shared ViewKey union instead of mixing strict unions with plain strings. Accurate shared prop types are the right React + TypeScript pattern here.
 
-Replace these files
-src/components/types.ts
-Use this exact file:
-
-ts
 export type ViewKey =
   | 'dashboard'
   | 'calendar'
@@ -13,10 +7,9 @@ export type ViewKey =
   | 'estimator'
   | 'schedule'
   | 'settings';
-src/components/Sidebar.tsx
-Replace your whole sidebar with this:
 
-tsx
+
+
 import { useState } from 'react';
 import { clsx } from 'clsx';
 import {
@@ -36,7 +29,7 @@ import SMSPanel from '@/components/SMSPanel';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import { useTwilioMessages } from '@/hooks/useTwilioMessages';
 import { AI_PROVIDER_CONFIGS } from '@/services/ai/types';
-import type { ViewKey } from './types';
+
 
 interface SidebarProps {
   activeView: ViewKey;
