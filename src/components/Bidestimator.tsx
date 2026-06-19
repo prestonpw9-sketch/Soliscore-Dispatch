@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { Plus, Trash2, Save, FolderOpen } from 'lucide-react';
+import { Plus, Trash2, Save, FolderOpen, FileText, FilePlus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
+import ProposalModal from './proposal/ProposalModal';
+import ChangeOrderModal from './proposal/ChangeOrderModal';
 import type {
   BidDocument,
   FixtureRow,
@@ -53,12 +56,15 @@ const redBtn =
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function BidEstimator() {
+  const { isOwner } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('page1');
   const [doc, setDoc] = useState<BidDocument>(() => makeBlankDocument());
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [proposalOpen, setProposalOpen] = useState(false);
+  const [changeOrderOpen, setChangeOrderOpen] = useState(false);
 
   // ── Mutators ───────────────────────────────────────────────────────────────
   function patchDoc(patch: Partial<BidDocument>) {
@@ -254,7 +260,7 @@ export default function BidEstimator() {
               />
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={handleLoad} disabled={loading}
               className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
               <FolderOpen className="w-4 h-4" /> {loading ? 'Loading…' : 'Load'}
@@ -263,6 +269,18 @@ export default function BidEstimator() {
               className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
               <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save Bid'}
             </button>
+            {isOwner && (
+              <>
+                <button type="button" onClick={() => setProposalOpen(true)}
+                  className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors">
+                  <FileText className="w-4 h-4" /> Generate Proposal
+                </button>
+                <button type="button" onClick={() => setChangeOrderOpen(true)}
+                  className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors">
+                  <FilePlus className="w-4 h-4" /> Change Order
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -305,6 +323,13 @@ export default function BidEstimator() {
       )}
       {activeTab === 'summary' && (
         <SummaryTab doc={doc} updateSummary={updateSummary} updateLaborHour={updateLaborHour} updateSub={updateSub} />
+      )}
+
+      {isOwner && (
+        <>
+          <ProposalModal open={proposalOpen} onClose={() => setProposalOpen(false)} doc={doc} />
+          <ChangeOrderModal open={changeOrderOpen} onClose={() => setChangeOrderOpen(false)} doc={doc} />
+        </>
       )}
     </div>
   );

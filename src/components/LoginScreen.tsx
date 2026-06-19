@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loader2, Mail, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginScreen() {
@@ -35,11 +35,10 @@ export default function LoginScreen() {
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
         <div className="px-8 pt-8 pb-6 text-center border-b border-slate-800">
-          <div className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-teal-600/20 flex items-center justify-center">
-            <ShieldCheck className="w-7 h-7 text-teal-400" />
+          <div className="mx-auto mb-4 w-40 bg-white rounded-xl p-3 shadow-lg">
+            <img src="/itdg-logo.png" alt="ITDG - Innovative Technology Development Group, LLC" className="w-full h-auto" />
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">ITDG Plumbing</h1>
-          <p className="text-xs font-semibold text-teal-400 mt-0.5">Crew Dispatch &amp; Jobs Tracking Estimator</p>
+          <p className="text-xs font-semibold text-teal-400 mt-1">Crew Dispatch &amp; Jobs Tracking Estimator</p>
           <p className="text-sm text-slate-400 mt-2">Secure sign-in for authorized team members.</p>
         </div>
 
