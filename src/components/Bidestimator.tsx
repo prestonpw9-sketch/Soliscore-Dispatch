@@ -41,7 +41,7 @@ const TABS: { key: TabType; label: string }[] = [
 
 // Shared cell classes ---------------------------------------------------------
 const inputCls =
-  'w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg p-1.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none tabular-nums';
+  'w-full border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg p-1.5 text-sm shadow-sm focus:bg-white dark:focus:bg-slate-700 focus:border-teal-500 focus:ring-2 focus:ring-teal-500 outline-none tabular-nums placeholder:text-slate-400 transition-colors';
 const cardCls =
   'bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm';
 const moneyCls = 'tabular-nums font-semibold text-slate-900 dark:text-slate-100';

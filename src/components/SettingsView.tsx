@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { Building2, Bell, Database, KeyRound, HardHat, Save } from 'lucide-react';
+import { useTheme, type ThemeMode } from '@/lib/ThemeContext';
 
 const SettingsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'profile' | 'preferences' | 'integrations'>('profile');
+  const { mode, setMode } = useTheme();
 
   const [companyName, setCompanyName] = useState('Solidcore Plumbing, LLC');
   const [ownerName, setOwnerName] = useState('Preston Watson');
@@ -185,10 +187,14 @@ const SettingsView: React.FC = () => {
                       <div className="font-medium text-slate-900 dark:text-white text-sm">Dark Mode</div>
                       <div className="text-xs text-slate-500">Toggle system theme preference.</div>
                     </div>
-                    <select className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-md text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none cursor-pointer">
-                      <option>System Default</option>
-                      <option>Light</option>
-                      <option>Dark</option>
+                    <select
+                      value={mode}
+                      onChange={e => setMode(e.target.value as ThemeMode)}
+                      className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-md text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none cursor-pointer"
+                    >
+                      <option value="system">System Default</option>
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
                     </select>
                   </div>
                 </div>

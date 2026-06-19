@@ -4,14 +4,7 @@ import { Loader2 } from 'lucide-react';
 import AppLayout from './components/AppLayout';
 import LoginScreen from './components/LoginScreen';
 import { AuthProvider, useAuth } from './lib/AuthContext';
-
-// ── Theme provider ─────────────────────────────────────────────────────────
-// Inline fallback until a real ThemeProvider is wired up.
-// Replace this with your actual provider when ready.
-
-const ThemeProvider = ({ children }: { children: React.ReactNode }) => (
-  <>{children}</>
-);
+import { ThemeProvider } from './lib/ThemeContext';
 
 // ── 404 fallback ───────────────────────────────────────────────────────────
 // FIX: catch-all path="*" previously rendered AppLayout again, giving no
