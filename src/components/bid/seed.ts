@@ -37,6 +37,7 @@ interface SeedLabor {
 
 const seed = seedData as {
   page1: SeedLine[];
+  page1a: SeedLine[];
   page2: SeedSection[];
   page3: SeedFixture[];
   page4_labor: SeedLabor[];
@@ -115,7 +116,7 @@ export function makeBlankDocument(): BidDocument {
     gcOwner: '',
     date: new Date().toISOString().slice(0, 10),
     page1: seed.page1.map(l => toLine('p1', l)),
-    page1a: [],
+    page1a: (seed.page1a ?? []).map(l => toLine('p1a', l)),
     page2: seed.page2.map(toSection),
     page3: seed.page3.map(toFixture),
     summary: defaultSummary(),
