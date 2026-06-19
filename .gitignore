@@ -1,2 +1,9 @@
 node_modules
 .env
+# build output
+dist
+
+# tsc now runs with noEmit; no compiled JS should land in src.
+# (If you ever add a real .js source file, force-add it: git add -f path.js)
+src/**/*.js
+src/**/*.js.map
