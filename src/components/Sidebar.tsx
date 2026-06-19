@@ -38,6 +38,23 @@ export type ViewKey =
   | 'schedule'
   | 'settings';
 
+import type { Role } from '@/lib/AuthContext';
+
+// Which roles can see each nav item.
+// owner = Preston/Greg (everything), office = read-only everywhere except bids,
+// crew = past jobs, blueprints, submittals, photos, quick bid only.
+const NAV_ITEMS: { key: ViewKey; label: string; icon: typeof LayoutDashboard; roles: Role[] }[] = [
+  { key: 'dashboard', label: 'Dispatch Board',     icon: LayoutDashboard, roles: ['owner', 'office', 'crew'] },
+  { key: 'calendar',  label: 'Weekly Calendar',    icon: CalendarDays,    roles: ['owner', 'office', 'crew'] },
+  { key: 'tasks',     label: 'Daily Tasks',        icon: ClipboardList,   roles: ['owner', 'office', 'crew'] },
+  { key: 'schedule',  label: 'Crew Schedule',      icon: Truck,           roles: ['owner', 'office', 'crew'] },
+  { key: 'customers', label: 'Customers Database', icon: Users,           roles: ['owner', 'office'] },
+  // Quick Bid Estimator: owners + crew (per Preston). Office is view-only elsewhere.
+  { key: 'estimator', label: 'Bid Estimator',      icon: Calculator,      roles: ['owner', 'crew'] },
+  // Full Bid Takeoff: OWNERS ONLY — sensitive bid pricing.
+  { key: 'takeoff',   label: 'Full Bid Takeoff',   icon: FileSpreadsheet, roles: ['owner'] },
+];
+
 
 interface SidebarProps {
   activeView: ViewKey;
@@ -61,7 +78,7 @@ export default function Sidebar({
 
   const { activeProvider } = useAIProviderContext();
   const { unreadCount }    = useTwilioMessages();
-  const { session, signOut } = useAuth();
+  const { session, signOut, role } = useAuth();
   const { resolved, setMode } = useTheme();
   const config             = AI_PROVIDER_CONFIGS[activeProvider];
 
@@ -127,104 +144,27 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* Main nav */}
+        {/* Main nav — filtered by the signed-in user's role */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          <button
-            type="button"
-            onClick={() => handleNavClick('dashboard')}
-            className={clsx(
-              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
-              activeView === 'dashboard'
-                ? 'bg-blue-600 text-white'
-                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
-            )}
-          >
-            <LayoutDashboard className="w-4 h-4 mr-3 shrink-0" />
-            Dispatch Board
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleNavClick('calendar')}
-            className={clsx(
-              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
-              activeView === 'calendar'
-                ? 'bg-blue-600 text-white'
-                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
-            )}
-          >
-            <CalendarDays className="w-4 h-4 mr-3 shrink-0" />
-            Weekly Calendar
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleNavClick('tasks')}
-            className={clsx(
-              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
-              activeView === 'tasks'
-                ? 'bg-blue-600 text-white'
-                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
-            )}
-          >
-            <ClipboardList className="w-4 h-4 mr-3 shrink-0" />
-            Daily Tasks
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleNavClick('schedule')}
-            className={clsx(
-              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
-              activeView === 'schedule'
-                ? 'bg-blue-600 text-white'
-                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
-            )}
-          >
-            <Truck className="w-4 h-4 mr-3 shrink-0" />
-            Crew Schedule
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleNavClick('customers')}
-            className={clsx(
-              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
-              activeView === 'customers'
-                ? 'bg-blue-600 text-white'
-                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
-            )}
-          >
-            <Users className="w-4 h-4 mr-3 shrink-0" />
-            Customers Database
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleNavClick('estimator')}
-            className={clsx(
-              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
-              activeView === 'estimator'
-                ? 'bg-blue-600 text-white'
-                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
-            )}
-          >
-            <Calculator className="w-4 h-4 mr-3 shrink-0" />
-            Bid Estimator
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavClick('takeoff')}
-            className={clsx(
-              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
-              activeView === 'takeoff'
-                ? 'bg-teal-600 text-white'
-                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
-            )}
-          >
-            <FileSpreadsheet className="w-4 h-4 mr-3 shrink-0" />
-            Full Bid Takeoff
-          </button>
+          {NAV_ITEMS.filter(item => role && item.roles.includes(role)).map(item => {
+            const Icon = item.icon;
+            const isActive = activeView === item.key;
+            const activeColor = item.key === 'takeoff' ? 'bg-teal-600 text-white' : 'bg-blue-600 text-white';
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => handleNavClick(item.key)}
+                className={clsx(
+                  'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
+                  isActive ? activeColor : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
+                )}
+              >
+                <Icon className="w-4 h-4 mr-3 shrink-0" />
+                {item.label}
+              </button>
+            );
+          })}
         </nav>
 
         {/* Bottom actions */}
@@ -282,9 +222,21 @@ export default function Sidebar({
           {/* Signed-in user + sign out */}
           <div className="pt-2 mt-1 border-t border-slate-800">
             {session?.user?.email && (
-              <p className="px-3 pt-1 pb-1.5 text-[10px] text-slate-500 truncate" title={session.user.email}>
-                Signed in as {session.user.email}
-              </p>
+              <div className="px-3 pt-1 pb-1.5">
+                <p className="text-[10px] text-slate-500 truncate" title={session.user.email}>
+                  Signed in as {session.user.email}
+                </p>
+                {role && (
+                  <span className={clsx(
+                    'inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider',
+                    role === 'owner' ? 'bg-teal-900/40 text-teal-300'
+                      : role === 'office' ? 'bg-blue-900/40 text-blue-300'
+                      : 'bg-slate-800 text-slate-400'
+                  )}>
+                    {role === 'owner' ? 'Owner' : role === 'office' ? 'Office (View Only)' : 'Crew'}
+                  </span>
+                )}
+              </div>
             )}
             <button
               type="button"

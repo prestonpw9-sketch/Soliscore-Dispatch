@@ -20,6 +20,7 @@ import SlideOutPanel from './SlideOutPanel';
 import { weekDates, todayStr } from '@/lib/data';
 import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
+import { useAuth } from '@/lib/AuthContext';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -37,7 +38,21 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
 // ── Component ──────────────────────────────────────────────────────────────
 
 const AppLayout: React.FC = () => {
+  const { role } = useAuth();
   const [view, setView]                     = useState<ViewKey>('dashboard');
+
+  // Which views each role may open (must mirror the Sidebar's NAV_ITEMS).
+  const viewAccess: Record<string, string[]> = {
+    dashboard: ['owner', 'office', 'crew'],
+    calendar:  ['owner', 'office', 'crew'],
+    tasks:     ['owner', 'office', 'crew'],
+    schedule:  ['owner', 'office', 'crew'],
+    customers: ['owner', 'office'],
+    estimator: ['owner', 'crew'],
+    takeoff:   ['owner'],
+    settings:  ['owner', 'office', 'crew'],
+  };
+  const canSeeView = (v: string) => !!role && (viewAccess[v]?.includes(role) ?? false);
   const [sidebarOpen, setSidebarOpen]       = useState(false);
   const [taskDate, setTaskDate]             = useState(todayStr);
   const [modalOpen, setModalOpen]           = useState(false);
@@ -241,7 +256,14 @@ const AppLayout: React.FC = () => {
         <main className="flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">
           {/* These views don't depend on dispatch data, so they render immediately
               and are never blocked by the "Loading dispatch data" gate. */}
-          {view === 'settings' ? (
+          {!canSeeView(view) ? (
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-8 max-w-md mx-auto text-center mt-10">
+              <p className="font-bold text-amber-800 dark:text-amber-300">Access restricted</p>
+              <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
+                Your account doesn't have permission to view this section. Contact Preston or Greg if you need access.
+              </p>
+            </div>
+          ) : view === 'settings' ? (
             <SettingsView />
           ) : view === 'estimator' ? (
             <QuickBidEstimator mode="standalone" />

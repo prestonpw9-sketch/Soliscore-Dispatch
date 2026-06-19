@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Loader2, Mail, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { ALLOWED_EMAILS } from '@/lib/AuthContext';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -14,12 +13,6 @@ export default function LoginScreen() {
     e.preventDefault();
     const clean = email.trim().toLowerCase();
     setError(null);
-
-    if (!ALLOWED_EMAILS.includes(clean)) {
-      setError('This email is not authorized for ITDG Plumbing Crew Dispatch.');
-      return;
-    }
-
     setBusy(true);
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: clean,
@@ -34,7 +27,8 @@ export default function LoginScreen() {
           : signInError.message
       );
     }
-    // On success the AuthContext listener swaps to the app automatically.
+    // On success the AuthContext listener checks the role. If the account has no
+    // assigned role it is signed out automatically (not authorized).
   };
 
   return (
