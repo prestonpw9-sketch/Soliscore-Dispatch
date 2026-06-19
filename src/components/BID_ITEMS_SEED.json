@@ -1075,5 +1075,397 @@
       "label": "MISC & DRIVE",
       "hours": 0
     }
+  ],
+  "page1a": [
+    {
+      "size": "4\"",
+      "item": "Fig. #5 NO HUB C.I.",
+      "price": 220.02,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "combos NO HUB C.I.",
+      "price": 71.92,
+      "mult": 1
+    },
+    {
+      "size": "4 x 3",
+      "item": "combos NO HUB C.I.",
+      "price": 48.74,
+      "mult": 1
+    },
+    {
+      "size": "4 x 2",
+      "item": "combos NO HUB C.I.",
+      "price": 38.57,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "Wyes NO HUB C.I.",
+      "price": 48.66,
+      "mult": 1
+    },
+    {
+      "size": "4 x 3",
+      "item": "Wyes NO HUB C.I.",
+      "price": 42.04,
+      "mult": 1
+    },
+    {
+      "size": "4 x 2 ",
+      "item": "Wyes NO HUB C.I.",
+      "price": 32.11,
+      "mult": 1
+    },
+    {
+      "size": "4 x 3",
+      "item": "Reducers NO HUB C.I. ( or 4\" x 2\")",
+      "price": 17.67,
+      "mult": 1
+    },
+    {
+      "size": "4 X 2",
+      "item": "Lo heel 1/4 bend NO HUB C.I.",
+      "price": 45.79,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "sweep NO HUB C.I.",
+      "price": 52.44,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "1/8 or 1/16 bend NO HUB C.I.",
+      "price": 24.65,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "Blake tee w/plug",
+      "price": 67.68,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "closet bend w/ ring",
+      "price": 96.38,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "combos NO HUB C.I.",
+      "price": 37.24,
+      "mult": 1
+    },
+    {
+      "size": "3\" x 2\"",
+      "item": "combos NO HUB C.I.",
+      "price": 29.64,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "Wyes NO HUB C.I.",
+      "price": 30.21,
+      "mult": 1
+    },
+    {
+      "size": "3 x 2",
+      "item": "Wyes NO HUB C.I.",
+      "price": 29.64,
+      "mult": 1
+    },
+    {
+      "size": "3\" ",
+      "item": "sweeps NO HUB C.I.",
+      "price": 29.64,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "1/4 bends NO HUB C.I.",
+      "price": 22.75,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "1/8 bends & 1/16 Bends NO HUB C.I.",
+      "price": 18.81,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "san tees NO HUB C.I.",
+      "price": 27.65,
+      "mult": 1
+    },
+    {
+      "size": "3 x 2",
+      "item": "san tees NO HUB C.I.",
+      "price": 24.51,
+      "mult": 1
+    },
+    {
+      "size": "3 x 1-1/2",
+      "item": "san tees NO HUB C.I.",
+      "price": 26.55,
+      "mult": 1
+    },
+    {
+      "size": "3 x 2",
+      "item": "lo heel 1/4 bend NO HUB C.I.",
+      "price": 35.91,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "Fig. # 5 NO HUB C.I.",
+      "price": 135.23,
+      "mult": 1
+    },
+    {
+      "size": "3 x 2",
+      "item": "san cross NO HUB C.I.",
+      "price": 52.54,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "P-Traps NO HUB C.I.",
+      "price": 51.92,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "Blake tee w/plug  NO HUB C.I.",
+      "price": 33.3,
+      "mult": 1
+    },
+    {
+      "size": "3 x 4",
+      "item": "closet ell w/  Closet Ring NO HUB C.I.",
+      "price": 116.97,
+      "mult": 1
+    },
+    {
+      "size": "3 x 2",
+      "item": "Reducers NO HUB C.I.",
+      "price": 11.69,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "combos NO HUB C.I.",
+      "price": 23.66,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "Wyes NO HUB C.I.",
+      "price": 20.71,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "sweeps NO HUB C.I.",
+      "price": 22.71,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "1/4 bends NO HUB C.I.",
+      "price": 16.25,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "1/8 bends & 1/16 Bends NO HUB C.I.",
+      "price": 16.25,
+      "mult": 1
+    },
+    {
+      "size": "2 \"",
+      "item": "P traps NO HUB C.I.",
+      "price": 23.66,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "Fig # 1 tapped NO HUB C.I.",
+      "price": 54.34,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "san tees NO HUB C.I.",
+      "price": 22.42,
+      "mult": 1
+    },
+    {
+      "size": "2 x 1-1/2",
+      "item": "tapped san tees NO HUB C.I.",
+      "price": 24.51,
+      "mult": 1
+    },
+    {
+      "size": "2 x 1-1/2",
+      "item": "San tees NO HUB C.I.",
+      "price": 22.71,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "C.O. tees w/ plug NO HUB C.I.",
+      "price": 20.24,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "san cross NO HUB C.I.",
+      "price": 38.19,
+      "mult": 1
+    },
+    {
+      "size": "2 x 1-1/2",
+      "item": "reducers NO HUB C.I.",
+      "price": 11.78,
+      "mult": 1
+    },
+    {
+      "size": "1-1/2\"",
+      "item": "1/4 bends NO HUB C.I.",
+      "price": 14.92,
+      "mult": 1
+    },
+    {
+      "size": "1-1/2\"",
+      "item": "1/8 bends & 1/16 Bends NO HUB C.I.",
+      "price": 13.11,
+      "mult": 1
+    },
+    {
+      "size": "1-1/2\"",
+      "item": "san tees NO HUB C.I.",
+      "price": 20.95,
+      "mult": 1
+    },
+    {
+      "size": "6\"",
+      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
+      "price": 14.56,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
+      "price": 5.75,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
+      "price": 4.88,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
+      "price": 4.07,
+      "mult": 1
+    },
+    {
+      "size": "2 -> 1-1/2\"",
+      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
+      "price": 5.36,
+      "mult": 1
+    },
+    {
+      "size": "1-1/2\"",
+      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
+      "price": 3.91,
+      "mult": 1
+    },
+    {
+      "size": "8\"",
+      "item": "HUSKY BANDS",
+      "price": 81,
+      "mult": 1
+    },
+    {
+      "size": "6\"",
+      "item": "HUSKY BANDS",
+      "price": 20.3,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "HUSKY BANDS",
+      "price": 17.42,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "HUSKY BANDS",
+      "price": 15.07,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "HUSKY BANDS",
+      "price": 15.07,
+      "mult": 1
+    },
+    {
+      "size": "2 -> 1-1/2\"",
+      "item": "HUSKY BANDS",
+      "price": 14.15,
+      "mult": 1
+    },
+    {
+      "size": "1-1/2\"",
+      "item": "HUSKY BANDS",
+      "price": 13.094,
+      "mult": 1
+    },
+    {
+      "size": "8\"",
+      "item": "NH CI Pipe",
+      "price": 73.145,
+      "mult": 1
+    },
+    {
+      "size": "6\"",
+      "item": "NH CI Pipe",
+      "price": 30.0552,
+      "mult": 1
+    },
+    {
+      "size": "4\"",
+      "item": "NH CI Pipe",
+      "price": 17.4804,
+      "mult": 1
+    },
+    {
+      "size": "3\"",
+      "item": "NH CI Pipe",
+      "price": 13.4694,
+      "mult": 1
+    },
+    {
+      "size": "2\"",
+      "item": "NH CI Pipe",
+      "price": 9.7398,
+      "mult": 1
+    },
+    {
+      "size": "1-1/2\"",
+      "item": "NH CI Pipe",
+      "price": 9.7188,
+      "mult": 1
+    }
   ]
 }

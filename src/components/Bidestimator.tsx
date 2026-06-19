@@ -33,7 +33,7 @@ function num(raw: string): number {
 type TabType = 'page1' | 'page2' | 'page3' | 'summary';
 
 const TABS: { key: TabType; label: string }[] = [
-  { key: 'page1', label: 'Page 1 — DWV' },
+  { key: 'page1', label: 'Page 1 — DWV & Cast Iron' },
   { key: 'page2', label: 'Page 2 — Pipe' },
   { key: 'page3', label: 'Page 3 — Fixtures' },
   { key: 'summary', label: 'Summary (Pg 4)' },
@@ -409,13 +409,13 @@ function Page1Tab({ doc, updateLine, addLine, removeLine }: Page1Props) {
         totalLabel="PAGE 1 TOTAL"
       />
       <LineTable
-        title="Page 1a — Additional Material (×1.05)"
+        title="Page 1a — Cast Iron (No-Hub C.I.) (×1.05)"
         total={p1a.total}
         lines={doc.page1a}
         onUpdate={(id, patch) => updateLine('page1a', id, patch)}
         onAdd={() => addLine('page1a')}
         onRemove={id => removeLine('page1a', id)}
-        totalLabel="PAGE 1a TOTAL"
+        totalLabel="PAGE 1a TOTAL (Cast Iron)"
       />
       <div className={`${cardCls} flex justify-between items-center px-4 py-4`}>
         <span className="font-bold">PAGE 1 COMBINED (H81 + I79)</span>
