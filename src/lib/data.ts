@@ -23,7 +23,7 @@ export interface Job {
   type: JobType;
   status: JobStatus;
   priority: Priority;
-  technicianId: string;
+  technicianId: string | null;
   date: string;
   endDate?: string;       
   startTime: string;

@@ -9,6 +9,7 @@ interface Props {
   weekDates: string[];
   onJobClick: (job: Job) => void;
   onJobDrop: (jobId: string, newDate: string, newStartHour: number) => void;
+  onAssignTechnician?: (jobId: string, technicianId: string | null) => void;
   onEmptySlotClick?: (date: string, hour: number) => void;
 }
 
@@ -25,6 +26,7 @@ const CalendarView: React.FC<Props> = ({
   weekDates,
   onJobClick,
   onJobDrop,
+  onAssignTechnician,
   onEmptySlotClick,
 }) => {
   const [techFilter, setTechFilter] = useState<string>('all');
@@ -181,9 +183,30 @@ const CalendarView: React.FC<Props> = ({
                             <div className="font-semibold truncate">
                               {job.startTime} {job.customerName}
                             </div>
-                            <div className="opacity-90 truncate text-[10px]">
-                              {tech?.name}
-                            </div>
+                            {onAssignTechnician ? (
+                              <select
+                                aria-label={`Assign plumber to ${job.customerName}`}
+                                value={job.technicianId ?? ''}
+                                draggable={false}
+                                onClick={e => e.stopPropagation()}
+                                onMouseDown={e => e.stopPropagation()}
+                                onDragStart={e => e.stopPropagation()}
+                                onChange={e => {
+                                  e.stopPropagation();
+                                  onAssignTechnician(job.id, e.target.value || null);
+                                }}
+                                className="mt-1 w-full bg-white/20 hover:bg-white/30 text-white text-[10px] font-medium rounded px-1 py-0.5 outline-none cursor-pointer border border-white/30 [&>option]:text-slate-900"
+                              >
+                                <option value="">Unassigned</option>
+                                {technicians.map(t => (
+                                  <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div className="opacity-90 truncate text-[10px]">
+                                {tech?.name}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
