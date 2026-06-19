@@ -57,6 +57,7 @@ const AppLayout: React.FC = () => {
     createJob,
     toggleJobStatus,
     rescheduleJob,
+    assignTechnician,
     hireTechnician,
     fireTechnician,
   } = useDispatchData();
@@ -92,6 +93,14 @@ const AppLayout: React.FC = () => {
 
   const handleToggleTaskStatus = (jobId: string) => {
     void toggleJobStatus(jobId);
+  };
+
+  const handleAssignTechnician = (jobId: string, technicianId: string | null) => {
+    void (async () => {
+      await assignTechnician(jobId, technicianId);
+      const tech = technicians.find(t => t.id === technicianId);
+      showToast(tech ? `Plumber assigned: ${tech.name}` : 'Plumber unassigned');
+    })();
   };
 
   const handleCreateJob = (job: Omit<Job, 'id'>) => {
@@ -272,6 +281,7 @@ const AppLayout: React.FC = () => {
                   weekDates={weekDates}
                   onJobClick={setSelectedJob}
                   onJobDrop={handleJobDrop}
+                  onAssignTechnician={handleAssignTechnician}
                 />
               )}
 

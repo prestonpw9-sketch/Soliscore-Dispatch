@@ -12,6 +12,13 @@ function formatTime(hour: number, minute: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
+// The DB `technician_id` column is a nullable UUID. Coerce empty / falsey /
+// legacy 'unassigned' sentinels to null so the column accepts the value.
+function normalizeTechId(id: string | null | undefined): string | null {
+  if (!id || id === 'unassigned') return null;
+  return id;
+}
+
 // ── Hook ───────────────────────────────────────────────────────────────────
 
 export const useDispatchData = () => {
@@ -44,7 +51,7 @@ export const useDispatchData = () => {
         startTime:         j.startTime ?? '08:00',
         endTime:           j.endTime ?? '10:00',
         date:              j.date ?? new Date().toISOString().split('T')[0],
-        technicianId:      j.technicianId ?? j.tech ?? 'unassigned',
+        technicianId:      j.technician_id ?? null,
         type:              j.type ?? 'maintenance',
         estimatedDuration: j.estimatedDuration ?? 120,
       }));
@@ -101,7 +108,7 @@ export const useDispatchData = () => {
       date:         jobData.date,
       startTime:    jobData.startTime,
       endTime:      jobData.endTime,
-      technicianId: jobData.technicianId ?? 'unassigned',
+      technician_id: normalizeTechId(jobData.technicianId),
       type:         jobData.type ?? 'maintenance',
     }]);
     if (sbError) {
@@ -165,6 +172,22 @@ export const useDispatchData = () => {
     }
   }, [refresh]); // FIX: `jobs` removed from deps — read via ref instead
 
+  const assignTechnician = useCallback(async (
+    jobId: string, technicianId: string | null,
+  ) => {
+    const newTechId = normalizeTechId(technicianId);
+    // Optimistic UI update (functional form — never stale)
+    setJobs(prev => prev.map(j =>
+      j.id === jobId ? { ...j, technicianId: newTechId } : j
+    ));
+    const { error: sbError } = await supabase
+      .from('jobs').update({ technician_id: newTechId }).eq('id', jobId);
+    if (sbError) {
+      console.error('Failed to assign technician:', sbError);
+      await refresh(); // Roll back optimistic update on failure
+    }
+  }, [refresh]);
+
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase: newPhase } : j));
     const { error: sbError } = await supabase
@@ -205,6 +228,7 @@ export const useDispatchData = () => {
     createJob,
     toggleJobStatus,
     rescheduleJob,
+    assignTechnician,
     updateJobPhase,
     hireTechnician,
     fireTechnician,

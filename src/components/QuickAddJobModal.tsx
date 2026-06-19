@@ -446,6 +446,7 @@ const QuickAddJobModal: React.FC<Props> = ({
                 onChange={e => setTechnicianId(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-xs font-semibold focus:ring-2 focus:ring-teal-500 outline-none cursor-pointer"
               >
+                <option value="">Unassigned</option>
                 {technicians.map(t => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
