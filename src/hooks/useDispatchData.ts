@@ -36,7 +36,6 @@ export const useDispatchData = () => {
   // ── Fetchers ─────────────────────────────────────────────────────────────
 
   const fetchJobs = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const { data, error: sbError } = await supabase.from('jobs').select('*');
@@ -61,8 +60,6 @@ export const useDispatchData = () => {
       const msg = getErrorMessage(err, 'Failed to load jobs.');
       console.error('Error fetching jobs:', err);
       setError(msg);
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -87,8 +84,14 @@ export const useDispatchData = () => {
     }
   }, []);
 
+  // Initial load: run all fetches, then ALWAYS clear the loading flag once they
+  // settle — even if one fails — so the app can never get stuck on "Syncing…".
   useEffect(() => {
-    void Promise.all([fetchJobs(), fetchTeam(), fetchCustomers()]);
+    let active = true;
+    setLoading(true);
+    void Promise.allSettled([fetchJobs(), fetchTeam(), fetchCustomers()])
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [fetchJobs, fetchTeam, fetchCustomers]);
 
   // FIX: await all three in parallel rather than sequentially
