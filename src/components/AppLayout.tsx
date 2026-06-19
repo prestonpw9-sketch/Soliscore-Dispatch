@@ -15,6 +15,7 @@ import SettingsView from './SettingsView';
 import QuickAddJobModal from './QuickAddJobModal';
 import EstimatorPanel from './EstimatorPanel';
 import QuickBidEstimator from './QuickBidEstimator';
+import BidEstimator from './Bidestimator';
 import SlideOutPanel from './SlideOutPanel';
 import { weekDates, todayStr } from '@/lib/data';
 import type { Job, Customer } from '@/lib/data';
@@ -27,7 +28,8 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
   calendar:   { title: 'Weekly Calendar', subtitle: 'Drag-and-drop scheduling across technicians' },
   tasks:      { title: 'Daily Tasks',     subtitle: 'Track jobs per technician' },
   customers:  { title: 'Customers',       subtitle: 'Full customer database and history' },
-  estimator:  { title: 'Bid Estimator',   subtitle: 'Create, calculate, and save plumbing job bids' },
+  estimator:  { title: 'Bid Estimator',   subtitle: 'Quick change orders and fast job bids' },
+  takeoff:    { title: 'Full Bid Takeoff', subtitle: 'Full 4-page takeoff for ground-up buildings and houses' },
   schedule:   { title: 'Crew Schedule',   subtitle: 'Manage commercial phases and crew assignments' },
   settings:   { title: 'System Settings', subtitle: 'Manage profile configuration parameters' },
 };
@@ -293,6 +295,7 @@ const AppLayout: React.FC = () => {
               )}
 
               {view === 'estimator' && <QuickBidEstimator mode="standalone" />}
+              {view === 'takeoff'   && <BidEstimator />}
               {view === 'schedule'  && <TechSchedule />}
             </>
           )}

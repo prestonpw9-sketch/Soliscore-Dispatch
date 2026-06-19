@@ -9,6 +9,7 @@ import {
   Truck,
   Users,
   Calculator,
+  FileSpreadsheet,
   Settings,
   X,
 } from 'lucide-react';
@@ -28,6 +29,7 @@ export type ViewKey =
   | 'tasks'
   | 'customers'
   | 'estimator'
+  | 'takeoff'
   | 'schedule'
   | 'settings';
 
@@ -202,6 +204,19 @@ export default function Sidebar({
           >
             <Calculator className="w-4 h-4 mr-3 shrink-0" />
             Bid Estimator
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNavClick('takeoff')}
+            className={clsx(
+              'flex items-center px-3 py-2.5 rounded-xl text-sm transition-colors w-full font-bold group',
+              activeView === 'takeoff'
+                ? 'bg-teal-600 text-white'
+                : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
+            )}
+          >
+            <FileSpreadsheet className="w-4 h-4 mr-3 shrink-0" />
+            Full Bid Takeoff
           </button>
         </nav>
 
