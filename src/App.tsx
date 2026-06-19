@@ -1,6 +1,9 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import AppLayout from './components/AppLayout';
+import LoginScreen from './components/LoginScreen';
+import { AuthProvider, useAuth } from './lib/AuthContext';
 
 // ── Theme provider ─────────────────────────────────────────────────────────
 // Inline fallback until a real ThemeProvider is wired up.
@@ -39,8 +42,24 @@ function NotFound() {
 
 // ── App ────────────────────────────────────────────────────────────────────
 
-const App = () => (
-  <ThemeProvider>
+// ── Auth gate ──────────────────────────────────────────────────────────────
+// While the session loads, show a spinner. No session => login screen.
+// Valid (allow-listed) session => the real app.
+
+function Gate() {
+  const { session, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <Loader2 className="w-7 h-7 text-teal-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!session) return <LoginScreen />;
+
+  return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<AppLayout />} />
@@ -48,6 +67,14 @@ const App = () => (
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
+  );
+}
+
+const App = () => (
+  <ThemeProvider>
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
   </ThemeProvider>
 );
 

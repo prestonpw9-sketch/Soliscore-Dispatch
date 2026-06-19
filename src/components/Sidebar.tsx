@@ -11,6 +11,7 @@ import {
   Calculator,
   FileSpreadsheet,
   Settings,
+  LogOut,
   X,
 } from 'lucide-react';
 import { AIAssistantPanel } from '@/components/AIAssistant/AIAssistantPanel';
@@ -18,6 +19,7 @@ import SMSPanel from '@/components/SMSPanel';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import { useTwilioMessages } from '@/hooks/useTwilioMessages';
 import { AI_PROVIDER_CONFIGS } from '@/services/ai/types';
+import { useAuth } from '@/lib/AuthContext';
 
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -56,6 +58,7 @@ export default function Sidebar({
 
   const { activeProvider } = useAIProviderContext();
   const { unreadCount }    = useTwilioMessages();
+  const { session, signOut } = useAuth();
   const config             = AI_PROVIDER_CONFIGS[activeProvider];
 
 
@@ -271,6 +274,23 @@ export default function Sidebar({
               {config?.label || 'Pro'}
             </span>
           </button>
+
+          {/* Signed-in user + sign out */}
+          <div className="pt-2 mt-1 border-t border-slate-800">
+            {session?.user?.email && (
+              <p className="px-3 pt-1 pb-1.5 text-[10px] text-slate-500 truncate" title={session.user.email}>
+                Signed in as {session.user.email}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => { void signOut(); }}
+              className="w-full flex items-center px-3 py-2 rounded-xl text-xs transition-colors font-bold text-slate-400 hover:bg-red-600/10 hover:text-red-400"
+            >
+              <LogOut className="w-4 h-4 mr-3 shrink-0" />
+              Sign Out
+            </button>
+          </div>
         </div>
       </div>
 
