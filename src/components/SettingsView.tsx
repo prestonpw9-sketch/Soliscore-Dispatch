@@ -6,7 +6,7 @@ const SettingsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'profile' | 'preferences' | 'integrations'>('profile');
   const { mode, setMode } = useTheme();
 
-  const [companyName, setCompanyName] = useState('Solidcore Plumbing, LLC');
+  const [companyName, setCompanyName] = useState('ITDG Plumbing');
   const [ownerName, setOwnerName] = useState('Preston Watson');
   const [location, setLocation] = useState('Tucson, AZ');
   const [license, setLicense] = useState('ROC Commercial');

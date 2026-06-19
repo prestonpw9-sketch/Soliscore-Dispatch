@@ -110,11 +110,11 @@ export default function Sidebar({
         {/* Logo */}
         <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800 shrink-0">
           <div className="flex items-center">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mr-3 text-white font-black shadow-inner">
-              S
+            <div className="w-9 h-8 bg-teal-600 rounded-lg flex items-center justify-center mr-3 text-white font-black text-xs shadow-inner">
+              ITDG
             </div>
-            <span className="text-white text-base font-black tracking-wider">
-              SOLISCORE
+            <span className="text-white text-sm font-black tracking-wide leading-tight">
+              ITDG Plumbing
             </span>
           </div>
           <button
