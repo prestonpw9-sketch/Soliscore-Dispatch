@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { Loader2, Mail, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { Loader2, Mail, Lock, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { ALLOWED_EMAILS } from '@/lib/AuthContext';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -19,15 +20,21 @@ export default function LoginScreen() {
       return;
     }
 
-    setSending(true);
-    const { error: otpError } = await supabase.auth.signInWithOtp({
+    setBusy(true);
+    const { error: signInError } = await supabase.auth.signInWithPassword({
       email: clean,
-      options: { emailRedirectTo: window.location.origin },
+      password,
     });
-    setSending(false);
+    setBusy(false);
 
-    if (otpError) setError(otpError.message);
-    else setSent(true);
+    if (signInError) {
+      setError(
+        signInError.message.toLowerCase().includes('invalid')
+          ? 'Incorrect email or password. Please try again.'
+          : signInError.message
+      );
+    }
+    // On success the AuthContext listener swaps to the app automatically.
   };
 
   return (
@@ -42,60 +49,65 @@ export default function LoginScreen() {
         </div>
 
         <div className="p-8">
-          {sent ? (
-            <div className="text-center">
-              <CheckCircle2 className="w-12 h-12 text-teal-400 mx-auto mb-4" />
-              <h2 className="text-lg font-bold text-white">Check your email</h2>
-              <p className="text-sm text-slate-400 mt-2">
-                We sent a secure sign-in link to <span className="font-semibold text-slate-200">{email.trim().toLowerCase()}</span>.
-                Click the link in that email to enter the app.
-              </p>
-              <button
-                type="button"
-                onClick={() => { setSent(false); setEmail(''); }}
-                className="mt-6 text-sm font-semibold text-teal-400 hover:text-teal-300 transition-colors"
-              >
-                Use a different email
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-300">Email address</span>
-                <div className="mt-1.5 relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    autoFocus
-                    required
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    placeholder="you@company.com"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:ring-2 focus:ring-teal-500 outline-none"
-                  />
-                </div>
-              </label>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-300">Email</span>
+              <div className="mt-1.5 relative">
+                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  autoFocus
+                  required
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:ring-2 focus:ring-teal-500 outline-none"
+                />
+              </div>
+            </label>
 
-              {error && (
-                <div className="p-3 bg-red-900/30 border border-red-800 rounded-xl text-red-300 text-sm font-medium">
-                  {error}
-                </div>
-              )}
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-300">Password</span>
+              <div className="mt-1.5 relative">
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type={showPw ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Your password"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-10 py-2.5 text-sm text-white placeholder:text-slate-500 focus:ring-2 focus:ring-teal-500 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  aria-label={showPw ? 'Hide password' : 'Show password'}
+                >
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </label>
 
-              <button
-                type="submit"
-                disabled={sending}
-                className="w-full flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl transition-colors"
-              >
-                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                {sending ? 'Sending link…' : 'Send me a sign-in link'}
-              </button>
+            {error && (
+              <div className="p-3 bg-red-900/30 border border-red-800 rounded-xl text-red-300 text-sm font-medium">
+                {error}
+              </div>
+            )}
 
-              <p className="text-xs text-slate-500 text-center pt-2">
-                No password needed. You'll receive a one-time secure link by email.
-              </p>
-            </form>
-          )}
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl transition-colors"
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+              {busy ? 'Signing in…' : 'Sign In'}
+            </button>
+
+            <p className="text-xs text-slate-500 text-center pt-2">
+              Access is limited to authorized Solidcore team members.
+            </p>
+          </form>
         </div>
       </div>
     </div>
