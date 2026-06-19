@@ -20,6 +20,13 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   const [manualText, setManualText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Close on Escape — safety net so the panel is never a dead end.
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
   useEffect(() => {
     void fetchMessages();
 
@@ -105,7 +112,7 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   };
 
   return (
-    <div className="flex h-[800px] w-full max-w-6xl mx-auto bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
+    <div className="flex h-[800px] max-h-full w-full max-w-6xl mx-auto bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
       <div className="w-1/3 border-r border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col">
         <div className="p-5 bg-slate-900 dark:bg-slate-950 text-white flex justify-between items-center shrink-0">
           <div className="flex items-center gap-2">
