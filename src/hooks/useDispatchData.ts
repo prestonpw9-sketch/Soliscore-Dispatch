@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
 import type { Job, Customer, Technician } from '@/lib/data';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -84,15 +85,43 @@ export const useDispatchData = () => {
     }
   }, []);
 
-  // Initial load: run all fetches, then ALWAYS clear the loading flag once they
-  // settle — even if one fails — so the app can never get stuck on "Syncing…".
+  // Only fetch once we actually have an auth session — under RLS, requests made
+  // before the token is attached can hang indefinitely. We also clear the
+  // loading flag after all fetches settle, with a hard timeout safety net so
+  // the app can NEVER get permanently stuck on "Syncing…".
+  const { session, loading: authLoading } = useAuth();
+
   useEffect(() => {
+    // Wait until auth has resolved.
+    if (authLoading) return;
+
+    // No session => nothing to load; don't leave the app spinning.
+    if (!session) {
+      setLoading(false);
+      return;
+    }
+
     let active = true;
     setLoading(true);
+
+    // Safety net: never hang longer than 12s.
+    const timeout = setTimeout(() => {
+      if (active) {
+        setLoading(false);
+        setError(prev => prev ?? 'Data is taking longer than expected to load.');
+      }
+    }, 12000);
+
     void Promise.allSettled([fetchJobs(), fetchTeam(), fetchCustomers()])
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [fetchJobs, fetchTeam, fetchCustomers]);
+      .finally(() => {
+        if (active) {
+          clearTimeout(timeout);
+          setLoading(false);
+        }
+      });
+
+    return () => { active = false; clearTimeout(timeout); };
+  }, [session, authLoading, fetchJobs, fetchTeam, fetchCustomers]);
 
   // FIX: await all three in parallel rather than sequentially
   const refresh = useCallback(async () => {
