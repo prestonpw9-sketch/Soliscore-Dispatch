@@ -30,10 +30,13 @@ const AuthContext = createContext<AuthState>({
 export const useAuth = () => useContext(AuthContext);
 
 // Fetch the signed-in user's role from public.user_roles.
-async function fetchRole(): Promise<Role | null> {
+// Filter by the current user's id so owners (who can read all rows) still get
+// exactly their own role, and maybeSingle never errors on multiple rows.
+async function fetchRole(userId: string): Promise<Role | null> {
   const { data, error } = await supabase
     .from('user_roles')
     .select('role')
+    .eq('user_id', userId)
     .maybeSingle();
   if (error || !data) return null;
   return (data.role as Role) ?? null;
@@ -53,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       // A user is allowed in ONLY if they have a role row. No role => rejected.
-      const r = await fetchRole();
+      const r = await fetchRole(s.user.id);
       if (!active) return;
       if (!r) {
         await supabase.auth.signOut();
