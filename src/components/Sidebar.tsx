@@ -127,8 +127,8 @@ export default function Sidebar({
         {/* Logo */}
         <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800 shrink-0">
           <div className="flex items-center">
-            <div className="w-9 h-8 bg-teal-600 rounded-lg flex items-center justify-center mr-3 text-white font-black text-xs shadow-inner">
-              ITDG
+            <div className="bg-white rounded-lg p-1 mr-3 shadow-inner flex items-center justify-center">
+              <img src="/itdg-logo.png" alt="ITDG" className="h-7 w-auto" />
             </div>
             <span className="text-white text-sm font-black tracking-wide leading-tight">
               ITDG Plumbing
