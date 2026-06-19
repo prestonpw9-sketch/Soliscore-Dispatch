@@ -16,7 +16,7 @@ export default function LoginScreen() {
     setError(null);
 
     if (!ALLOWED_EMAILS.includes(clean)) {
-      setError('This email is not authorized for Soliscore Dispatch.');
+      setError('This email is not authorized for ITDG Plumbing Crew Dispatch.');
       return;
     }
 
@@ -44,8 +44,9 @@ export default function LoginScreen() {
           <div className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-teal-600/20 flex items-center justify-center">
             <ShieldCheck className="w-7 h-7 text-teal-400" />
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">Soliscore Dispatch</h1>
-          <p className="text-sm text-slate-400 mt-1">Secure sign-in for authorized team members.</p>
+          <h1 className="text-2xl font-black text-white tracking-tight">ITDG Plumbing</h1>
+          <p className="text-xs font-semibold text-teal-400 mt-0.5">Crew Dispatch &amp; Jobs Tracking Estimator</p>
+          <p className="text-sm text-slate-400 mt-2">Secure sign-in for authorized team members.</p>
         </div>
 
         <div className="p-8">
@@ -105,7 +106,7 @@ export default function LoginScreen() {
             </button>
 
             <p className="text-xs text-slate-500 text-center pt-2">
-              Access is limited to authorized Solidcore team members.
+              Access is limited to authorized ITDG Plumbing team members.
             </p>
           </form>
         </div>
