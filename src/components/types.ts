@@ -29,5 +29,6 @@ export type ViewKey =
   | 'tasks'
   | 'customers'
   | 'estimator'
+  | 'takeoff'
   | 'schedule'
   | 'settings';
