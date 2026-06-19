@@ -239,7 +239,17 @@ const AppLayout: React.FC = () => {
 
         {/* Main content */}
         <main className="flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">
-          {loading && customers.length === 0 ? (
+          {/* These views don't depend on dispatch data, so they render immediately
+              and are never blocked by the "Loading dispatch data" gate. */}
+          {view === 'settings' ? (
+            <SettingsView />
+          ) : view === 'estimator' ? (
+            <QuickBidEstimator mode="standalone" />
+          ) : view === 'takeoff' ? (
+            <BidEstimator />
+          ) : view === 'schedule' ? (
+            <TechSchedule />
+          ) : loading && customers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-slate-500">
               <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
               <p className="mt-3 text-sm">Loading dispatch data…</p>
@@ -258,8 +268,6 @@ const AppLayout: React.FC = () => {
             </div>
           ) : (
             <>
-              {view === 'settings' && <SettingsView />}
-
               {view === 'dashboard' && (
                 <Dashboard
                   jobs={jobs}
@@ -304,9 +312,6 @@ const AppLayout: React.FC = () => {
                 />
               )}
 
-              {view === 'estimator' && <QuickBidEstimator mode="standalone" />}
-              {view === 'takeoff'   && <BidEstimator />}
-              {view === 'schedule'  && <TechSchedule />}
             </>
           )}
         </main>
