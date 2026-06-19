@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Filter, Users, Check } from 'lucide-react';
 import type { Job, Technician, JobType } from '@/lib/data';
 import { dayNames, hours } from '@/lib/data';
 
@@ -10,6 +10,7 @@ interface Props {
   onJobClick: (job: Job) => void;
   onJobDrop: (jobId: string, newDate: string, newStartHour: number) => void;
   onAssignTechnician?: (jobId: string, technicianId: string | null) => void;
+  onAssignCrew?: (jobId: string, technicianIds: string[]) => void;
   onEmptySlotClick?: (date: string, hour: number) => void;
 }
 
@@ -20,6 +21,119 @@ const typeColors: Record<JobType, string> = {
   inspection:   'bg-purple-500 border-purple-600',
 };
 
+const initials = (name: string) =>
+  name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+// Resolve a job's assigned crew, falling back to the legacy single id.
+function crewIds(job: Job): string[] {
+  const ids = job.technicianIds ?? [];
+  if (ids.length) return ids;
+  return job.technicianId ? [job.technicianId] : [];
+}
+
+// Inline checkbox popover for assigning multiple crew to one job block.
+const CrewPicker: React.FC<{
+  job: Job;
+  technicians: Technician[];
+  onAssignCrew: (jobId: string, technicianIds: string[]) => void;
+}> = ({ job, technicians, onAssignCrew }) => {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const selected = crewIds(job);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggle = (id: string) => {
+    const next = selected.includes(id)
+      ? selected.filter(x => x !== id)
+      : [...selected, id];
+    onAssignCrew(job.id, next);
+  };
+
+  const assignedTechs = technicians.filter(t => selected.includes(t.id));
+
+  return (
+    <div ref={wrapRef} className="relative mt-1" onClick={e => e.stopPropagation()}>
+      <button
+        type="button"
+        draggable={false}
+        onMouseDown={e => e.stopPropagation()}
+        onDragStart={e => e.stopPropagation()}
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        aria-label={`Assign crew to ${job.customerName}`}
+        className="w-full flex items-center gap-1 bg-white/20 hover:bg-white/30 text-white rounded px-1 py-0.5 border border-white/30 transition-colors"
+      >
+        {assignedTechs.length > 0 ? (
+          <span className="flex items-center -space-x-1">
+            {assignedTechs.slice(0, 3).map(t => (
+              <span
+                key={t.id}
+                title={t.name}
+                className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-white/90 text-slate-800 text-[8px] font-bold border border-white"
+              >
+                {initials(t.name)}
+              </span>
+            ))}
+            {assignedTechs.length > 3 && (
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-900/70 text-white text-[8px] font-bold border border-white">
+                +{assignedTechs.length - 3}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-[10px] font-medium">
+            <Users className="w-3 h-3" /> Assign crew
+          </span>
+        )}
+        <span className="ml-auto text-[9px] font-semibold opacity-80">
+          {assignedTechs.length > 0 ? `${assignedTechs.length}` : ''}
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute z-30 mt-1 left-0 w-48 max-h-52 overflow-y-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-1 text-slate-800 dark:text-slate-100">
+          <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400 border-b border-slate-100 dark:border-slate-700/60">
+            Assign crew ({selected.length})
+          </div>
+          {technicians.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-slate-400">No technicians.</p>
+          ) : (
+            technicians.map(t => {
+              const checked = selected.includes(t.id);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={e => { e.stopPropagation(); toggle(t.id); }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                >
+                  <span
+                    className={`inline-flex items-center justify-center w-4 h-4 rounded border ${
+                      checked
+                        ? 'bg-teal-600 border-teal-600 text-white'
+                        : 'border-slate-300 dark:border-slate-600'
+                    }`}
+                  >
+                    {checked && <Check className="w-3 h-3" />}
+                  </span>
+                  <span className="truncate">{t.name}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CalendarView: React.FC<Props> = ({
   jobs,
   technicians,
@@ -27,6 +141,7 @@ const CalendarView: React.FC<Props> = ({
   onJobClick,
   onJobDrop,
   onAssignTechnician,
+  onAssignCrew,
   onEmptySlotClick,
 }) => {
   const [techFilter, setTechFilter] = useState<string>('all');
@@ -34,7 +149,7 @@ const CalendarView: React.FC<Props> = ({
   const [draggedJob, setDraggedJob] = useState<string | null>(null);
 
   const filteredJobs = jobs.filter(j => {
-    if (techFilter !== 'all' && j.technicianId !== techFilter) return false;
+    if (techFilter !== 'all' && !crewIds(j).includes(techFilter)) return false;
     if (typeFilter !== 'all' && j.type !== typeFilter) return false;
     return true;
   });
@@ -162,7 +277,10 @@ const CalendarView: React.FC<Props> = ({
                       }`}
                     >
                       {cellJobs.map(job => {
-                        const tech = technicians.find(t => t.id === job.technicianId);
+                        const assigned = crewIds(job);
+                        const assignedNames = technicians
+                          .filter(t => assigned.includes(t.id))
+                          .map(t => t.name);
                         const startH = parseInt(job.startTime.split(':')[0]);
                         const startM = parseInt(job.startTime.split(':')[1]);
                         const endH = parseInt(job.endTime.split(':')[0]);
@@ -183,7 +301,13 @@ const CalendarView: React.FC<Props> = ({
                             <div className="font-semibold truncate">
                               {job.startTime} {job.customerName}
                             </div>
-                            {onAssignTechnician ? (
+                            {onAssignCrew ? (
+                              <CrewPicker
+                                job={job}
+                                technicians={technicians}
+                                onAssignCrew={onAssignCrew}
+                              />
+                            ) : onAssignTechnician ? (
                               <select
                                 aria-label={`Assign plumber to ${job.customerName}`}
                                 value={job.technicianId ?? ''}
@@ -204,7 +328,7 @@ const CalendarView: React.FC<Props> = ({
                               </select>
                             ) : (
                               <div className="opacity-90 truncate text-[10px]">
-                                {tech?.name}
+                                {assignedNames.join(', ') || 'Unassigned'}
                               </div>
                             )}
                           </div>

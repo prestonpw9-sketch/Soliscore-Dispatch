@@ -28,6 +28,11 @@ const TasksView: React.FC<Props> = ({
 }) => {
   const dailyJobs = jobs.filter(j => j.date === selectedDate);
 
+  // A job belongs to a tech if it's in the multi-crew array, or (legacy) the
+  // single technicianId matches.
+  const jobHasTech = (job: Job, techId: string) =>
+    (job.technicianIds?.includes(techId) ?? false) || job.technicianId === techId;
+
   return (
     <div className="space-y-6 w-full">
       <div className="bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-2 overflow-x-auto custom-scrollbar">
@@ -64,7 +69,7 @@ const TasksView: React.FC<Props> = ({
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
         {technicians.map(t => {
           const techJobs = dailyJobs
-            .filter(j => j.technicianId === t.id)
+            .filter(j => jobHasTech(j, t.id))
             .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
           if (techJobs.length === 0) return null;

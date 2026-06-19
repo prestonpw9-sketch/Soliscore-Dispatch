@@ -21,6 +21,13 @@ interface Job {
   date: string;
   end_date: string | null;
   technician_id: string | null;
+  technician_ids: string[] | null;
+}
+
+// A job belongs to a tech if it's in the multi-crew array, or (legacy) the
+// single technician_id matches.
+function jobHasTech(job: Job, techId: string): boolean {
+  return (job.technician_ids?.includes(techId) ?? false) || job.technician_id === techId;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -79,7 +86,7 @@ export default function TechSchedule() {
       const [techRes, jobRes] = await Promise.all([
         supabase.from('technicians').select('id, name, role').order('name'),
         supabase.from('jobs')
-          .select('id, title, customerName, location, status, phase, date, end_date, technician_id')
+          .select('id, title, customerName, location, status, phase, date, end_date, technician_id, technician_ids')
           .gte('date', monthStart)
           .lte('date', monthEnd),
       ]);
@@ -199,7 +206,7 @@ export default function TechSchedule() {
                         <div className="font-bold text-slate-400 text-sm mb-2 px-1 group-hover:text-indigo-600 transition-colors">{day}</div>
                         <div className="flex flex-col gap-1 w-full overflow-hidden">
                           {jobsToday.map(job => {
-                            const techIndex = technicians.findIndex(t => t.id === job.technician_id);
+                            const techIndex = technicians.findIndex(t => jobHasTech(job, t.id));
                             const colors    = TECH_COLORS[techIndex % TECH_COLORS.length] ?? TECH_COLORS[0];
                             const isStart   = day === dayOfMonth(job.date);
                             const isEnd     = day === (job.end_date ? dayOfMonth(job.end_date) : dayOfMonth(job.date));
@@ -258,7 +265,7 @@ export default function TechSchedule() {
                 const colors   = TECH_COLORS[techIndex % TECH_COLORS.length];
                 const weekEnd  = selectedWeekStart + 6;
                 const weekJobs = jobs.filter(j => {
-                  if (j.technician_id !== tech.id) return false;
+                  if (!jobHasTech(j, tech.id)) return false;
                   const start = dayOfMonth(j.date);
                   const end   = j.end_date ? dayOfMonth(j.end_date) : start;
                   return start <= weekEnd && end >= selectedWeekStart;

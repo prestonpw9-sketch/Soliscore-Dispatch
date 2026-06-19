@@ -52,6 +52,9 @@ export const useDispatchData = () => {
         endTime:           j.endTime ?? '10:00',
         date:              j.date ?? new Date().toISOString().split('T')[0],
         technicianId:      j.technician_id ?? null,
+        technicianIds:     Array.isArray(j.technician_ids)
+                             ? j.technician_ids.filter(Boolean)
+                             : (j.technician_id ? [j.technician_id] : []),
         type:              j.type ?? 'maintenance',
         estimatedDuration: j.estimatedDuration ?? 120,
       }));
@@ -132,6 +135,12 @@ export const useDispatchData = () => {
 
   // FIX: accepts typed `Omit<Job, 'id'>` instead of `any`
   const createJob = useCallback(async (jobData: Omit<Job, 'id'>) => {
+    // Multi-crew: prefer the array, fall back to the legacy single id. Keep
+    // technician_id in sync (= first crew member) for older views.
+    const crew = Array.from(
+      new Set((jobData.technicianIds ?? []).filter(Boolean)),
+    );
+    const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
     const { error: sbError } = await supabase.from('jobs').insert([{
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
@@ -140,7 +149,8 @@ export const useDispatchData = () => {
       date:         jobData.date,
       startTime:    jobData.startTime,
       endTime:      jobData.endTime,
-      technician_id: normalizeTechId(jobData.technicianId),
+      technician_id: primary,
+      technician_ids: primary ? (crew.length ? crew : [primary]) : [],
       type:         jobData.type ?? 'maintenance',
     }]);
     if (sbError) {
@@ -220,6 +230,26 @@ export const useDispatchData = () => {
     }
   }, [refresh]);
 
+  // Assign MULTIPLE crew to a job. Writes technician_ids[] and keeps the legacy
+  // technician_id in sync (= first crew member, or null) for older views.
+  const assignTechnicians = useCallback(async (
+    jobId: string, technicianIds: string[],
+  ) => {
+    const cleaned = Array.from(new Set((technicianIds || []).filter(Boolean)));
+    const primary = cleaned[0] ?? null;
+    setJobs(prev => prev.map(j =>
+      j.id === jobId ? { ...j, technicianIds: cleaned, technicianId: primary } : j
+    ));
+    const { error: sbError } = await supabase
+      .from('jobs')
+      .update({ technician_ids: cleaned, technician_id: primary })
+      .eq('id', jobId);
+    if (sbError) {
+      console.error('Failed to assign crew:', sbError);
+      await refresh();
+    }
+  }, [refresh]);
+
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase: newPhase } : j));
     const { error: sbError } = await supabase
@@ -261,6 +291,7 @@ export const useDispatchData = () => {
     toggleJobStatus,
     rescheduleJob,
     assignTechnician,
+    assignTechnicians,
     updateJobPhase,
     hireTechnician,
     fireTechnician,

@@ -24,6 +24,7 @@ export interface Job {
   status: JobStatus;
   priority: Priority;
   technicianId: string | null;
+  technicianIds?: string[];
   date: string;
   endDate?: string;       
   startTime: string;
