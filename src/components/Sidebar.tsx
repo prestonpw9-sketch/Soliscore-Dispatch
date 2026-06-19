@@ -268,7 +268,10 @@ export default function Sidebar({
 
       {/* SMS Panel — centered fullscreen modal overlay */}
       {smsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-6">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-6 overflow-y-auto"
+          onClick={e => { if (e.target === e.currentTarget) setSmsOpen(false); }}
+        >
           <SMSPanel onClose={() => setSmsOpen(false)} />
         </div>
       )}
