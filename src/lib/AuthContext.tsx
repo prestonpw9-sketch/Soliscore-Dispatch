@@ -73,8 +73,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (active) setLoading(false);
     });
 
+    // NOTE: Supabase deadlocks if you `await` a supabase call directly inside
+    // the onAuthStateChange callback (it holds an internal lock). Defer with
+    // setTimeout so the role fetch runs after the callback returns.
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      void resolve(s);
+      setTimeout(() => { void resolve(s); }, 0);
     });
 
     return () => {
