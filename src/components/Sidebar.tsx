@@ -12,6 +12,8 @@ import {
   FileSpreadsheet,
   Settings,
   LogOut,
+  Moon,
+  Sun,
   X,
 } from 'lucide-react';
 import { AIAssistantPanel } from '@/components/AIAssistant/AIAssistantPanel';
@@ -20,6 +22,7 @@ import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import { useTwilioMessages } from '@/hooks/useTwilioMessages';
 import { AI_PROVIDER_CONFIGS } from '@/services/ai/types';
 import { useAuth } from '@/lib/AuthContext';
+import { useTheme } from '@/lib/ThemeContext';
 
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -59,6 +62,7 @@ export default function Sidebar({
   const { activeProvider } = useAIProviderContext();
   const { unreadCount }    = useTwilioMessages();
   const { session, signOut } = useAuth();
+  const { resolved, setMode } = useTheme();
   const config             = AI_PROVIDER_CONFIGS[activeProvider];
 
 
@@ -282,6 +286,16 @@ export default function Sidebar({
                 Signed in as {session.user.email}
               </p>
             )}
+            <button
+              type="button"
+              onClick={() => setMode(resolved === 'dark' ? 'light' : 'dark')}
+              className="w-full flex items-center px-3 py-2 rounded-xl text-xs transition-colors font-bold text-slate-400 hover:bg-slate-800/80 hover:text-white"
+            >
+              {resolved === 'dark'
+                ? <Sun className="w-4 h-4 mr-3 shrink-0" />
+                : <Moon className="w-4 h-4 mr-3 shrink-0" />}
+              {resolved === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            </button>
             <button
               type="button"
               onClick={() => { void signOut(); }}
