@@ -89,7 +89,15 @@ const Dashboard: React.FC<Props> = ({
               </div>
             ) : (
               upcomingJobs.map(job => {
-                const techName = technicians.find(t => t.id === job.technicianId)?.name ?? 'Unassigned';
+                const crew = job.technicianIds?.length
+                  ? job.technicianIds
+                  : job.technicianId
+                    ? [job.technicianId]
+                    : [];
+                const crewNames = technicians
+                  .filter(t => crew.includes(t.id))
+                  .map(t => t.name);
+                const techName = crewNames.length ? crewNames.join(', ') : 'Unassigned';
                 return (
                   <div
                     key={job.id}

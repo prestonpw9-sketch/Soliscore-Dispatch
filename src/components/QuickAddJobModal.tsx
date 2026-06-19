@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, MapPin, Sparkles, Loader2, User, Clock, CalendarDays } from 'lucide-react';
+import { X, MapPin, Sparkles, Loader2, User, Clock, CalendarDays, Check, Users } from 'lucide-react';
 import type { Customer, Technician, Job, JobType, Priority, JobStatus } from '@/lib/data';
 
 
@@ -73,7 +73,7 @@ const QuickAddJobModal: React.FC<Props> = ({
 
   const [type, setType]               = useState<JobType>('maintenance');
   const [priority, setPriority]       = useState<Priority>('normal');
-  const [technicianId, setTechnicianId] = useState('');
+  const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [date, setDate]               = useState('');
   const [startTime, setStartTime]     = useState('09:00');
   const [duration, setDuration]       = useState(60);
@@ -92,7 +92,7 @@ const QuickAddJobModal: React.FC<Props> = ({
     setDescription('');
     setPriority('normal');
     setType('maintenance');
-    setTechnicianId(technicians[0]?.id ?? '');
+    setTechnicianIds([]);
     setDate(weekDates[0] ?? '');
     setStartTime('09:00');
     setDuration(60);
@@ -114,7 +114,13 @@ const QuickAddJobModal: React.FC<Props> = ({
       setDescription(defaults.description ?? '');
       setPriority(isPriority(defaults.priority ?? '') ? (defaults.priority as Priority) : 'normal');
       setType(isJobType(defaults.type ?? '') ? (defaults.type as JobType) : 'maintenance');
-      setTechnicianId(defaults.technicianId ?? technicians[0]?.id ?? '');
+      setTechnicianIds(
+        defaults.technicianIds && defaults.technicianIds.length > 0
+          ? defaults.technicianIds
+          : defaults.technicianId
+            ? [defaults.technicianId]
+            : [],
+      );
       setDate(defaults.date ?? weekDates[0] ?? '');
       setStartTime(defaults.startTime ?? '09:00');
       setDuration(defaults.estimatedDuration ?? 60);
@@ -166,6 +172,12 @@ const QuickAddJobModal: React.FC<Props> = ({
   const selectAddress = (a: string) => {
     setAddress(a);
     setShowAddressDropdown(false);
+  };
+
+  const toggleTechnician = (id: string) => {
+    setTechnicianIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
+    );
   };
 
 
@@ -224,7 +236,8 @@ const QuickAddJobModal: React.FC<Props> = ({
       type,
       status: 'scheduled' as JobStatus,
       priority,
-      technicianId,
+      technicianId: technicianIds[0] ?? '',
+      technicianIds,
       date,
       endDate,
       startTime,
@@ -424,7 +437,14 @@ const QuickAddJobModal: React.FC<Props> = ({
                 </p>
                 <button
                   type="button"
-                  onClick={() => { setTechnicianId(recommendation.technicianId); setRecApplied(true); }}
+                  onClick={() => {
+                    setTechnicianIds(prev =>
+                      prev.includes(recommendation.technicianId)
+                        ? prev
+                        : [...prev, recommendation.technicianId],
+                    );
+                    setRecApplied(true);
+                  }}
                   className="w-full py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-colors"
                 >
                   {recApplied ? 'Applied ✓' : 'Use Suggestion'}
@@ -437,20 +457,42 @@ const QuickAddJobModal: React.FC<Props> = ({
           {/* Scheduling */}
           <div className="space-y-3 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800/60">
             <div>
-              <label htmlFor="technicianId" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Assigned Technician
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                <Users className="w-3 h-3 text-slate-400" /> Assigned Crew
+                <span className="ml-auto font-bold text-teal-600 dark:text-teal-400">
+                  {technicianIds.length} assigned
+                </span>
               </label>
-              <select
-                id="technicianId"
-                value={technicianId}
-                onChange={e => setTechnicianId(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-xs font-semibold focus:ring-2 focus:ring-teal-500 outline-none cursor-pointer"
-              >
-                <option value="">Unassigned</option>
-                {technicians.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+              {technicians.length === 0 ? (
+                <p className="text-xs text-slate-400 px-1 py-2">No technicians on roster.</p>
+              ) : (
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 divide-y divide-slate-100 dark:divide-slate-700/60">
+                  {technicians.map(t => {
+                    const checked = technicianIds.includes(t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => toggleTechnician(t.id)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                      >
+                        <span
+                          className={`inline-flex items-center justify-center w-4 h-4 rounded border shrink-0 ${
+                            checked
+                              ? 'bg-teal-600 border-teal-600 text-white'
+                              : 'border-slate-300 dark:border-slate-600'
+                          }`}
+                        >
+                          {checked && <Check className="w-3 h-3" />}
+                        </span>
+                        <span className="truncate">{t.name}</span>
+                        <span className="ml-auto text-[10px] font-medium text-slate-400">{t.role}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400 mt-1">Leave empty for an unassigned job.</p>
             </div>
 
 

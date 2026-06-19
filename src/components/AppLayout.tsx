@@ -73,6 +73,7 @@ const AppLayout: React.FC = () => {
     toggleJobStatus,
     rescheduleJob,
     assignTechnician,
+    assignTechnicians,
     hireTechnician,
     fireTechnician,
   } = useDispatchData();
@@ -115,6 +116,14 @@ const AppLayout: React.FC = () => {
       await assignTechnician(jobId, technicianId);
       const tech = technicians.find(t => t.id === technicianId);
       showToast(tech ? `Plumber assigned: ${tech.name}` : 'Plumber unassigned');
+    })();
+  };
+
+  const handleAssignCrew = (jobId: string, technicianIds: string[]) => {
+    void (async () => {
+      await assignTechnicians(jobId, technicianIds);
+      const n = technicianIds.length;
+      showToast(n === 0 ? 'Crew cleared (0 assigned)' : `Crew updated (${n} assigned)`);
     })();
   };
 
@@ -312,6 +321,7 @@ const AppLayout: React.FC = () => {
                   onJobClick={setSelectedJob}
                   onJobDrop={handleJobDrop}
                   onAssignTechnician={handleAssignTechnician}
+                  onAssignCrew={handleAssignCrew}
                 />
               )}
 
