@@ -4,9 +4,7 @@ import {
   Sparkles,
   MessageSquare,
   LayoutDashboard,
-  CalendarDays,
-  ClipboardList,
-  Truck,
+  CalendarRange,
   Users,
   Calculator,
   FileSpreadsheet,
@@ -30,8 +28,6 @@ import { useTheme } from '@/lib/ThemeContext';
 
 export type ViewKey =
   | 'dashboard'
-  | 'calendar'
-  | 'tasks'
   | 'customers'
   | 'estimator'
   | 'takeoff'
@@ -45,9 +41,7 @@ import type { Role } from '@/lib/AuthContext';
 // crew = past jobs, blueprints, submittals, photos, quick bid only.
 const NAV_ITEMS: { key: ViewKey; label: string; icon: typeof LayoutDashboard; roles: Role[] }[] = [
   { key: 'dashboard', label: 'Dispatch Board',     icon: LayoutDashboard, roles: ['owner', 'office', 'crew'] },
-  { key: 'calendar',  label: 'Weekly Calendar',    icon: CalendarDays,    roles: ['owner', 'office', 'crew'] },
-  { key: 'tasks',     label: 'Daily Tasks',        icon: ClipboardList,   roles: ['owner', 'office', 'crew'] },
-  { key: 'schedule',  label: 'Crew Schedule',      icon: Truck,           roles: ['owner', 'office', 'crew'] },
+  { key: 'schedule',  label: 'Schedule',           icon: CalendarRange,   roles: ['owner', 'office', 'crew'] },
   { key: 'customers', label: 'Customers Database', icon: Users,           roles: ['owner', 'office'] },
   // Quick Bid Estimator: owners + crew (per Preston). Office is view-only elsewhere.
   { key: 'estimator', label: 'Bid Estimator',      icon: Calculator,      roles: ['owner', 'crew'] },

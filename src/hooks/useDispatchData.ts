@@ -51,6 +51,8 @@ export const useDispatchData = () => {
         startTime:         j.startTime ?? '08:00',
         endTime:           j.endTime ?? '10:00',
         date:              j.date ?? new Date().toISOString().split('T')[0],
+        endDate:           j.end_date ?? j.date ?? new Date().toISOString().split('T')[0],
+        serviceType:       j.service_type ?? '',
         technicianId:      j.technician_id ?? null,
         technicianIds:     Array.isArray(j.technician_ids)
                              ? j.technician_ids.filter(Boolean)
@@ -141,21 +143,40 @@ export const useDispatchData = () => {
       new Set((jobData.technicianIds ?? []).filter(Boolean)),
     );
     const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
-    const { error: sbError } = await supabase.from('jobs').insert([{
+    const startDate = jobData.date;
+    const endDate   = jobData.endDate ?? jobData.date;
+    const { data: inserted, error: sbError } = await supabase.from('jobs').insert([{
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
       phase:        jobData.phase ?? 'Rough-In',
       status:       'pending',
-      date:         jobData.date,
+      date:         startDate,
+      end_date:     endDate,
+      service_type: jobData.serviceType ?? null,
       startTime:    jobData.startTime,
       endTime:      jobData.endTime,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
       type:         jobData.type ?? 'maintenance',
-    }]);
+    }]).select('id').single();
     if (sbError) {
       console.error('Error saving job to DB:', sbError);
       return;
+    }
+    // Seed a job_tasks row for every assigned crew member (task blank, span = job range).
+    const newJobId = inserted?.id;
+    if (newJobId && crew.length) {
+      const rows = crew.map(techId => ({
+        job_id:           newJobId,
+        technician_id:    techId,
+        task:             '',
+        start_date:       startDate,
+        end_date:         endDate,
+        status:           'not_started',
+        percent_complete: 0,
+      }));
+      const { error: taskError } = await supabase.from('job_tasks').insert(rows);
+      if (taskError) console.error('Error seeding job_tasks:', taskError);
     }
     // FIX: await refresh so callers get updated state after createJob resolves
     await refresh();

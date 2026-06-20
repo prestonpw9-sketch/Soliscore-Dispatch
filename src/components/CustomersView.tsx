@@ -1,11 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Phone, Mail, MapPin, Building2, Home,
-  Calendar, Plus, HardHat, FileText, X,
+  Calendar, Plus, HardHat, FileText, X, Loader2,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
 import type { Customer, Job } from '@/lib/data';
 
 // ── Types ──────────────────────────────────────────────────────────────────
+
+interface Project {
+  id: string;
+  builder_id: string;
+  name: string;
+  address: string | null;
+  status: string | null;
+}
 
 interface Props {
   customers: Customer[];
@@ -13,7 +23,7 @@ interface Props {
   onCall: (c: Customer) => void;
   onSchedule: (c: Customer) => void;
   onCreateCustomer?: (c: Partial<Customer>) => void;
-  onAddProject?: (customerId: string) => void;
+  onRefresh?: () => Promise<void> | void;
 }
 
 type NewBuilderForm = {
@@ -32,12 +42,12 @@ const EMPTY_FORM: NewBuilderForm = {
 
 const CustomersView: React.FC<Props> = ({
   customers,
-  jobs = [],
   onCall,
   onSchedule,
   onCreateCustomer,
-  onAddProject,
+  onRefresh,
 }) => {
+  const { canEdit } = useAuth();
   const [search, setSearch]           = useState('');
   const [typeFilter, setTypeFilter]   = useState<'all' | 'Residential' | 'Commercial'>('all');
   const [selected, setSelected]       = useState<Customer | null>(null);
@@ -45,15 +55,52 @@ const CustomersView: React.FC<Props> = ({
   const [newBuilder, setNewBuilder]   = useState<NewBuilderForm>(EMPTY_FORM);
   const [saveError, setSaveError]     = useState<string | null>(null);
 
-  const builderProjects = jobs
-    .filter(j => j.customerId === selected?.id)
-    .map(j => ({
-      id: j.id,
-      name: j.description,
-      activePhases: 1,
-      lastUpdate: j.date,
-      status: j.status,
-    }));
+  // Builder projects (projects table, keyed by builder_id = selected customer id).
+  const [projects, setProjects]       = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [showProjectForm, setShowProjectForm] = useState(false);
+  const [newProject, setNewProject]   = useState({ name: '', address: '' });
+  const [projectError, setProjectError] = useState<string | null>(null);
+
+  const fetchProjects = useCallback(async (builderId: string) => {
+    setProjectsLoading(true);
+    setProjectError(null);
+    const { data, error } = await supabase
+      .from('projects')
+      .select('id, builder_id, name, address, status')
+      .eq('builder_id', builderId)
+      .order('name', { ascending: true });
+    if (error) setProjectError(error.message);
+    else setProjects((data ?? []) as Project[]);
+    setProjectsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (selected && selected.propertyType === 'Commercial') {
+      void fetchProjects(selected.id);
+    } else {
+      setProjects([]);
+    }
+    setShowProjectForm(false);
+    setNewProject({ name: '', address: '' });
+  }, [selected, fetchProjects]);
+
+  const handleAddProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selected || !newProject.name.trim()) return;
+    setProjectError(null);
+    const { error } = await supabase.from('projects').insert([{
+      builder_id: selected.id,
+      name: newProject.name.trim(),
+      address: newProject.address.trim() || null,
+      status: 'active',
+    }]);
+    if (error) { setProjectError(error.message); return; }
+    setNewProject({ name: '', address: '' });
+    setShowProjectForm(false);
+    await fetchProjects(selected.id);
+    await onRefresh?.();
+  };
 
   const modalRef      = useRef<HTMLDivElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -242,28 +289,72 @@ const CustomersView: React.FC<Props> = ({
                     <HardHat className="w-4 h-4 text-purple-600" aria-hidden="true" /> Active Projects
                   </div>
                   <div className="space-y-2">
-                    {builderProjects.length === 0 && (
-                      <p className="text-xs text-slate-400">No active projects for this builder.</p>
-                    )}
-                    {builderProjects.map(proj => (
-                      <div key={proj.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 hover:border-purple-400 dark:hover:border-purple-500 transition-colors bg-white dark:bg-slate-800">
-                        <div className="flex justify-between items-start mb-1">
-                          <span className="font-semibold text-slate-900 dark:text-slate-100">{proj.name}</span>
-                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">{proj.status}</span>
-                        </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                          <FileText className="w-3 h-3" aria-hidden="true" />
-                          {proj.activePhases} Active Phase · Updated {proj.lastUpdate}
-                        </div>
+                    {projectsLoading ? (
+                      <div className="flex items-center justify-center py-4">
+                        <Loader2 className="w-5 h-5 text-purple-500 animate-spin" />
                       </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => onAddProject?.(selected.id)}
-                      className="w-full py-2.5 mt-2 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 hover:text-purple-600 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-xs font-bold flex items-center justify-center gap-2"
-                    >
-                      <Plus className="w-4 h-4" /> Add New Project
-                    </button>
+                    ) : (
+                      <>
+                        {projects.length === 0 && !showProjectForm && (
+                          <p className="text-xs text-slate-400">No projects for this builder yet.</p>
+                        )}
+                        {projects.map(proj => (
+                          <div key={proj.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 hover:border-purple-400 dark:hover:border-purple-500 transition-colors bg-white dark:bg-slate-800">
+                            <div className="flex justify-between items-start mb-1">
+                              <span className="font-semibold text-slate-900 dark:text-slate-100">{proj.name}</span>
+                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">{proj.status ?? 'active'}</span>
+                            </div>
+                            {proj.address && (
+                              <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                                <MapPin className="w-3 h-3" aria-hidden="true" />
+                                {proj.address}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {projectError && (
+                          <p className="text-xs text-red-600 dark:text-red-400 font-medium">{projectError}</p>
+                        )}
+                        {showProjectForm ? (
+                          <form onSubmit={e => void handleAddProject(e)} className="border border-purple-200 dark:border-purple-800 rounded-lg p-3 bg-purple-50/40 dark:bg-purple-900/10 space-y-2">
+                            <input
+                              autoFocus
+                              required
+                              type="text"
+                              value={newProject.name}
+                              onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))}
+                              placeholder="Project name (e.g. Phase 2 — Building C)"
+                              className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                            />
+                            <input
+                              type="text"
+                              value={newProject.address}
+                              onChange={e => setNewProject(p => ({ ...p, address: e.target.value }))}
+                              placeholder="Project address (optional)"
+                              className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                            />
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => { setShowProjectForm(false); setNewProject({ name: '', address: '' }); }}
+                                className="flex-1 px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
+                                Cancel
+                              </button>
+                              <button type="submit" disabled={!newProject.name.trim()}
+                                className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold">
+                                Save Project
+                              </button>
+                            </div>
+                          </form>
+                        ) : canEdit ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowProjectForm(true)}
+                            className="w-full py-2.5 mt-2 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 hover:text-purple-600 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-xs font-bold flex items-center justify-center gap-2"
+                          >
+                            <Plus className="w-4 h-4" /> Add New Project
+                          </button>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 </div>
               )}
