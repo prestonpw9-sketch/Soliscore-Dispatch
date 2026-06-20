@@ -1,8 +1,9 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import AppLayout from './components/AppLayout';
 import LoginScreen from './components/LoginScreen';
+import PrivacyPolicy from './components/PrivacyPolicy';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { ThemeProvider } from './lib/ThemeContext';
 
@@ -53,21 +54,33 @@ function Gate() {
   if (!session) return <LoginScreen />;
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<AppLayout />} />
-        {/* FIX: catch-all now shows a real 404 instead of a silent AppLayout */}
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </BrowserRouter>
+    <Routes>
+      <Route path="/" element={<AppLayout />} />
+      {/* FIX: catch-all now shows a real 404 instead of a silent AppLayout */}
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
 }
 
 const App = () => (
   <ThemeProvider>
-    <AuthProvider>
-      <Gate />
-    </AuthProvider>
+    <BrowserRouter>
+      <Routes>
+        {/* PUBLIC pages — no login required (needed for Twilio SMS compliance).
+            SMS Terms live inside the Privacy Policy, so /terms points there. */}
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<Navigate to="/privacy" replace />} />
+        {/* Everything else is behind the auth gate */}
+        <Route
+          path="*"
+          element={
+            <AuthProvider>
+              <Gate />
+            </AuthProvider>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
   </ThemeProvider>
 );
 
