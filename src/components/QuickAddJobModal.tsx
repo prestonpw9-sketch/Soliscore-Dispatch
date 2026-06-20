@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { X, MapPin, Sparkles, Loader2, User, Clock, CalendarDays, Check, Users } from 'lucide-react';
+import { X, MapPin, Sparkles, Loader2, User, CalendarDays, Check, Users, Wrench } from 'lucide-react';
 import type { Customer, Technician, Job, JobType, Priority, JobStatus } from '@/lib/data';
+import { SERVICE_TYPES } from '@/lib/data';
 
 
 // ── Guard functions ────────────────────────────────────────────────────────
@@ -72,12 +73,15 @@ const QuickAddJobModal: React.FC<Props> = ({
 
 
   const [type, setType]               = useState<JobType>('maintenance');
+  const [serviceType, setServiceType] = useState<string>(SERVICE_TYPES[0]);
   const [priority, setPriority]       = useState<Priority>('normal');
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [date, setDate]               = useState('');
-  const [startTime, setStartTime]     = useState('09:00');
-  const [duration, setDuration]       = useState(60);
+  const [endDate, setEndDate]         = useState('');
   const [description, setDescription] = useState('');
+
+  // Jobs are full-day; times are kept only to satisfy the existing data model.
+  const startTime = '08:00';
 
 
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
@@ -92,10 +96,10 @@ const QuickAddJobModal: React.FC<Props> = ({
     setDescription('');
     setPriority('normal');
     setType('maintenance');
+    setServiceType(SERVICE_TYPES[0]);
     setTechnicianIds([]);
     setDate(weekDates[0] ?? '');
-    setStartTime('09:00');
-    setDuration(60);
+    setEndDate(weekDates[0] ?? '');
     setRecommendation(null);
     setRecError(null);
     setRecApplied(false);
@@ -114,6 +118,7 @@ const QuickAddJobModal: React.FC<Props> = ({
       setDescription(defaults.description ?? '');
       setPriority(isPriority(defaults.priority ?? '') ? (defaults.priority as Priority) : 'normal');
       setType(isJobType(defaults.type ?? '') ? (defaults.type as JobType) : 'maintenance');
+      setServiceType(defaults.serviceType || SERVICE_TYPES[0]);
       setTechnicianIds(
         defaults.technicianIds && defaults.technicianIds.length > 0
           ? defaults.technicianIds
@@ -122,8 +127,7 @@ const QuickAddJobModal: React.FC<Props> = ({
             : [],
       );
       setDate(defaults.date ?? weekDates[0] ?? '');
-      setStartTime(defaults.startTime ?? '09:00');
-      setDuration(defaults.estimatedDuration ?? 60);
+      setEndDate(defaults.endDate ?? defaults.date ?? weekDates[0] ?? '');
     } else {
       resetState();
     }
@@ -208,21 +212,8 @@ const QuickAddJobModal: React.FC<Props> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-
-    const [h, m] = startTime.split(':').map(Number);
-    const totalMinutes = h * 60 + m + duration;
-    const endHours = Math.floor(totalMinutes / 60);
-    const endMinutes = totalMinutes % 60;
-    const endTime = `${String(endHours % 24).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
-
-    // FIX: If endHours >= 24, add days to the date
-    const startDate = new Date(date.replace(/-/g, '/'));
-    const daysToAdd = Math.floor(endHours / 24);
-    if (daysToAdd > 0) {
-      startDate.setDate(startDate.getDate() + daysToAdd);
-    }
-    const endDate = startDate.toISOString().split('T')[0];
-
+    // Full-day jobs: no time-of-day. Ensure end >= start.
+    const resolvedEnd = endDate && endDate >= date ? endDate : date;
 
     const customer = customers.find(
       c => c.name.toLowerCase() === customerName.toLowerCase()
@@ -239,12 +230,13 @@ const QuickAddJobModal: React.FC<Props> = ({
       technicianId: technicianIds[0] ?? '',
       technicianIds,
       date,
-      endDate,
+      endDate: resolvedEnd,
+      serviceType,
       startTime,
-      endTime,
+      endTime: '17:00',
       description,
       phase: 'Rough-In',
-      estimatedDuration: duration,
+      estimatedDuration: 480,
     };
 
 
@@ -351,14 +343,31 @@ const QuickAddJobModal: React.FC<Props> = ({
           </div>
 
 
-          {/* Type + Priority */}
+          {/* Service Type (plumbing phase) */}
+          <div>
+            <label htmlFor="serviceType" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+              <Wrench className="w-3 h-3 text-slate-400" /> Service Type
+            </label>
+            <select
+              id="serviceType"
+              value={serviceType}
+              onChange={e => setServiceType(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none cursor-pointer"
+            >
+              {SERVICE_TYPES.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Job Type + Priority */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="serviceType" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Service Type
+              <label htmlFor="jobType" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Job Type
               </label>
               <select
-                id="serviceType"
+                id="jobType"
                 value={type}
                 onChange={e => setType(e.target.value as JobType)}
                 className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none cursor-pointer"
@@ -496,60 +505,37 @@ const QuickAddJobModal: React.FC<Props> = ({
             </div>
 
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <div>
                 <label htmlFor="jobDate" className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                  <CalendarDays className="w-3 h-3 text-slate-400" /> Date
-                </label>
-                <select
-                  id="jobDate"
-                  value={date}
-                  onChange={e => setDate(e.target.value)}
-                  className="w-full px-2 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-xs font-semibold focus:ring-2 focus:ring-teal-500 outline-none"
-                >
-                  {weekDates.map(d => (
-                    <option key={d} value={d}>
-                      {new Date(d.replace(/-/g, '/')).toLocaleDateString('en-US', {
-                        weekday: 'short', month: 'short', day: 'numeric',
-                      })}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="startTime" className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-slate-400" /> Start
+                  <CalendarDays className="w-3 h-3 text-slate-400" /> Start date
                 </label>
                 <input
-                  id="startTime"
-                  type="time"
-                  value={startTime}
-                  onChange={e => setStartTime(e.target.value)}
+                  id="jobDate"
+                  type="date"
+                  required
+                  value={date}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setDate(v);
+                    if (!endDate || endDate < v) setEndDate(v);
+                  }}
                   className="w-full px-2 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-xs font-semibold focus:ring-2 focus:ring-teal-500 outline-none"
                 />
               </div>
               <div>
-                <label htmlFor="duration" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Duration
+                <label htmlFor="jobEndDate" className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                  <CalendarDays className="w-3 h-3 text-slate-400" /> End date
                 </label>
-                <select
-                  id="duration"
-                  value={duration}
-                  onChange={e => setDuration(Number(e.target.value))}
+                <input
+                  id="jobEndDate"
+                  type="date"
+                  required
+                  value={endDate}
+                  min={date}
+                  onChange={e => setEndDate(e.target.value)}
                   className="w-full px-2 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-xs font-semibold focus:ring-2 focus:ring-teal-500 outline-none"
-                >
-                  <option value={30}>30 min</option>
-                  <option value={60}>1 hour</option>
-                  <option value={120}>2 hours</option>
-                  <option value={180}>3 hours</option>
-                  <option value={240}>4 hours</option>
-                  <option value={300}>5 hours</option>
-                  <option value={360}>6 hours</option>
-                  <option value={420}>7 hours</option>
-                  <option value={480}>8 hours</option>
-                  <option value={540}>9 hours</option>
-                  <option value={600}>10 hours</option>
-                </select>
+                />
               </div>
             </div>
           </div>

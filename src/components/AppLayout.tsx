@@ -7,9 +7,7 @@ import {
 import Sidebar from './Sidebar';
 import type { ViewKey } from './types';
 import Dashboard from './Dashboard';
-import CalendarView from './CalendarView';
-import TechSchedule from './TechSchedule';
-import TasksView from './TasksView';
+import ScheduleBoard from './ScheduleBoard';
 import CustomersView from './CustomersView';
 import SettingsView from './SettingsView';
 import QuickAddJobModal from './QuickAddJobModal';
@@ -26,12 +24,10 @@ import { useAuth } from '@/lib/AuthContext';
 
 const titles: Record<ViewKey, { title: string; subtitle: string }> = {
   dashboard:  { title: 'Dashboard',       subtitle: 'Overview of your daily operations' },
-  calendar:   { title: 'Weekly Calendar', subtitle: 'Drag-and-drop scheduling across technicians' },
-  tasks:      { title: 'Daily Tasks',     subtitle: 'Track jobs per technician' },
   customers:  { title: 'Customers',       subtitle: 'Full customer database and history' },
   estimator:  { title: 'Bid Estimator',   subtitle: 'Quick change orders and fast job bids' },
   takeoff:    { title: 'Full Bid Takeoff', subtitle: 'Full 4-page takeoff for ground-up buildings and houses' },
-  schedule:   { title: 'Crew Schedule',   subtitle: 'Manage commercial phases and crew assignments' },
+  schedule:   { title: 'Schedule',        subtitle: 'Plan crews across jobs and track daily progress' },
   settings:   { title: 'System Settings', subtitle: 'Manage profile configuration parameters' },
 };
 
@@ -44,8 +40,6 @@ const AppLayout: React.FC = () => {
   // Which views each role may open (must mirror the Sidebar's NAV_ITEMS).
   const viewAccess: Record<string, string[]> = {
     dashboard: ['owner', 'office', 'crew'],
-    calendar:  ['owner', 'office', 'crew'],
-    tasks:     ['owner', 'office', 'crew'],
     schedule:  ['owner', 'office', 'crew'],
     customers: ['owner', 'office'],
     estimator: ['owner', 'crew'],
@@ -278,8 +272,6 @@ const AppLayout: React.FC = () => {
             <QuickBidEstimator mode="standalone" />
           ) : view === 'takeoff' ? (
             <BidEstimator />
-          ) : view === 'schedule' ? (
-            <TechSchedule />
           ) : loading && customers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-slate-500">
               <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
@@ -305,7 +297,7 @@ const AppLayout: React.FC = () => {
                   technicians={technicians}
                   todayStr={todayStr}
                   // FIX: weekDates and onViewTasks removed — Dashboard no longer accepts these props
-                  onViewCalendar={() => setView('calendar')}
+                  onViewCalendar={() => setView('schedule')}
                   onOpenEstimator={() => setEstimatorOpen(true)}
                   onPhaseChange={handlePhaseChange}
                   onHire={hireTechnician}
@@ -313,34 +305,21 @@ const AppLayout: React.FC = () => {
                 />
               )}
 
-              {view === 'calendar' && (
-                <CalendarView
+              {view === 'schedule' && (
+                <ScheduleBoard
                   jobs={jobs}
                   technicians={technicians}
-                  weekDates={weekDates}
-                  onJobClick={setSelectedJob}
-                  onJobDrop={handleJobDrop}
-                  onAssignTechnician={handleAssignTechnician}
-                  onAssignCrew={handleAssignCrew}
-                />
-              )}
-
-              {view === 'tasks' && (
-                <TasksView
-                  jobs={jobs}
-                  technicians={technicians}
-                  onToggleStatus={handleToggleTaskStatus}
-                  selectedDate={taskDate}
-                  onDateChange={setTaskDate}
-                  weekDates={weekDates}
+                  onRefresh={refresh}
                 />
               )}
 
               {view === 'customers' && (
                 <CustomersView
                   customers={customers}
+                  jobs={jobs}
                   onCall={handleCustomerCall}
                   onSchedule={handleScheduleFromCustomer}
+                  onRefresh={refresh}
                 />
               )}
 

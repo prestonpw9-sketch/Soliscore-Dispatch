@@ -25,8 +25,6 @@ export type PlumbingPhase = (typeof PLUMBING_PHASES)[number];
 // error on any component that accepts ViewKey and handles those views.
 export type ViewKey =
   | 'dashboard'
-  | 'calendar'
-  | 'tasks'
   | 'customers'
   | 'estimator'
   | 'takeoff'

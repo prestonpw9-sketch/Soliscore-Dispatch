@@ -26,12 +26,51 @@ export interface Job {
   technicianId: string | null;
   technicianIds?: string[];
   date: string;
-  endDate?: string;       
+  endDate?: string;
   startTime: string;
   endTime: string;
   description: string;
   phase: string;
+  serviceType?: string;
   estimatedDuration: number;
+}
+
+// Full-day service categories selected on a job (jobs.service_type).
+export const SERVICE_TYPES = [
+  'Rough',
+  'Top-out',
+  'Trim',
+  'Service Call',
+  'Inspection',
+  'Pre-slab',
+] as const;
+export type ServiceType = (typeof SERVICE_TYPES)[number];
+
+export type TaskStatus = 'not_started' | 'in_progress' | 'complete' | 'behind';
+
+// Per-crew task row on a job (job_tasks table).
+export interface JobTask {
+  id: string;
+  jobId: string;
+  technicianId: string | null;
+  task: string;
+  startDate: string;
+  endDate: string;
+  status: TaskStatus;
+  percentComplete: number;
+  createdAt?: string;
+}
+
+// A daily completion log entry (task_updates table).
+export interface TaskUpdate {
+  id: string;
+  jobTaskId: string;
+  jobId: string;
+  updateDate: string;
+  note: string;
+  percentComplete: number;
+  createdBy?: string | null;
+  createdAt?: string;
 }
 
 export interface Technician {
