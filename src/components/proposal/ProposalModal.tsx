@@ -81,8 +81,7 @@ const ProposalModal: React.FC<Props> = ({ open, onClose, doc }) => {
     setAmount(Number(finalBid.toFixed(2)));
     setTopExclusions([
       'Please note exclusions below',
-      'Septic system by others',
-      'All plumbing fixtures to be determined',
+      'All labor figured for normal work hours',
     ]);
     setPriceGuarantee(PRICE_GUARANTEE);
     setDwv('Schedule 40 PVC');

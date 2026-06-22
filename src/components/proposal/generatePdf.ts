@@ -21,18 +21,17 @@ export const LICENSE_LINES: string[] = [
 export const FOOTER_LINES: string[] = [
   'Innovative Technology Development Group, LLC',
   '12441 E Camino del Garanon, Tucson, Arizona  85747',
-  'Phone: (520) 647-3862    Email: Dave@itgdconstruction.com',
+  'Phone: (520) 647-3862    Email: Dave@itdgconstruction.com',
   'ITDGConstruction.com',
 ];
 
+// Exact standard exclusions from ITDG's current proposal format.
 export const STANDARD_EXCLUSIONS =
-  'After-hours work, sterilization, prevailing wages, engineering, gas pressure ' +
-  'regulator, sales tax, permits, meters & fees, sewer taps, cutting, coring, removal & ' +
-  'patching, backfill, import and export of fill material, shading or bedding of waste ' +
-  'lines, trenching and installations over 5 ft. depth, barricades or flagging, trenching ' +
-  'for Southwest Gas hpg to mtr., backflow prevention devices testing and certification. ' +
-  'Fireproof caulking material or labor.  Excavation requiring jackhammer and/or removal ' +
-  'of large rock will be considered extra and charged accordingly.';
+  'Sales tax, permits, meters & fees, after hours work, prevailing wages, engineering, ' +
+  'firestop labor or material, wiring, sewer taps, cutting, coring, removal & patching, ' +
+  'import and export of fill material, shading or bedding of waste lines, trenching and ' +
+  'installations over 5 ft. depth, barricades or flagging, trenching for Southwest Gas hpg ' +
+  'to mtr., backflow prevention devices testing and certification.';
 
 export const PRICE_GUARANTEE =
   'Because of several recent price increases and the threat of more to come we cannot ' +
