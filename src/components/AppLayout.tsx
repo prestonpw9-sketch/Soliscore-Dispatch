@@ -51,6 +51,7 @@ const AppLayout: React.FC = () => {
   const [taskDate, setTaskDate]             = useState(todayStr);
   const [modalOpen, setModalOpen]           = useState(false);
   const [modalDefaults, setModalDefaults]   = useState<Partial<Job> | undefined>();
+  const [editingJobId, setEditingJobId]     = useState<string | null>(null);
   const [estimatorOpen, setEstimatorOpen]   = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [selectedJob, setSelectedJob]       = useState<Job | null>(null);
@@ -64,6 +65,7 @@ const AppLayout: React.FC = () => {
     technicians,
     refresh,
     createJob,
+    updateJob,
     toggleJobStatus,
     rescheduleJob,
     assignTechnician,
@@ -123,9 +125,22 @@ const AppLayout: React.FC = () => {
 
   const handleCreateJob = (job: Omit<Job, 'id'>) => {
     void (async () => {
-      await createJob(job);
-      showToast('Job scheduled successfully');
+      if (editingJobId) {
+        await updateJob(editingJobId, job);
+        showToast('Job updated');
+      } else {
+        await createJob(job);
+        showToast('Job scheduled successfully');
+      }
+      setEditingJobId(null);
     })();
+  };
+
+  // Open the modal pre-filled to EDIT an existing job (e.g. tapping a dashboard card).
+  const openJobForEdit = (job: Job) => {
+    setEditingJobId(job.id);
+    setModalDefaults(job);
+    setModalOpen(true);
   };
 
   const handleRefresh = () => {
@@ -302,6 +317,7 @@ const AppLayout: React.FC = () => {
                   onPhaseChange={handlePhaseChange}
                   onHire={hireTechnician}
                   onFire={fireTechnician}
+                  onJobClick={openJobForEdit}
                 />
               )}
 
@@ -334,6 +350,7 @@ const AppLayout: React.FC = () => {
         onClose={() => {
           setModalOpen(false);
           setModalDefaults(undefined);
+          setEditingJobId(null);
         }}
         customers={customers}
         technicians={technicians}

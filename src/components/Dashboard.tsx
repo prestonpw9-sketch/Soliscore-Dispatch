@@ -16,6 +16,7 @@ interface Props {
   onPhaseChange: (jobId: string, newPhase: string) => void;
   onHire: (name: string, role: string) => void;
   onFire: (id: string) => void;
+  onJobClick?: (job: Job) => void;
 }
 
 const Dashboard: React.FC<Props> = ({
@@ -27,6 +28,7 @@ const Dashboard: React.FC<Props> = ({
   onPhaseChange,
   onHire,
   onFire,
+  onJobClick,
 }) => {
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
 
@@ -107,6 +109,7 @@ const Dashboard: React.FC<Props> = ({
                       job={job}
                       technicianName={techName}
                       onPhaseChange={onPhaseChange}
+                      onClick={() => onJobClick?.(job)}
                     />
                   </div>
                 );

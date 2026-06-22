@@ -182,6 +182,30 @@ export const useDispatchData = () => {
     await refresh();
   }, [refresh]);
 
+  // Update an existing job (used when editing from the dashboard / calendar).
+  const updateJob = useCallback(async (jobId: string, jobData: Omit<Job, 'id'>) => {
+    const crew = Array.from(new Set((jobData.technicianIds ?? []).filter(Boolean)));
+    const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
+    const startDate = jobData.date;
+    const endDate   = jobData.endDate ?? jobData.date;
+    const { error: sbError } = await supabase.from('jobs').update({
+      title:        jobData.customerName,
+      location:     jobData.address ?? 'Tucson, AZ',
+      phase:        jobData.phase ?? 'Rough-In',
+      date:         startDate,
+      end_date:     endDate,
+      service_type: jobData.serviceType ?? null,
+      technician_id: primary,
+      technician_ids: primary ? (crew.length ? crew : [primary]) : [],
+      type:         jobData.type ?? 'maintenance',
+    }).eq('id', jobId);
+    if (sbError) {
+      console.error('Error updating job:', sbError);
+      return;
+    }
+    await refresh();
+  }, [refresh]);
+
   const rescheduleJob = useCallback(async (
     id: string, newDate: string, newStartHour: number,
   ) => {
@@ -309,6 +333,7 @@ export const useDispatchData = () => {
     technicians,
     refresh,
     createJob,
+    updateJob,
     toggleJobStatus,
     rescheduleJob,
     assignTechnician,
