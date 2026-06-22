@@ -139,6 +139,33 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
     [technicians],
   );
 
+  // Stable per-plumber color so each crew member is instantly recognizable on the
+  // board (their name dot + their job bars all share their color).
+  const CREW_COLORS = [
+    '#0d9488', // teal
+    '#2563eb', // blue
+    '#db2777', // pink
+    '#ea580c', // orange
+    '#7c3aed', // violet
+    '#16a34a', // green
+    '#dc2626', // red
+    '#0891b2', // cyan
+    '#ca8a04', // gold
+    '#4f46e5', // indigo
+    '#be123c', // rose
+    '#65a30d', // lime
+  ];
+  const techColor = useCallback(
+    (id: string | null): string => {
+      if (!id) return '#94a3b8'; // slate for unassigned
+      const t = technicians.find(x => x.id === id);
+      if (t?.color) return t.color;
+      const idx = Math.max(0, technicians.findIndex(x => x.id === id));
+      return CREW_COLORS[idx % CREW_COLORS.length];
+    },
+    [technicians],
+  );
+
   // ── Fetch job_tasks + latest update note ──────────────────────────────────
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -368,6 +395,19 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
         </div>
       )}
 
+      {/* Crew color legend — each plumber's color so they spot themselves fast */}
+      {technicians.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Crew colors:</span>
+          {technicians.map(t => (
+            <span key={t.id} className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full ring-1 ring-black/10" style={{ backgroundColor: techColor(t.id) }} />
+              <span className="text-xs font-bold" style={{ color: techColor(t.id) }}>{t.name}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Board */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -485,7 +525,15 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                             {/* Left: crew + task editor */}
                             <div className="w-80 shrink-0 px-4 py-2 flex flex-col gap-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate">
+                                <span
+                                  className="shrink-0 w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-slate-900"
+                                  style={{ backgroundColor: techColor(task.technicianId) }}
+                                  title={technicianName(task.technicianId)}
+                                />
+                                <span
+                                  className="text-xs font-black truncate"
+                                  style={{ color: techColor(task.technicianId) }}
+                                >
                                   {technicianName(task.technicianId)}
                                 </span>
                                 <span className={`shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-full ${
@@ -567,10 +615,10 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                               {rowBar && (
                                 <div
                                   className={`absolute top-1/2 -translate-y-1/2 h-5 rounded-md flex items-center px-2 text-[10px] font-bold text-white truncate shadow-sm ${
-                                    health.complete ? 'bg-teal-500' : health.behind ? 'bg-red-500' : 'bg-indigo-500'
+                                    health.behind ? 'ring-2 ring-red-500 ring-offset-1' : ''
                                   }`}
-                                  style={rowBar}
-                                  title={task.task || technicianName(task.technicianId)}
+                                  style={{ ...rowBar, backgroundColor: techColor(task.technicianId) }}
+                                  title={`${technicianName(task.technicianId)}${task.task ? ' — ' + task.task : ''}${health.behind ? ' (BEHIND)' : health.complete ? ' (Complete)' : ''}`}
                                 >
                                   {task.task || technicianName(task.technicianId)}
                                 </div>
