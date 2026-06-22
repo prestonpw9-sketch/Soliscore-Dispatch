@@ -49,9 +49,9 @@ const JobCard: React.FC<JobCardProps> = ({
     }
   };
 
-  const customerName  = job?.customerName ?? 'Commercial Remodel - Main Restrooms';
-  const address       = job?.address      ?? 'Tucson, AZ';
-  const description   = job?.description  ?? 'Install sensor-flushed fixtures and fiberglass wall set.';
+  const customerName  = job?.customerName || 'Untitled Job';
+  const address       = job?.address      || '—';
+  const description   = job?.description   || job?.serviceType || 'No description added.';
   const initial       = technicianName.charAt(0).toUpperCase();
 
   return (
