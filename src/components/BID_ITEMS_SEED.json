@@ -703,7 +703,7 @@
   "page3": [
     {
       "item": "W.C.",
-      "fixture": 400,
+      "fixture": 0,
       "trim": 0,
       "trim2": 0,
       "misc": 15
@@ -738,7 +738,7 @@
     },
     {
       "item": "LAV",
-      "fixture": 100,
+      "fixture": 0,
       "trim": 0,
       "trim2": 0,
       "misc": 0
@@ -892,7 +892,7 @@
     },
     {
       "item": "W.H.#1",
-      "fixture": 150,
+      "fixture": 0,
       "trim": 0,
       "trim2": 0,
       "misc": 0
@@ -962,7 +962,7 @@
     },
     {
       "item": "MISC",
-      "fixture": 2000,
+      "fixture": 0,
       "trim": 0,
       "trim2": 0,
       "misc": 0
@@ -1041,7 +1041,7 @@
   "page4_labor": [
     {
       "label": "Reserve",
-      "hours": 16
+      "hours": 0
     },
     {
       "label": "Demo",
@@ -1049,11 +1049,11 @@
     },
     {
       "label": "Rough",
-      "hours": 120
+      "hours": 0
     },
     {
       "label": "TO",
-      "hours": 160
+      "hours": 0
     },
     {
       "label": "Gas",
@@ -1065,11 +1065,11 @@
     },
     {
       "label": "Water",
-      "hours": 100
+      "hours": 0
     },
     {
       "label": "Trim",
-      "hours": 80
+      "hours": 0
     },
     {
       "label": "MISC & DRIVE",
