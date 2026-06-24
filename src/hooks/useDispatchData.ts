@@ -46,6 +46,7 @@ export const useDispatchData = () => {
         id:                j.id?.toString() ?? '',
         customerName:      j.title ?? j.customerName ?? 'New Field Job',
         address:           j.location ?? j.address ?? 'Tucson, AZ',
+        description:       j.description ?? '',
         phase:             j.phase ?? 'Rough-In',
         status:            j.status ?? 'pending',
         startTime:         j.startTime ?? '08:00',
@@ -148,6 +149,7 @@ export const useDispatchData = () => {
     const { data: inserted, error: sbError } = await supabase.from('jobs').insert([{
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
+      description:  jobData.description ?? '',
       phase:        jobData.phase ?? 'Rough-In',
       status:       'pending',
       date:         startDate,
@@ -191,6 +193,7 @@ export const useDispatchData = () => {
     const { error: sbError } = await supabase.from('jobs').update({
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
+      description:  jobData.description ?? '',
       phase:        jobData.phase ?? 'Rough-In',
       date:         startDate,
       end_date:     endDate,
