@@ -159,7 +159,8 @@ export const useDispatchData = () => {
       endTime:      jobData.endTime,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
-      type:         jobData.type ?? 'maintenance',
+      // NOTE: the `jobs` table has no `type` column; including it makes the whole
+      // insert fail (PGRST204) and silently drop the job. Type is derived on read.
     }]).select('id').single();
     if (sbError) {
       console.error('Error saving job to DB:', sbError);
@@ -200,7 +201,8 @@ export const useDispatchData = () => {
       service_type: jobData.serviceType ?? null,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
-      type:         jobData.type ?? 'maintenance',
+      // NOTE: `jobs` has no `type` column — see createJob. Omitted so the update
+      // doesn't fail (PGRST204) and silently no-op.
     }).eq('id', jobId);
     if (sbError) {
       console.error('Error updating job:', sbError);
