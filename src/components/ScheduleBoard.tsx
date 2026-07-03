@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft, ChevronRight, CalendarRange, Loader2, Plus, Trash2, X,
   ClipboardCheck, ArrowRightLeft, Check, AlertTriangle, CheckCircle2,
+  MapPin, User, CalendarDays,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -30,6 +31,16 @@ function daysBetween(a: string, b: string): number {
   return Math.round((parseYMD(b).getTime() - parseYMD(a).getTime()) / 86_400_000);
 }
 const todayYMD = () => toYMD(new Date());
+
+// Friendly label for the My Day header, e.g. "Today · Fri, Jul 3".
+function relativeDayLabel(ymd: string): string {
+  const diff = daysBetween(todayYMD(), ymd);
+  const nice = parseYMD(ymd).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  if (diff === 0) return `Today · ${nice}`;
+  if (diff === 1) return `Tomorrow · ${nice}`;
+  if (diff === -1) return `Yesterday · ${nice}`;
+  return nice;
+}
 
 // Build the visible day columns.
 function buildDays(anchor: Date, mode: 'month' | 'timeline'): string[] {
@@ -114,11 +125,23 @@ const COL_W = 36; // px per day column
 const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
   const { canEdit } = useAuth();
 
-  const [mode, setMode] = useState<'month' | 'timeline'>('month');
+  const [mode, setMode] = useState<'month' | 'timeline' | 'myday'>(
+    () => (typeof window !== 'undefined' && window.innerWidth < 768 ? 'myday' : 'month'),
+  );
   const [anchor, setAnchor] = useState<Date>(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
+
+  // My Day (mobile-first) state: which crew member and which day we're viewing.
+  const [selectedDay, setSelectedDay] = useState<string>(() => todayYMD());
+  const [viewAsTech, setViewAsTech] = useState<string>(() => {
+    try { return localStorage.getItem('schedule_myday_tech') ?? ''; } catch { return ''; }
+  });
+  const chooseTech = useCallback((id: string) => {
+    setViewAsTech(id);
+    try { localStorage.setItem('schedule_myday_tech', id); } catch { /* ignore */ }
+  }, []);
 
   const [tasks, setTasks] = useState<JobTask[]>([]);
   const [latestNotes, setLatestNotes] = useState<Record<string, string>>({});
@@ -130,7 +153,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
   const [logTask, setLogTask] = useState<JobTask | null>(null);
   const [moveTask, setMoveTask] = useState<JobTask | null>(null);
 
-  const days = useMemo(() => buildDays(anchor, mode), [anchor, mode]);
+  const days = useMemo(() => buildDays(anchor, mode === 'month' ? 'month' : 'timeline'), [anchor, mode]);
   const rangeStart = days[0];
   const rangeEnd = days[days.length - 1];
 
@@ -327,20 +350,31 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
   };
 
   // ── Navigation ────────────────────────────────────────────────────────────
-  const goPrev = () => setAnchor(a => mode === 'month'
-    ? new Date(a.getFullYear(), a.getMonth() - 1, 1)
-    : parseYMD(addDays(toYMD(a), -14)));
-  const goNext = () => setAnchor(a => mode === 'month'
-    ? new Date(a.getFullYear(), a.getMonth() + 1, 1)
-    : parseYMD(addDays(toYMD(a), 14)));
-  const goToday = () => setAnchor(() => {
-    const d = new Date();
-    return mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d;
-  });
+  const goPrev = () => {
+    if (mode === 'myday') { setSelectedDay(d => addDays(d, -1)); return; }
+    setAnchor(a => mode === 'month'
+      ? new Date(a.getFullYear(), a.getMonth() - 1, 1)
+      : parseYMD(addDays(toYMD(a), -14)));
+  };
+  const goNext = () => {
+    if (mode === 'myday') { setSelectedDay(d => addDays(d, 1)); return; }
+    setAnchor(a => mode === 'month'
+      ? new Date(a.getFullYear(), a.getMonth() + 1, 1)
+      : parseYMD(addDays(toYMD(a), 14)));
+  };
+  const goToday = () => {
+    if (mode === 'myday') { setSelectedDay(todayYMD()); return; }
+    setAnchor(() => {
+      const d = new Date();
+      return mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d;
+    });
+  };
 
-  const headerLabel = mode === 'month'
-    ? anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    : `${parseYMD(rangeStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${parseYMD(rangeEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const headerLabel = mode === 'myday'
+    ? relativeDayLabel(selectedDay)
+    : mode === 'month'
+      ? anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : `${parseYMD(rangeStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${parseYMD(rangeEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
   const gridWidth = days.length * COL_W;
   const today = todayYMD();
@@ -359,7 +393,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
 
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
-            {(['month', 'timeline'] as const).map(m => (
+            {(['myday', 'month', 'timeline'] as const).map(m => (
               <button
                 key={m}
                 type="button"
@@ -370,7 +404,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                     : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
                 }`}
               >
-                {m === 'month' ? 'Month' : 'Timeline'}
+                {m === 'myday' ? 'My Day' : m === 'month' ? 'Month' : 'Timeline'}
               </button>
             ))}
           </div>
@@ -396,7 +430,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
       )}
 
       {/* Crew color legend — each plumber's color so they spot themselves fast */}
-      {technicians.length > 0 && (
+      {mode !== 'myday' && technicians.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Crew colors:</span>
           {technicians.map(t => (
@@ -409,6 +443,22 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
       )}
 
       {/* Board */}
+      {mode === 'myday' ? (
+        <MyDayView
+          jobs={jobs}
+          tasks={tasks}
+          technicians={technicians}
+          selectedDay={selectedDay}
+          viewAsTech={viewAsTech}
+          onChangeTech={chooseTech}
+          techColor={techColor}
+          technicianName={technicianName}
+          latestNotes={latestNotes}
+          canEdit={canEdit}
+          onLog={setLogTask}
+          loading={loading}
+        />
+      ) : (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <div style={{ minWidth: 320 + gridWidth }}>
@@ -645,6 +695,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Modals */}
       {editJob && (
@@ -665,6 +716,197 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
           onClose={() => setMoveTask(null)}
           onMove={moveTaskToJob}
         />
+      )}
+    </div>
+  );
+};
+
+// ── My Day (mobile-first per-crew list) ──────────────────────────────────────
+// A phone-friendly vertical list: one card per job the selected crew member is
+// on for the chosen day. Shows site, phase, task, "Day X of N", progress,
+// one-tap Directions, and a big Log-progress button. A "Viewing as" picker
+// (saved to localStorage) is used because there's no link between a login and a
+// technicians row.
+
+const MyDayView: React.FC<{
+  jobs: Job[];
+  tasks: JobTask[];
+  technicians: Technician[];
+  selectedDay: string;
+  viewAsTech: string;
+  onChangeTech: (id: string) => void;
+  techColor: (id: string | null) => string;
+  technicianName: (id: string | null) => string;
+  latestNotes: Record<string, string>;
+  canEdit: boolean;
+  onLog: (t: JobTask) => void;
+  loading: boolean;
+}> = ({
+  jobs, tasks, technicians, selectedDay, viewAsTech, onChangeTech,
+  techColor, technicianName, latestNotes, canEdit, onLog, loading,
+}) => {
+  const jobById = useMemo(() => new Map(jobs.map(j => [j.id, j])), [jobs]);
+
+  const picker = (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs font-bold text-slate-500 inline-flex items-center gap-1">
+        <User className="w-3.5 h-3.5" /> Viewing as
+      </span>
+      <select
+        value={viewAsTech}
+        onChange={e => onChangeTech(e.target.value)}
+        className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+      >
+        <option value="">Select your name…</option>
+        {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+    </div>
+  );
+
+  if (loading) {
+    return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-indigo-500 animate-spin" /></div>;
+  }
+
+  if (!viewAsTech) {
+    return (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 text-center space-y-3">
+        <User className="w-10 h-10 mx-auto text-slate-300" />
+        <p className="text-sm font-medium text-slate-500">Pick your name once to see just your jobs each day.</p>
+        <div className="flex justify-center">{picker}</div>
+      </div>
+    );
+  }
+
+  const mine = tasks.filter(t => t.technicianId === viewAsTech);
+  const activeToday = mine
+    .filter(t => t.startDate <= selectedDay && (t.endDate ?? t.startDate) >= selectedDay)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const upcoming = mine
+    .filter(t => t.startDate > selectedDay)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate))
+    .slice(0, 4);
+
+  const renderCard = (task: JobTask, upcomingMode: boolean) => {
+    const job = jobById.get(task.jobId);
+    if (!job) return null;
+    const color = techColor(task.technicianId);
+    const health = computeHealth(task);
+    const total = Math.max(1, daysBetween(task.startDate, task.endDate) + 1);
+    const dayNum = Math.min(total, Math.max(1, daysBetween(task.startDate, selectedDay) + 1));
+    const startsIn = daysBetween(selectedDay, task.startDate);
+    const mapHref = job.address
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`
+      : null;
+    return (
+      <div key={task.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+        <div className="h-1.5" style={{ backgroundColor: color }} />
+        <div className="p-4 space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-base font-black text-slate-900 dark:text-white truncate">{job.customerName}</div>
+              {job.address && <div className="text-sm text-slate-500 truncate">{job.address}</div>}
+            </div>
+            {job.serviceType && (
+              <span className="shrink-0 text-[11px] font-black uppercase px-2 py-1 rounded-lg bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                {job.serviceType}
+              </span>
+            )}
+          </div>
+
+          {task.task && (
+            <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">{task.task}</div>
+          )}
+
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+            <CalendarDays className="w-4 h-4 shrink-0" />
+            {upcomingMode ? (
+              <span>
+                Starts {startsIn === 1 ? 'tomorrow' : `in ${startsIn} days`}
+                {' · '}
+                {parseYMD(task.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                {'–'}
+                {parseYMD(task.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
+            ) : (
+              <span>
+                Day {dayNum} of {total}
+                {' · through '}
+                {parseYMD(task.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
+            )}
+          </div>
+
+          {!upcomingMode && (
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${health.complete ? 'bg-teal-500' : health.behind ? 'bg-red-500' : 'bg-indigo-500'}`}
+                  style={{ width: `${Math.min(100, task.percentComplete)}%` }}
+                />
+              </div>
+              <span className="text-xs font-black text-slate-600 dark:text-slate-300 w-9 text-right">{task.percentComplete}%</span>
+              <span className={`text-[11px] font-black px-2 py-1 rounded-full ${
+                health.complete
+                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300'
+                  : health.behind
+                    ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                    : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+              }`}>
+                {health.complete ? 'Complete' : health.behind ? 'Behind' : 'On track'}
+              </span>
+            </div>
+          )}
+
+          {latestNotes[task.id] && (
+            <p className="text-xs text-slate-400">Latest: {latestNotes[task.id]}</p>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            {mapHref && (
+              <a
+                href={mapHref}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              >
+                <MapPin className="w-4 h-4" /> Directions
+              </a>
+            )}
+            {!upcomingMode && canEdit && (
+              <button
+                type="button"
+                onClick={() => onLog(task)}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold transition-colors"
+              >
+                <ClipboardCheck className="w-4 h-4" /> Log progress
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div className="flex items-center justify-between gap-2">{picker}</div>
+
+      <div>
+        <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-2">On this day</h3>
+        {activeToday.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center text-sm text-slate-400">
+            Nothing scheduled for {technicianName(viewAsTech)} on this day.
+          </div>
+        ) : (
+          <div className="space-y-3">{activeToday.map(t => renderCard(t, false))}</div>
+        )}
+      </div>
+
+      {upcoming.length > 0 && (
+        <div>
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-2">Coming up</h3>
+          <div className="space-y-3">{upcoming.map(t => renderCard(t, true))}</div>
+        </div>
       )}
     </div>
   );
