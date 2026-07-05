@@ -3,6 +3,22 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Customer, Technician } from '@/lib/data';
 
+function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
+  const id = String(c.id ?? '');
+  return {
+    id,
+    name:         String(c.name ?? ''),
+    phone:        String(c.phone ?? ''),
+    email:        String(c.email ?? ''),
+    address:      String(c.address ?? ''),
+    city:         String(c.city ?? ''),
+    propertyType: builderIds.has(id) ? 'Commercial' : 'Residential',
+    totalJobs:    0,
+    lastService:  String(c.created_at ?? '').split('T')[0] || '',
+    notes:        String(c.notes ?? ''),
+  };
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function getErrorMessage(err: unknown, fallback: string): string {
@@ -83,9 +99,13 @@ export const useDispatchData = () => {
   // FIX: customers were fetched nowhere — the state was always [].
   const fetchCustomers = useCallback(async () => {
     try {
-      const { data, error: sbError } = await supabase.from('customers').select('*');
+      const [{ data, error: sbError }, { data: builders }] = await Promise.all([
+        supabase.from('customers').select('*'),
+        supabase.from('builders').select('id'),
+      ]);
       if (sbError) throw sbError;
-      setCustomers(data ?? []);
+      const builderIds = new Set((builders ?? []).map(b => String(b.id)));
+      setCustomers((data ?? []).map(row => mapCustomerRow(row as Record<string, unknown>, builderIds)));
     } catch (err) {
       console.error('Error fetching customers:', err);
     }
@@ -330,6 +350,51 @@ export const useDispatchData = () => {
     await refresh();
   }, [refresh]);
 
+  const createCustomer = useCallback(async (customerData: Partial<Customer>) => {
+    const name = customerData.name?.trim();
+    if (!name) throw new Error('Company / builder name is required.');
+
+    const contact = {
+      name,
+      phone:   customerData.phone?.trim() || null,
+      email:   customerData.email?.trim() || null,
+      address: customerData.address?.trim() || null,
+      city:    customerData.city?.trim() || null,
+      notes:   customerData.notes?.trim() || null,
+    };
+
+    if (customerData.propertyType === 'Commercial') {
+      // Projects FK requires a builders row; share one id across both tables.
+      const id = crypto.randomUUID();
+
+      const { error: builderError } = await supabase
+        .from('builders')
+        .insert([{ id, name }]);
+      if (builderError) {
+        console.error('Error saving builder:', builderError);
+        throw new Error(builderError.message);
+      }
+
+      const { error: customerError } = await supabase.from('customers').insert([{
+        id,
+        ...contact,
+      }]);
+      if (customerError) {
+        await supabase.from('builders').delete().eq('id', id);
+        console.error('Error saving builder contact info:', customerError);
+        throw new Error(customerError.message);
+      }
+    } else {
+      const { error: customerError } = await supabase.from('customers').insert([contact]);
+      if (customerError) {
+        console.error('Error saving customer:', customerError);
+        throw new Error(customerError.message);
+      }
+    }
+
+    await refresh();
+  }, [refresh]);
+
   return {
     loading,
     error,
@@ -346,5 +411,6 @@ export const useDispatchData = () => {
     updateJobPhase,
     hireTechnician,
     fireTechnician,
+    createCustomer,
   };
 };

@@ -72,6 +72,7 @@ const AppLayout: React.FC = () => {
     assignTechnicians,
     hireTechnician,
     fireTechnician,
+    createCustomer,
   } = useDispatchData();
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -93,6 +94,17 @@ const AppLayout: React.FC = () => {
 
   const handleCustomerCall = (c: Customer) => {
     showToast(`Calling ${c.name}…`);
+  };
+
+  const handleCreateCustomer = async (c: Partial<Customer>) => {
+    try {
+      await createCustomer(c);
+      showToast(c.propertyType === 'Commercial' ? 'Builder saved.' : 'Customer saved.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save.';
+      showToast(msg);
+      throw err;
+    }
   };
 
   // FIX: void-wrap all async event handlers
@@ -335,6 +347,7 @@ const AppLayout: React.FC = () => {
                   jobs={jobs}
                   onCall={handleCustomerCall}
                   onSchedule={handleScheduleFromCustomer}
+                  onCreateCustomer={handleCreateCustomer}
                   onRefresh={refresh}
                 />
               )}

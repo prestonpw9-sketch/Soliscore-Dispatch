@@ -22,7 +22,7 @@ interface Props {
   jobs?: Job[];
   onCall: (c: Customer) => void;
   onSchedule: (c: Customer) => void;
-  onCreateCustomer?: (c: Partial<Customer>) => void;
+  onCreateCustomer?: (c: Partial<Customer>) => Promise<void>;
   onRefresh?: () => Promise<void> | void;
 }
 
@@ -54,6 +54,7 @@ const CustomersView: React.FC<Props> = ({
   const [showBuilderModal, setShowBuilderModal] = useState(false);
   const [newBuilder, setNewBuilder]   = useState<NewBuilderForm>(EMPTY_FORM);
   const [saveError, setSaveError]     = useState<string | null>(null);
+  const [saving, setSaving]           = useState(false);
 
   // Builder projects (projects table, keyed by builder_id = selected customer id).
   const [projects, setProjects]       = useState<Project[]>([]);
@@ -148,14 +149,26 @@ const CustomersView: React.FC<Props> = ({
     return matchSearch && matchType;
   });
 
-  const handleSaveBuilder = (e: React.FormEvent) => {
+  const handleSaveBuilder = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaveError(null);
+    if (!onCreateCustomer) {
+      setSaveError('Unable to save — please refresh and try again.');
+      return;
+    }
+    setSaving(true);
     try {
-      onCreateCustomer?.({ ...newBuilder, propertyType: 'Commercial', totalJobs: 0 });
+      await onCreateCustomer({
+        ...newBuilder,
+        propertyType: 'Commercial',
+        totalJobs: 0,
+        notes: '',
+      });
       closeModal();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save builder.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -198,13 +211,15 @@ const CustomersView: React.FC<Props> = ({
               </button>
             ))}
             <div className="h-6 w-px bg-slate-300 dark:bg-slate-700 mx-1" aria-hidden="true" />
-            <button
-              type="button"
-              onClick={() => setShowBuilderModal(true)}
-              className="flex items-center gap-1.5 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap shadow-sm transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" /> New Builder
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setShowBuilderModal(true)}
+                className="flex items-center gap-1.5 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap shadow-sm transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" /> New Builder
+              </button>
+            )}
           </div>
         </div>
 
@@ -427,7 +442,7 @@ const CustomersView: React.FC<Props> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveBuilder} className="p-6 space-y-4">
+            <form onSubmit={e => void handleSaveBuilder(e)} className="p-6 space-y-4">
               <div>
                 <label htmlFor="builder-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Company / Builder Name *</label>
                 <input ref={firstInputRef}  required type="text" placeholder="e.g. Summit Construction"
@@ -437,10 +452,9 @@ const CustomersView: React.FC<Props> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label htmlFor="builder-phone" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone Number</label>
-                  <input id="
-                  builder-phone" type="tel" placeholder="(555) 123-4567"
+                  <input id="builder-phone" type="tel" placeholder="(555) 123-4567"
                     className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                     />
+                    {...field('phone')} />
                 </div>
                 <div>
                   <label htmlFor="builder-email" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email</label>
@@ -467,9 +481,9 @@ const CustomersView: React.FC<Props> = ({
                   className="flex-1 px-4 py-2.5 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors">
                   Cancel
                 </button>
-                <button type="submit"
-                  className="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors">
-                  Save Builder
+                <button type="submit" disabled={saving}
+                  className="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors">
+                  {saving ? 'Saving…' : 'Save Builder'}
                 </button>
               </div>
             </form>
