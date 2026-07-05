@@ -120,7 +120,7 @@ const Dashboard: React.FC<Props> = ({
 
         <div className="flex flex-col gap-6">
           <BlueprintCard />
-          <SitePhotosCard />
+          <SitePhotosCard jobs={jobs} />
         </div>
       </div>
 
