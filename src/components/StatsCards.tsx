@@ -132,7 +132,7 @@ const StatsCards: React.FC<Props> = ({
       {/* Modals */}
       <ActiveJobsModal  isOpen={jobsModalOpen}       onClose={() => setJobsModalOpen(false)} />
       <BlueprintsModal  isOpen={blueprintsModalOpen} onClose={() => setBlueprintsModalOpen(false)} />
-      <SitePhotosModal  isOpen={photosModalOpen}     onClose={() => setPhotosModalOpen(false)} />
+      <SitePhotosModal  isOpen={photosModalOpen}     onClose={() => setPhotosModalOpen(false)} jobs={jobs} />
       <SubmittalsModal  isOpen={submittalsModalOpen} onClose={() => setSubmittalsModalOpen(false)} jobs={jobs} />
     </>
   );
