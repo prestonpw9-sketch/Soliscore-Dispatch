@@ -3,6 +3,21 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Customer, Technician } from '@/lib/data';
 
+function mapCustomerRow(c: Record<string, unknown>): Customer {
+  return {
+    id:           String(c.id ?? ''),
+    name:         String(c.name ?? ''),
+    phone:        String(c.phone ?? ''),
+    email:        String(c.email ?? ''),
+    address:      String(c.address ?? ''),
+    city:         String(c.city ?? ''),
+    propertyType: (c.property_type ?? c.propertyType ?? 'Residential') as Customer['propertyType'],
+    totalJobs:    Number(c.total_jobs ?? c.totalJobs ?? 0),
+    lastService:  String(c.last_service ?? c.lastService ?? ''),
+    notes:        String(c.notes ?? ''),
+  };
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function getErrorMessage(err: unknown, fallback: string): string {
@@ -85,7 +100,7 @@ export const useDispatchData = () => {
     try {
       const { data, error: sbError } = await supabase.from('customers').select('*');
       if (sbError) throw sbError;
-      setCustomers(data ?? []);
+      setCustomers((data ?? []).map(row => mapCustomerRow(row as Record<string, unknown>)));
     } catch (err) {
       console.error('Error fetching customers:', err);
     }
@@ -330,6 +345,31 @@ export const useDispatchData = () => {
     await refresh();
   }, [refresh]);
 
+  const createCustomer = useCallback(async (customerData: Partial<Customer>) => {
+    const name = customerData.name?.trim();
+    if (!name) throw new Error('Company / builder name is required.');
+
+    const today = new Date().toISOString().split('T')[0];
+    const propertyType = customerData.propertyType ?? 'Residential';
+
+    const { error: sbError } = await supabase.from('customers').insert([{
+      name,
+      phone:         customerData.phone?.trim() || '',
+      email:         customerData.email?.trim() || '',
+      address:       customerData.address?.trim() || '',
+      city:          customerData.city?.trim() || '',
+      property_type: propertyType,
+      total_jobs:    customerData.totalJobs ?? 0,
+      last_service:  customerData.lastService || today,
+      notes:         customerData.notes?.trim() || '',
+    }]);
+    if (sbError) {
+      console.error('Error saving customer:', sbError);
+      throw new Error(sbError.message);
+    }
+    await refresh();
+  }, [refresh]);
+
   return {
     loading,
     error,
@@ -346,5 +386,6 @@ export const useDispatchData = () => {
     updateJobPhase,
     hireTechnician,
     fireTechnician,
+    createCustomer,
   };
 };
