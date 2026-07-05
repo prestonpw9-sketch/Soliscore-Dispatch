@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Camera, UploadCloud } from 'lucide-react';
+import type { Job } from '@/lib/data';
+import { JobSelect } from '@/components/JobSelect';
+import { buildPhotoPath, getJobLabel, parsePhotoPath } from '@/lib/sitePhotos';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -8,6 +11,10 @@ interface StorageFile {
   id: string;
   name: string;
   created_at?: string;
+}
+
+interface Props {
+  jobs: Job[];
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -20,13 +27,13 @@ const PLACEHOLDER = '.emptyFolderPlaceholder';
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export const SitePhotosCard = () => {
+export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
   const [uploading, setUploading]       = useState(false);
   const [photos, setPhotos]             = useState<StorageFile[]>([]);
   const [fetchError, setFetchError]     = useState<string | null>(null);
   const [uploadError, setUploadError]   = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState('');
 
-  // FIX: useCallback so it's stable for the useEffect dependency array
   const fetchPhotos = useCallback(async () => {
     setFetchError(null);
     const { data, error } = await supabase.storage
@@ -50,15 +57,18 @@ export const SitePhotosCard = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!selectedJobId) {
+      setUploadError('Select a job before uploading.');
+      e.target.value = '';
+      return;
+    }
+
     setUploading(true);
     setUploadError(null);
-
-    // FIX: reset input so the same file can be re-selected after a failure
     e.target.value = '';
 
     try {
-      const cleanName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '');
-      const filePath  = `${Date.now()}-${cleanName}`;
+      const filePath = buildPhotoPath(selectedJobId, file.name);
 
       const { error } = await supabase.storage
         .from('site-photos')
@@ -68,7 +78,6 @@ export const SitePhotosCard = () => {
 
       await fetchPhotos();
     } catch (err) {
-      // FIX: no `catch (err: any)` — narrow with helper
       const msg = getErrorMessage(err, 'Failed to upload photo.');
       setUploadError(msg);
       console.error('Upload failed:', err);
@@ -84,38 +93,48 @@ export const SitePhotosCard = () => {
     window.open(getImageUrl(fileName), '_blank', 'noopener,noreferrer');
   };
 
+  const canUpload = Boolean(selectedJobId) && !uploading;
+
   return (
     <div className="p-5 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 shadow-xs flex flex-col h-full min-h-[250px]">
 
       {/* Header */}
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-start gap-3 mb-4">
         <div>
           <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Camera className="w-5 h-5 text-indigo-500" aria-hidden="true" />
             Site Photos
           </h3>
-          <p className="text-xs text-slate-500 mt-0.5">Recent field uploads</p>
+          <p className="text-xs text-slate-500 mt-0.5">Recent field uploads by job</p>
         </div>
 
-        <label className={`cursor-pointer text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${
-          uploading
-            ? 'bg-indigo-400 cursor-not-allowed'
-            : 'bg-indigo-600 hover:bg-indigo-700'
-        }`}>
-          <UploadCloud className="w-3.5 h-3.5" aria-hidden="true" />
-          {uploading ? 'Uploading…' : 'Upload'}
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handlePhotoUpload}
-            disabled={uploading}
-            aria-label="Upload site photo"
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <JobSelect
+            jobs={jobs}
+            value={selectedJobId}
+            onChange={setSelectedJobId}
+            id="site-photos-card-job"
+            className="max-w-[180px]"
           />
-        </label>
+          <label className={`cursor-pointer text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${
+            canUpload
+              ? 'bg-indigo-600 hover:bg-indigo-700'
+              : 'bg-indigo-400 cursor-not-allowed'
+          }`}>
+            <UploadCloud className="w-3.5 h-3.5" aria-hidden="true" />
+            {uploading ? 'Uploading…' : 'Upload'}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handlePhotoUpload}
+              disabled={!canUpload}
+              aria-label="Upload site photo"
+            />
+          </label>
+        </div>
       </div>
 
-      {/* Inline feedback — replaces alert() */}
       {uploadError && (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400 font-semibold mb-2">
           {uploadError}
@@ -137,24 +156,28 @@ export const SitePhotosCard = () => {
           <div className="grid grid-cols-2 gap-3">
             {photos.map(file => {
               const url = getImageUrl(file.name);
+              const { jobId } = parsePhotoPath(file.name);
+              const jobLabel = getJobLabel(jobId, jobs);
               return (
-                // FIX: <div onClick> → <button> for keyboard access and semantics
                 <button
                   key={file.id}
                   type="button"
                   onClick={() => openPhoto(file.name)}
-                  aria-label={`View site photo ${file.name}`}
+                  aria-label={`View site photo for ${jobLabel}`}
                   className="relative group cursor-pointer aspect-video rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                 >
                   <img
                     src={url}
-                    alt={`Site photo: ${file.name}`}
+                    alt={`Site photo for ${jobLabel}`}
                     width={300}
                     height={169}
                     loading="lazy"
                     decoding="async"
                     className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
                   />
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900/90 via-slate-900/50 to-transparent px-2 pt-6 pb-1.5">
+                    <p className="text-[10px] font-bold text-white truncate">{jobLabel}</p>
+                  </div>
                   <div
                     aria-hidden="true"
                     className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center"
