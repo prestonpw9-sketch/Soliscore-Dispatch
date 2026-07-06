@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
-import type { Job, Customer, Technician } from '@/lib/data';
+import type { Job, Customer, Technician, TechDailyPriority } from '@/lib/data';
 
 function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
   const id = String(c.id ?? '');
@@ -44,6 +44,7 @@ export const useDispatchData = () => {
   const [jobs, setJobs]               = useState<Job[]>([]);
   const [customers, setCustomers]     = useState<Customer[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
+  const [techPriorities, setTechPriorities] = useState<TechDailyPriority[]>([]);
 
   // FIX: keep a stable ref to jobs so rescheduleJob's DB write
   // always reads the latest job without needing `jobs` in its dep array.
@@ -111,6 +112,22 @@ export const useDispatchData = () => {
     }
   }, []);
 
+  const fetchTechPriorities = useCallback(async () => {
+    try {
+      const { data, error: sbError } = await supabase
+        .from('tech_daily_priorities')
+        .select('technician_id, work_date, job_id');
+      if (sbError) throw sbError;
+      setTechPriorities((data ?? []).map(row => ({
+        technicianId: String(row.technician_id),
+        workDate: String(row.work_date),
+        jobId: String(row.job_id),
+      })));
+    } catch (err) {
+      console.error('Error fetching tech priorities:', err);
+    }
+  }, []);
+
   // Only fetch once we actually have an auth session — under RLS, requests made
   // before the token is attached can hang indefinitely. We also clear the
   // loading flag after all fetches settle, with a hard timeout safety net so
@@ -138,7 +155,7 @@ export const useDispatchData = () => {
       }
     }, 12000);
 
-    void Promise.allSettled([fetchJobs(), fetchTeam(), fetchCustomers()])
+    void Promise.allSettled([fetchJobs(), fetchTeam(), fetchCustomers(), fetchTechPriorities()])
       .finally(() => {
         if (active) {
           clearTimeout(timeout);
@@ -147,12 +164,11 @@ export const useDispatchData = () => {
       });
 
     return () => { active = false; clearTimeout(timeout); };
-  }, [session, authLoading, fetchJobs, fetchTeam, fetchCustomers]);
+  }, [session, authLoading, fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities]);
 
-  // FIX: await all three in parallel rather than sequentially
   const refresh = useCallback(async () => {
-    await Promise.all([fetchJobs(), fetchTeam(), fetchCustomers()]);
-  }, [fetchJobs, fetchTeam, fetchCustomers]);
+    await Promise.all([fetchJobs(), fetchTeam(), fetchCustomers(), fetchTechPriorities()]);
+  }, [fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -395,12 +411,32 @@ export const useDispatchData = () => {
     await refresh();
   }, [refresh]);
 
+  const setFirstPriorityJob = useCallback(async (
+    technicianId: string,
+    workDate: string,
+    jobId: string,
+  ) => {
+    const { error: sbError } = await supabase
+      .from('tech_daily_priorities')
+      .upsert({
+        technician_id: technicianId,
+        work_date: workDate,
+        job_id: Number(jobId),
+      }, { onConflict: 'technician_id,work_date' });
+    if (sbError) {
+      console.error('Error setting first priority job:', sbError);
+      throw new Error(sbError.message);
+    }
+    await fetchTechPriorities();
+  }, [fetchTechPriorities]);
+
   return {
     loading,
     error,
     jobs,
     customers,
     technicians,
+    techPriorities,
     refresh,
     createJob,
     updateJob,
@@ -412,5 +448,6 @@ export const useDispatchData = () => {
     hireTechnician,
     fireTechnician,
     createCustomer,
+    setFirstPriorityJob,
   };
 };

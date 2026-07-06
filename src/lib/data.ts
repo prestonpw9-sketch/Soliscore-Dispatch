@@ -81,6 +81,13 @@ export interface Technician {
   skills?: string[];
 }
 
+/** First-stop routing: one priority job per technician per calendar day. */
+export interface TechDailyPriority {
+  technicianId: string;
+  workDate: string;
+  jobId: string;
+}
+
 export interface Customer {
   id: string;
   name: string;
