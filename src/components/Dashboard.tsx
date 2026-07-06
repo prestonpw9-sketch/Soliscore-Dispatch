@@ -26,6 +26,11 @@ function jobHasTech(job: Job, techId: string) {
   return (job.technicianIds?.includes(techId) ?? false) || job.technicianId === techId;
 }
 
+function jobActiveOnDay(job: Job, day: string) {
+  const end = job.endDate ?? job.date;
+  return job.date <= day && end >= day;
+}
+
 function sortTechJobs(
   techJobs: Job[],
   firstJobId: string | undefined,
@@ -56,7 +61,7 @@ const Dashboard: React.FC<Props> = ({
   const [isTeamModalOpen, setIsTeamModalOpen] = React.useState(false);
   const [pinning, setPinning] = React.useState<string | null>(null);
 
-  const todayJobs = jobs.filter(j => j.date === todayStr);
+  const todayJobs = jobs.filter(j => jobActiveOnDay(j, todayStr));
   const activeJobCount = jobs.filter(j => j.status !== 'completed').length;
   const activePlumbers = technicians.filter(t => t.role === 'Plumber').length;
 
