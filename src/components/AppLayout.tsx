@@ -34,7 +34,7 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
 // ── Component ──────────────────────────────────────────────────────────────
 
 const AppLayout: React.FC = () => {
-  const { role } = useAuth();
+  const { role, canEdit } = useAuth();
   const [view, setView]                     = useState<ViewKey>('dashboard');
 
   // Which views each role may open (must mirror the Sidebar's NAV_ITEMS).
@@ -73,6 +73,8 @@ const AppLayout: React.FC = () => {
     hireTechnician,
     fireTechnician,
     createCustomer,
+    techPriorities,
+    setFirstPriorityJob,
   } = useDispatchData();
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -104,6 +106,19 @@ const AppLayout: React.FC = () => {
       const msg = err instanceof Error ? err.message : 'Failed to save.';
       showToast(msg);
       throw err;
+    }
+  };
+
+  const handleSetFirstPriority = async (
+    technicianId: string,
+    workDate: string,
+    jobId: string,
+  ) => {
+    try {
+      await setFirstPriorityJob(technicianId, workDate, jobId);
+      showToast('First stop updated.');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not set first stop.');
     }
   };
 
@@ -322,14 +337,16 @@ const AppLayout: React.FC = () => {
                 <Dashboard
                   jobs={jobs}
                   technicians={technicians}
+                  techPriorities={techPriorities}
                   todayStr={todayStr}
-                  // FIX: weekDates and onViewTasks removed — Dashboard no longer accepts these props
+                  canEdit={canEdit}
                   onViewCalendar={() => setView('schedule')}
                   onOpenEstimator={() => setEstimatorOpen(true)}
                   onPhaseChange={handlePhaseChange}
                   onHire={hireTechnician}
                   onFire={fireTechnician}
                   onJobClick={openJobForEdit}
+                  onSetFirstPriority={handleSetFirstPriority}
                 />
               )}
 
