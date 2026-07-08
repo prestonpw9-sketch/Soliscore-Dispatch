@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { X, Send, Bot, Smartphone, MessageSquare } from 'lucide-react';
+import { useAuth } from '../lib/AuthContext';
+import { X, Send, Bot, Smartphone, MessageSquare, Trash2, Phone } from 'lucide-react';
+
+/** ITDG dispatch line — shown in Comm Matrix so the team always has it handy. */
+export const DISPATCH_PHONE = '(520) 650-6100';
+export const DISPATCH_PHONE_TEL = '+15206506100';
 
 interface DispatchMessage {
   id?: string;
@@ -15,9 +20,11 @@ interface SMSPanelProps {
 }
 
 export default function SMSPanel({ onClose }: SMSPanelProps) {
+  const { canEdit } = useAuth();
   const [messages, setMessages] = useState<DispatchMessage[]>([]);
   const [activePhone, setActivePhone] = useState<string | null>(null);
   const [manualText, setManualText] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Close on Escape — safety net so the panel is never a dead end.
@@ -38,6 +45,15 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
         payload => {
           const newMessage = payload.new as DispatchMessage;
           setMessages(prev => [...prev, newMessage]);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'dispatch_messages' },
+        payload => {
+          const deleted = payload.old as { id?: string };
+          if (!deleted.id) return;
+          setMessages(prev => prev.filter(m => m.id !== deleted.id));
         }
       )
       .subscribe();
@@ -75,6 +91,47 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   );
 
   const activeMessages = messages.filter(m => m.phone_number === activePhone);
+
+  const handleDeleteMessage = async (id: string) => {
+    if (!canEdit || deleting) return;
+
+    setDeleting(true);
+    const { error } = await supabase.from('dispatch_messages').delete().eq('id', id);
+    setDeleting(false);
+
+    if (error) {
+      console.error('Failed to delete message:', error);
+      return;
+    }
+
+    setMessages(prev => prev.filter(m => m.id !== id));
+  };
+
+  const handleClearThread = async () => {
+    if (!canEdit || !activePhone || deleting) return;
+
+    const threadCount = messages.filter(m => m.phone_number === activePhone).length;
+    if (threadCount === 0) return;
+
+    const confirmed = window.confirm(
+      `Delete all ${threadCount} message${threadCount === 1 ? '' : 's'} with ${activePhone}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    const { error } = await supabase
+      .from('dispatch_messages')
+      .delete()
+      .eq('phone_number', activePhone);
+    setDeleting(false);
+
+    if (error) {
+      console.error('Failed to clear conversation:', error);
+      return;
+    }
+
+    setMessages(prev => prev.filter(m => m.phone_number !== activePhone));
+  };
 
   const handleSendManualMessage = async () => {
     const trimmed = manualText.trim();
@@ -114,19 +171,29 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   return (
     <div className="flex h-[800px] max-h-full w-full max-w-6xl mx-auto bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
       <div className="w-1/3 border-r border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col">
-        <div className="p-5 bg-slate-900 dark:bg-slate-950 text-white flex justify-between items-center shrink-0">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-indigo-400" />
-            <span className="font-black text-lg tracking-tight">Comm Matrix</span>
-          </div>
-          <button
+        <div className="p-5 bg-slate-900 dark:bg-slate-950 text-white shrink-0">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-indigo-400" />
+              <span className="font-black text-lg tracking-tight">Comm Matrix</span>
+            </div>
+            <button
             onClick={onClose}
             className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-slate-300 hover:text-white"
             title="Close Message Matrix"
             type="button"
           >
             <X className="w-4 h-4" />
-          </button>
+            </button>
+          </div>
+          <a
+            href={`tel:${DISPATCH_PHONE_TEL}`}
+            className="mt-3 flex items-center gap-2 text-sm font-semibold text-indigo-200 hover:text-white transition-colors"
+            title="Call dispatch line"
+          >
+            <Phone className="w-4 h-4 shrink-0" />
+            <span>Dispatch: {DISPATCH_PHONE}</span>
+          </a>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -187,18 +254,35 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
       <div className="w-2/3 flex flex-col bg-slate-50/30 dark:bg-slate-900 relative">
         {activePhone ? (
           <>
-            <div className="px-6 py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-sm z-10 shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="font-black text-slate-900 dark:text-white text-xl tracking-tight">
+            <div className="px-6 py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-sm z-10 shrink-0 gap-3">
+              <div className="min-w-0">
+                <div className="font-black text-slate-900 dark:text-white text-xl tracking-tight truncate">
                   {activePhone}
                 </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Replying from {DISPATCH_PHONE}
+                </p>
               </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-full border border-emerald-200 dark:border-emerald-500/20 shadow-sm">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                </span>
-                AI Active Routing
+              <div className="flex items-center gap-2 shrink-0">
+                {canEdit && activeMessages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void handleClearThread()}
+                    disabled={deleting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-500/10 dark:hover:text-red-400 dark:hover:border-red-500/30 transition-colors disabled:opacity-50"
+                    title="Delete all messages in this conversation"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Clear
+                  </button>
+                )}
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-full border border-emerald-200 dark:border-emerald-500/20 shadow-sm">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                  </span>
+                  AI Active Routing
+                </div>
               </div>
             </div>
 
@@ -207,8 +291,8 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
                 const isCustomer = msg.direction === 'inbound';
                 return (
                   <div
-                    key={`${msg.phone_number}-${msg.created_at ?? msg.message}`}
-                    className={`flex ${isCustomer ? 'justify-start' : 'justify-end'}`}
+                    key={msg.id ?? `${msg.phone_number}-${msg.created_at ?? msg.message}`}
+                    className={`group flex ${isCustomer ? 'justify-start' : 'justify-end'}`}
                   >
                     <div className="flex flex-col gap-1 max-w-[75%]">
                       <div
@@ -222,6 +306,17 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                           {isCustomer ? 'Superintendent' : 'Dispatch AI'}
                         </span>
+                        {canEdit && msg.id && (
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteMessage(msg.id!)}
+                            disabled={deleting}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-red-500 transition-all disabled:opacity-50"
+                            title="Delete message"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
 
                       <div
@@ -272,6 +367,13 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
             <p className="text-slate-500 mt-1 font-medium">
               Select an active field route to monitor comms.
             </p>
+            <a
+              href={`tel:${DISPATCH_PHONE_TEL}`}
+              className="mt-4 flex items-center gap-2 text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+            >
+              <Phone className="w-4 h-4" />
+              Dispatch line: {DISPATCH_PHONE}
+            </a>
           </div>
         )}
       </div>
