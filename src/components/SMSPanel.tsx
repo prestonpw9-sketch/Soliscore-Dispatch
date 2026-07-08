@@ -20,7 +20,7 @@ interface SMSPanelProps {
 }
 
 export default function SMSPanel({ onClose }: SMSPanelProps) {
-  const { canEdit } = useAuth();
+  const { isOwner } = useAuth();
   const [messages, setMessages] = useState<DispatchMessage[]>([]);
   const [activePhone, setActivePhone] = useState<string | null>(null);
   const [manualText, setManualText] = useState('');
@@ -93,7 +93,7 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   const activeMessages = messages.filter(m => m.phone_number === activePhone);
 
   const handleDeleteMessage = async (id: string) => {
-    if (!canEdit || deleting) return;
+    if (!isOwner || deleting) return;
 
     setDeleting(true);
     const { error } = await supabase.from('dispatch_messages').delete().eq('id', id);
@@ -108,7 +108,7 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   };
 
   const handleClearThread = async () => {
-    if (!canEdit || !activePhone || deleting) return;
+    if (!isOwner || !activePhone || deleting) return;
 
     const threadCount = messages.filter(m => m.phone_number === activePhone).length;
     if (threadCount === 0) return;
@@ -264,7 +264,7 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {canEdit && activeMessages.length > 0 && (
+                {isOwner && activeMessages.length > 0 && (
                   <button
                     type="button"
                     onClick={() => void handleClearThread()}
@@ -306,7 +306,7 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                           {isCustomer ? 'Superintendent' : 'Dispatch AI'}
                         </span>
-                        {canEdit && msg.id && (
+                        {isOwner && msg.id && (
                           <button
                             type="button"
                             onClick={() => void handleDeleteMessage(msg.id!)}
