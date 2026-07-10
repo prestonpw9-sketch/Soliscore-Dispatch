@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, type KeyboardEvent } from 'react';
+import { useRef, useEffect, useState, useMemo, type KeyboardEvent } from 'react';
 import { clsx }                        from 'clsx';
 import { Send, Trash2, X, Loader2 }    from 'lucide-react';
 import { useAIAssistant }              from '@/hooks/useAIAssistant';
@@ -6,22 +6,30 @@ import { useAIProviderContext }         from '@/services/ai/aiProviderFactory';
 import { AI_PROVIDER_CONFIGS }         from '@/services/ai/types';
 import { AIMessage }                   from './AIMessage';
 
-const QUICK_PROMPTS = [
+const BASE_QUICK_PROMPTS = [
   "Summarise today's open jobs",
   "Which techs are available right now?",
-  "Draft a customer update for the current job",
   "What jobs are overdue?",
-];
+] as const;
 
 interface Props { onClose: () => void; }
 
 export function AIAssistantPanel({ onClose }: { onClose: () => void }) {
-  const { activeProvider } = useAIProviderContext();
+  const { activeProvider, solidcoreContext } = useAIProviderContext();
   const { messages, sendMessage, clearHistory, isLoading, error } = useAIAssistant();
   const [input, setInput]   = useState('');
   const bottomRef           = useRef<HTMLDivElement>(null);
   const textareaRef         = useRef<HTMLTextAreaElement>(null);
   const config              = AI_PROVIDER_CONFIGS[activeProvider];
+
+  const quickPrompts = useMemo(() => {
+    const draftPrompt = solidcoreContext.selectedJob
+      ? `Draft a customer update for ${solidcoreContext.selectedJob.customerName}`
+      : (solidcoreContext.openJobsToday?.length
+        ? "Draft customer update texts for today's jobs"
+        : 'Draft a customer update (tell me which job)');
+    return [...BASE_QUICK_PROMPTS, draftPrompt];
+  }, [solidcoreContext.selectedJob, solidcoreContext.openJobsToday?.length]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isLoading]);
   useEffect(() => { textareaRef.current?.focus(); }, []);
@@ -73,7 +81,7 @@ export function AIAssistantPanel({ onClose }: { onClose: () => void }) {
               <p className="text-xs text-slate-400 leading-relaxed">Ask anything about your jobs,<br />techs, or customers.</p>
             </div>
             <div className="w-full space-y-1.5 mt-2">
-              {QUICK_PROMPTS.map(p => (
+              {quickPrompts.map(p => (
                 <button key={p} onClick={() => sendMessage(p)}
                   className="w-full text-left text-xs px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors">
                   {p}

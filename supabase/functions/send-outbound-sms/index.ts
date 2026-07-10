@@ -13,7 +13,9 @@ a field service management platform for plumbing contractors in Arizona.
 Help dispatchers manage jobs, schedule technicians, and communicate with customers.
 Use the current date/time provided in context — never guess the time.
 Give complete, concise answers (do not trail off mid-sentence).
-Job status 'scheduled' means not yet marked active on the board, even if start time has passed.`;
+Job status 'scheduled' means not yet marked active on the board, even if start time has passed.
+If no focused job is selected, use today's open jobs list from context.
+When asked to draft customer updates, list the relevant jobs by customer name and write ready-to-send SMS-style messages — do not ask the user to pick a job if today's job list is already provided.`;
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -105,6 +107,8 @@ function buildSystemPrompt(ctx: SOLIDCOREContext, override?: string): string {
     }
   } else if (ctx.totalJobsToday === 0) {
     lines.push('Today\'s open jobs: none on the schedule.');
+  } else {
+    lines.push('No job is currently selected/focused on screen.');
   }
   if (ctx.selectedJob) {
     const j = ctx.selectedJob;
