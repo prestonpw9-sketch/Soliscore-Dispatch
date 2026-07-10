@@ -6,6 +6,9 @@ interface GeminiChatResponse {
   error?: string;
 }
 
+const NOT_DEPLOYED_MSG =
+  'The AI service is not deployed yet. In Supabase: Edge Functions → deploy gemini-chat (or run npm run deploy:gemini after supabase login).';
+
 export class GeminiService implements IAIProvider {
   readonly provider = 'gemini' as const;
 
@@ -14,26 +17,63 @@ export class GeminiService implements IAIProvider {
     context: SOLIDCOREContext,
     options: AIRequestOptions = {},
   ): Promise<string> {
-    const { data, error } = await supabase.functions.invoke<GeminiChatResponse>('gemini-chat', {
-      body: {
-        messages: messages.map(m => ({ role: m.role, content: m.content })),
-        context,
-        options,
-      },
-    });
-
-    if (error) {
-      throw new Error(error.message ?? 'AI request failed.');
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      throw new Error('You must be signed in to use the AI assistant.');
     }
 
-    if (data?.error) {
-      throw new Error(data.error);
+    const url = import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (!url || !anonKey) {
+      throw new Error('Missing Supabase configuration.');
     }
 
-    if (!data?.reply) {
+    let res: Response;
+    try {
+      res = await fetch(`${url}/functions/v1/gemini-chat`, {
+        method: 'POST',
+        headers: {
+          Authorization:  `Bearer ${session.access_token}`,
+          apikey:         anonKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: messages.map(m => ({ role: m.role, content: m.content })),
+          context,
+          options,
+        }),
+      });
+    } catch {
+      throw new Error(NOT_DEPLOYED_MSG);
+    }
+
+    if (res.status === 404) {
+      throw new Error(NOT_DEPLOYED_MSG);
+    }
+
+    let payload: GeminiChatResponse;
+    try {
+      payload = await res.json() as GeminiChatResponse;
+    } catch {
+      throw new Error(
+        res.ok
+          ? 'Invalid response from AI service.'
+          : `AI service error (${res.status}). ${NOT_DEPLOYED_MSG}`,
+      );
+    }
+
+    if (!res.ok) {
+      throw new Error(payload.error ?? `AI service error (${res.status}).`);
+    }
+
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+
+    if (!payload.reply) {
       throw new Error('Empty response from AI service.');
     }
 
-    return data.reply;
+    return payload.reply;
   }
 }

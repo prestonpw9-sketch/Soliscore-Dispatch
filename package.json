@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",
