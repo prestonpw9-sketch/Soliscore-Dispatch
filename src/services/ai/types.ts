@@ -46,7 +46,7 @@ export const AI_PROVIDER_CONFIGS: Record<AIProvider, AIProviderConfig> = {
   gemini: {
     provider: 'gemini',
     label:    'Gemini',
-    model:    'gemini-3.5-flash',
+    model:    'gemini-2.0-flash',
     color:    'text-blue-400',
     icon:     '✦',
   },

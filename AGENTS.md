@@ -20,4 +20,4 @@ This repo is a single **Vite + React + TypeScript SPA** (`solidcore-dispatch`, "
 
 ### Gotchas
 - Data fetches in `useDispatchData.ts` swallow errors (console-only), so a missing table degrades to empty lists rather than a crash — a blank dashboard usually means the backend schema/creds are wrong, not a frontend bug.
-- Optional integrations fail gracefully and are not needed for the core app: Google Gemini AI assistant (`VITE_GEMINI_API_KEY`) and Twilio SMS/voice edge functions (`TWILIO_*`).
+- Optional integrations fail gracefully and are not needed for the core app: Google Gemini AI assistant (via Supabase `gemini-chat` edge function + `GEMINI_API_KEY` secret) and Twilio SMS/voice edge functions (`TWILIO_*`).

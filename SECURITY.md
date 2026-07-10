@@ -18,7 +18,7 @@ The leaked value was of the form `VITE_GEMINI_API_KEY=AQ.…` (never re-commit r
 4. **Hardened ignore rules** so env files cannot be committed again:
    - `.gitignore` ignores `.env`, `.env.*` (except `.env.example`), certs, and local tooling state.
 5. **Added `.env.example`** with placeholders only — documents `VITE_GEMINI_API_KEY` without a real value.
-6. **Application code** reads the key only from `import.meta.env.VITE_GEMINI_API_KEY` (see `src/services/ai/geminiService.ts`); no hardcoded secrets.
+6. **Application code** calls Gemini through the Supabase `gemini-chat` edge function; the API key lives in Edge Function secrets only (`GEMINI_API_KEY` or `VITE_GEMINI_API_KEY`), not in the browser bundle.
 
 ## Residual note (closed PR refs)
 
@@ -32,8 +32,8 @@ Owner follow-up to eliminate residual public SHA access (optional but recommende
 
 ## How a replacement key must be stored
 
-- Local / CI / hosting secrets only: `VITE_GEMINI_API_KEY=…` in `.env` (gitignored), Vercel env, or Cursor injected secrets.
-- Prefer HTTP referrer restrictions for browser keys (e.g. `https://app.solidcoreplumb.com/*`, `http://localhost:5173/*`).
+- **Supabase Edge Function secrets** (production): `GEMINI_API_KEY` or `VITE_GEMINI_API_KEY` in Project Settings → Edge Functions → Secrets, then deploy `gemini-chat`.
+- Local dev fallback (optional): `.env` with `VITE_GEMINI_API_KEY` only if not using the edge function.
 - Never commit `.env` or paste keys into source, PRs, or chat logs.
 
 ## Appeal / evidence summary for Google
