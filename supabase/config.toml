@@ -23,6 +23,6 @@ entrypoint = "./functions/send-outbound-sms/index.ts"
 
 [functions.gemini-chat]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 import_map = "./functions/gemini-chat/deno.json"
 entrypoint = "./functions/gemini-chat/index.ts"
