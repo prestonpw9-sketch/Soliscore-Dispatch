@@ -113,6 +113,16 @@ const AppLayout: React.FC = () => {
 
     updateContext({
       currentPage:       titles[view].title,
+      currentDateTime:   new Date().toLocaleString('en-US', {
+        timeZone: 'America/Phoenix',
+        weekday:  'long',
+        month:    'short',
+        day:      'numeric',
+        year:     'numeric',
+        hour:     'numeric',
+        minute:   '2-digit',
+        hour12:   true,
+      }),
       activeJobs:        jobs.filter(j => j.status !== 'completed').length,
       pendingDispatches: jobs.filter(j => j.status === 'pending').length,
       techsOnDuty,

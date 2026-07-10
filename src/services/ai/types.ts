@@ -44,6 +44,7 @@ export interface SOLIDCOREContext {
   selectedJob?:       SelectedJob | null;
   openJobsToday?:     TodayJobSummary[];
   totalJobsToday?:    number;
+  currentDateTime?:   string;
 }
 
 export interface AIProviderConfig {

@@ -9,9 +9,11 @@ const CORS_HEADERS = {
 } as const;
 
 const SYSTEM_PROMPT = `You are an AI assistant embedded in SOLIDCORE Dispatch,
-a field service management platform for plumbing contractors.
+a field service management platform for plumbing contractors in Arizona.
 Help dispatchers manage jobs, schedule technicians, and communicate with customers.
-Be concise and practical.`;
+Use the current date/time provided in context — never guess the time.
+Give complete, concise answers (do not trail off mid-sentence).
+Job status 'scheduled' means not yet marked active on the board, even if start time has passed.`;
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -62,6 +64,7 @@ interface SOLIDCOREContext {
   selectedJob?:       SelectedJob | null;
   openJobsToday?:     TodayJobSummary[];
   totalJobsToday?:    number;
+  currentDateTime?:   string;
 }
 
 interface AIRequestOptions {
@@ -83,6 +86,7 @@ function buildSystemPrompt(ctx: SOLIDCOREContext, override?: string): string {
   if (override) return override;
 
   const lines = [SYSTEM_PROMPT];
+  if (ctx.currentDateTime)                 lines.push(`Current date/time (Arizona): ${ctx.currentDateTime}.`);
   if (ctx.currentPage)                     lines.push(`Current view: ${ctx.currentPage}.`);
   if (ctx.activeJobs !== undefined)        lines.push(`Active jobs: ${ctx.activeJobs}.`);
   if (ctx.pendingDispatches !== undefined) lines.push(`Pending dispatches: ${ctx.pendingDispatches}.`);
@@ -191,7 +195,7 @@ serve(async (req: Request) => {
         contents,
         generationConfig: {
           temperature:     options.temperature ?? 0.7,
-          maxOutputTokens: options.maxTokens   ?? 1024,
+          maxOutputTokens: options.maxTokens   ?? 2048,
         },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
