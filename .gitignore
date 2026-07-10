@@ -1,7 +1,29 @@
+# dependencies
 node_modules
+
+# local env / secrets — never commit these
 .env
+.env.*
+!.env.example
+*.pem
+*.p12
+
 # build output
 dist
+
+# logs & OS junk
+*.log
+.DS_Store
+Thumbs.db
+
+# editor / local tooling
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# supabase CLI local state
+supabase/.temp/
 
 # tsc now runs with noEmit; no compiled JS should land in src.
 # (If you ever add a real .js source file, force-add it: git add -f path.js)
