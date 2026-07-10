@@ -29,11 +29,12 @@ export interface SelectedJob {
 export interface TodayJobSummary {
   id:           string;
   customerName: string;
-  address:      string;
+  site:         string;
   phase:        string;
   status:       string;
   tech?:        string;
   startTime?:   string;
+  serviceType?: string;
 }
 
 export interface SOLIDCOREContext {
@@ -45,6 +46,7 @@ export interface SOLIDCOREContext {
   openJobsToday?:     TodayJobSummary[];
   totalJobsToday?:    number;
   currentDateTime?:   string;
+  todayDate?:         string;
 }
 
 export interface AIProviderConfig {

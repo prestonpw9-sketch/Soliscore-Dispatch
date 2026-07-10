@@ -96,9 +96,10 @@ const AppLayout: React.FC = () => {
     const openJobsToday = todayOpen.map(j => ({
       id:           j.id,
       customerName: j.customerName,
-      address:      j.address,
+      site:         j.address,
       phase:        j.phase,
       status:       j.status,
+      serviceType:  j.serviceType,
       tech:         j.technicianIds?.length
         ? j.technicianIds.map(id => techName(id)).filter(Boolean).join(', ')
         : techName(j.technicianId),
@@ -123,6 +124,7 @@ const AppLayout: React.FC = () => {
         minute:   '2-digit',
         hour12:   true,
       }),
+      todayDate:         todayStr,
       activeJobs:        jobs.filter(j => j.status !== 'completed').length,
       pendingDispatches: jobs.filter(j => j.status === 'pending').length,
       techsOnDuty,

@@ -8,14 +8,19 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 } as const;
 
-const SYSTEM_PROMPT = `You are an AI assistant embedded in SOLIDCORE Dispatch,
-a field service management platform for plumbing contractors in Arizona.
-Help dispatchers manage jobs, schedule technicians, and communicate with customers.
-Use the current date/time provided in context — never guess the time.
-Give complete, concise answers (do not trail off mid-sentence).
-Job status 'scheduled' means not yet marked active on the board, even if start time has passed.
-If no focused job is selected, use today's open jobs list from context.
-When asked to draft customer updates, list the relevant jobs by customer name and write ready-to-send SMS-style messages — do not ask the user to pick a job if today's job list is already provided.`;
+const SYSTEM_PROMPT = `You are an AI assistant embedded in ITDG Plumbing Dispatch (Arizona).
+Help dispatchers manage jobs, schedule technicians, and draft customer SMS updates.
+Use the current date/time from context — never guess dates.
+Job status 'scheduled' means not yet marked active on the board.
+
+CUSTOMER UPDATE RULES (when drafting texts):
+- Jobs in "Today's open jobs" are ON THE SCHEDULE FOR TODAY (see todayDate in context).
+- Write short, professional SMS (under 300 characters) confirming today's service.
+- Mention crew name and phase when available. Example tone: crew is scheduled/on site today.
+- Do NOT say work will finish tomorrow or apologize for delays unless the user explicitly asks for a delay notice.
+- Use customer name and site address only — never put internal database job IDs in customer-facing text.
+- Header format: **Customer Name (Site)** then the SMS on the next line.
+- Sign messages: "— ITDG Plumbing"`;
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -52,11 +57,12 @@ interface SelectedJob {
 interface TodayJobSummary {
   id:           string;
   customerName: string;
-  address:      string;
+  site:         string;
   phase:        string;
   status:       string;
   tech?:        string;
   startTime?:   string;
+  serviceType?: string;
 }
 
 interface SOLIDCOREContext {
@@ -68,6 +74,7 @@ interface SOLIDCOREContext {
   openJobsToday?:     TodayJobSummary[];
   totalJobsToday?:    number;
   currentDateTime?:   string;
+  todayDate?:         string;
 }
 
 interface AIRequestOptions {
@@ -93,6 +100,7 @@ function buildSystemPrompt(ctx: SOLIDCOREContext, override?: string): string {
   if (override) return override;
 
   const lines = [SYSTEM_PROMPT];
+  if (ctx.todayDate)                       lines.push(`Today's date (Arizona): ${ctx.todayDate}.`);
   if (ctx.currentDateTime)                 lines.push(`Current date/time (Arizona): ${ctx.currentDateTime}.`);
   if (ctx.currentPage)                     lines.push(`Current view: ${ctx.currentPage}.`);
   if (ctx.activeJobs !== undefined)        lines.push(`Active jobs: ${ctx.activeJobs}.`);
@@ -101,9 +109,10 @@ function buildSystemPrompt(ctx: SOLIDCOREContext, override?: string): string {
   if (ctx.openJobsToday?.length) {
     lines.push(`Today's open jobs (${ctx.openJobsToday.length}):`);
     for (const j of ctx.openJobsToday) {
-      const tech = j.tech ? `, tech: ${j.tech}` : ', tech: unassigned';
+      const tech = j.tech ? `, crew: ${j.tech}` : ', crew: unassigned';
       const time = j.startTime ? `, start: ${j.startTime}` : '';
-      lines.push(`- #${j.id} ${j.customerName} @ ${j.address}, phase: ${j.phase}, status: ${j.status}${tech}${time}`);
+      const svc  = j.serviceType ? `, service: ${j.serviceType}` : '';
+      lines.push(`- Customer: ${j.customerName} | Site: ${j.site} | Phase: ${j.phase}${svc}${tech}${time} | Status: ${j.status}`);
     }
   } else if (ctx.totalJobsToday === 0) {
     lines.push('Today\'s open jobs: none on the schedule.');

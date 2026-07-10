@@ -26,7 +26,7 @@ export function AIAssistantPanel({ onClose }: { onClose: () => void }) {
     const draftPrompt = solidcoreContext.selectedJob
       ? `Draft a customer update for ${solidcoreContext.selectedJob.customerName}`
       : (solidcoreContext.openJobsToday?.length
-        ? "Draft customer update texts for today's jobs"
+        ? "Draft today's on-schedule customer texts"
         : 'Draft a customer update (tell me which job)');
     return [...BASE_QUICK_PROMPTS, draftPrompt];
   }, [solidcoreContext.selectedJob, solidcoreContext.openJobsToday?.length]);
