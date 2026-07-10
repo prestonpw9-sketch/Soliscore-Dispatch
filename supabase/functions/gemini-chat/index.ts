@@ -87,15 +87,17 @@ serve(async (req: Request) => {
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (!supabaseUrl || !serviceRoleKey) {
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    if (!supabaseUrl || !supabaseAnonKey) {
       console.error('Missing Supabase environment variables');
       return jsonResponse({ error: 'Server misconfiguration.' }, 500);
     }
 
-    const token = authHeader.replace(/^Bearer\s+/i, '');
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) {
       console.error('Auth failed:', authError?.message);
       return jsonResponse({ error: 'Unauthorized — sign out and sign back in.' }, 401);
