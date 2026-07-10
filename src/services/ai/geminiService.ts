@@ -10,7 +10,7 @@ const NOT_DEPLOYED_MSG =
   'The AI service is not deployed yet. In Supabase: Edge Functions → deploy gemini-chat.';
 
 const AUTH_ERROR_MSG =
-  'Session expired or blocked by JWT settings. Sign out and back in. In Supabase → gemini-chat → Settings, turn OFF "Verify JWT with legacy secret", then Save.';
+  'JWT verification is still ON for gemini-chat. In Supabase → Edge Functions → gemini-chat → Settings: turn OFF "Verify JWT with legacy secret" (switch should be grey/left, not green), click Save, then sign out and back into the app.';
 
 export class GeminiService implements IAIProvider {
   readonly provider = 'gemini' as const;

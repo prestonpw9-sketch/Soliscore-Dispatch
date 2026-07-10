@@ -82,24 +82,23 @@ serve(async (req: Request) => {
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return jsonResponse({ error: 'Unauthorized.' }, 401);
+    if (!authHeader?.startsWith('Bearer ')) {
+      return jsonResponse({ error: 'Missing authorization header.' }, 401);
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
-    if (!supabaseUrl || !supabaseAnonKey) {
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!supabaseUrl || !serviceRoleKey) {
       console.error('Missing Supabase environment variables');
       return jsonResponse({ error: 'Server misconfiguration.' }, 500);
     }
 
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !user) {
-      return jsonResponse({ error: 'Unauthorized.' }, 401);
+      console.error('Auth failed:', authError?.message);
+      return jsonResponse({ error: 'Unauthorized — sign out and sign back in.' }, 401);
     }
 
     const apiKey =
