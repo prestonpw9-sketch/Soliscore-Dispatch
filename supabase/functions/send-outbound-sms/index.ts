@@ -15,6 +15,20 @@ Be concise and practical.`;
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
+function resolveGeminiModel(requested?: unknown): string {
+  const fromEnv = Deno.env.get('GEMINI_MODEL');
+  const raw =
+    typeof requested === 'string' && requested.trim()
+      ? requested.trim()
+      : (fromEnv ?? DEFAULT_MODEL);
+
+  // Google retired 2.0 — always upgrade stale model names.
+  if (raw.includes('2.0-flash') || raw === 'gemini-1.5-flash' || raw === 'gemini-1.5-pro') {
+    return DEFAULT_MODEL;
+  }
+  return raw;
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface ChatMessage {
@@ -112,7 +126,7 @@ async function handleAiChat(req: Request, body: Record<string, unknown>): Promis
     return jsonResponse({ error: 'Missing required field: messages.' }, 400);
   }
 
-  const model = Deno.env.get('GEMINI_MODEL') ?? DEFAULT_MODEL;
+  const model = resolveGeminiModel(body.model);
   const systemInstruction = buildSystemPrompt(context, options.systemPrompt);
 
   const contents = messages
