@@ -13,7 +13,7 @@ a field service management platform for plumbing contractors.
 Help dispatchers manage jobs, schedule technicians, and communicate with customers.
 Be concise and practical.`;
 
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
