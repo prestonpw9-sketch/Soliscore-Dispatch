@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Menu, Plus, Search, Database, RefreshCw,
   Loader2, Calculator, Bell,
@@ -19,6 +19,7 @@ import { weekDates, todayStr } from '@/lib/data';
 import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
 import { useAuth } from '@/lib/AuthContext';
+import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -76,6 +77,59 @@ const AppLayout: React.FC = () => {
     techPriorities,
     setFirstPriorityJob,
   } = useDispatchData();
+
+  const { updateContext } = useAIProviderContext();
+
+  useEffect(() => {
+    const jobActiveOnDay = (job: Job, day: string) => {
+      const end = job.endDate ?? job.date;
+      return job.date <= day && end >= day;
+    };
+
+    const techName = (id: string | null | undefined) =>
+      technicians.find(t => t.id === id)?.name;
+
+    const todayOpen = jobs.filter(
+      j => jobActiveOnDay(j, todayStr) && j.status !== 'completed',
+    );
+
+    const openJobsToday = todayOpen.map(j => ({
+      id:           j.id,
+      customerName: j.customerName,
+      address:      j.address,
+      phase:        j.phase,
+      status:       j.status,
+      tech:         j.technicianIds?.length
+        ? j.technicianIds.map(id => techName(id)).filter(Boolean).join(', ')
+        : techName(j.technicianId),
+      startTime:    j.startTime,
+    }));
+
+    const techsOnDuty = technicians
+      .filter(t => todayOpen.some(
+        j => j.technicianId === t.id || j.technicianIds?.includes(t.id),
+      ))
+      .map(t => t.name);
+
+    updateContext({
+      currentPage:       titles[view].title,
+      activeJobs:        jobs.filter(j => j.status !== 'completed').length,
+      pendingDispatches: jobs.filter(j => j.status === 'pending').length,
+      techsOnDuty,
+      openJobsToday,
+      totalJobsToday:    todayOpen.length,
+      selectedJob: selectedJob
+        ? {
+            id:           selectedJob.id,
+            customerName: selectedJob.customerName,
+            address:      selectedJob.address,
+            description:  selectedJob.description,
+            tech:         techName(selectedJob.technicianId) ?? 'Unassigned',
+            phase:        selectedJob.phase,
+          }
+        : null,
+    });
+  }, [jobs, technicians, view, selectedJob, updateContext]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 

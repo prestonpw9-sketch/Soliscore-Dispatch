@@ -26,12 +26,24 @@ export interface SelectedJob {
   phase:        string;
 }
 
+export interface TodayJobSummary {
+  id:           string;
+  customerName: string;
+  address:      string;
+  phase:        string;
+  status:       string;
+  tech?:        string;
+  startTime?:   string;
+}
+
 export interface SOLIDCOREContext {
   activeJobs?:        number;
   techsOnDuty?:       string[];
   pendingDispatches?: number;
   currentPage?:       string;
   selectedJob?:       SelectedJob | null;
+  openJobsToday?:     TodayJobSummary[];
+  totalJobsToday?:    number;
 }
 
 export interface AIProviderConfig {

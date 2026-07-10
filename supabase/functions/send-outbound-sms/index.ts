@@ -45,12 +45,24 @@ interface SelectedJob {
   phase:        string;
 }
 
+interface TodayJobSummary {
+  id:           string;
+  customerName: string;
+  address:      string;
+  phase:        string;
+  status:       string;
+  tech?:        string;
+  startTime?:   string;
+}
+
 interface SOLIDCOREContext {
   activeJobs?:        number;
   techsOnDuty?:       string[];
   pendingDispatches?: number;
   currentPage?:       string;
   selectedJob?:       SelectedJob | null;
+  openJobsToday?:     TodayJobSummary[];
+  totalJobsToday?:    number;
 }
 
 interface AIRequestOptions {
@@ -79,7 +91,17 @@ function buildSystemPrompt(ctx: SOLIDCOREContext, override?: string): string {
   if (ctx.currentPage)                     lines.push(`Current view: ${ctx.currentPage}.`);
   if (ctx.activeJobs !== undefined)        lines.push(`Active jobs: ${ctx.activeJobs}.`);
   if (ctx.pendingDispatches !== undefined) lines.push(`Pending dispatches: ${ctx.pendingDispatches}.`);
-  if (ctx.techsOnDuty?.length)             lines.push(`Techs on duty: ${ctx.techsOnDuty.join(', ')}.`);
+  if (ctx.techsOnDuty?.length)             lines.push(`Techs on duty today: ${ctx.techsOnDuty.join(', ')}.`);
+  if (ctx.openJobsToday?.length) {
+    lines.push(`Today's open jobs (${ctx.openJobsToday.length}):`);
+    for (const j of ctx.openJobsToday) {
+      const tech = j.tech ? `, tech: ${j.tech}` : ', tech: unassigned';
+      const time = j.startTime ? `, start: ${j.startTime}` : '';
+      lines.push(`- #${j.id} ${j.customerName} @ ${j.address}, phase: ${j.phase}, status: ${j.status}${tech}${time}`);
+    }
+  } else if (ctx.totalJobsToday === 0) {
+    lines.push('Today\'s open jobs: none on the schedule.');
+  }
   if (ctx.selectedJob) {
     const j = ctx.selectedJob;
     lines.push(`Focused job: #${j.id} — ${j.customerName}, Phase: ${j.phase}, Tech: ${j.tech}.`);
