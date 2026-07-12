@@ -1,18 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
 
 export default function LoginScreen() {
+  const { authNotice, clearAuthNotice } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (authNotice) setError(authNotice);
+  }, [authNotice]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = email.trim().toLowerCase();
     setError(null);
+    clearAuthNotice();
     setBusy(true);
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: clean,
@@ -27,8 +34,7 @@ export default function LoginScreen() {
           : signInError.message
       );
     }
-    // On success the AuthContext listener checks the role. If the account has no
-    // assigned role it is signed out automatically (not authorized).
+    // On success AuthContext checks user_roles. No assigned role => signed out with authNotice.
   };
 
   return (

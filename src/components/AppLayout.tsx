@@ -371,7 +371,7 @@ const AppLayout: React.FC = () => {
             <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-8 max-w-md mx-auto text-center mt-10">
               <p className="font-bold text-amber-800 dark:text-amber-300">Access restricted</p>
               <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
-                Your account doesn't have permission to view this section. Contact Preston or Greg if you need access.
+                Your account doesn't have permission to view this section. Contact Preston if you need access.
               </p>
             </div>
           ) : view === 'settings' ? (

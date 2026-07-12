@@ -8,9 +8,12 @@ interface AuthState {
   session: Session | null;
   role: Role | null;
   loading: boolean;
+  /** Shown on the login screen when credentials work but the account has no role row. */
+  authNotice: string | null;
+  clearAuthNotice: () => void;
   signOut: () => Promise<void>;
   // Convenience helpers for gating UI.
-  isOwner: boolean;   // Preston / Greg — full access incl. bids & proposals
+  isOwner: boolean;   // owner role — full access incl. bids & proposals
   isOffice: boolean;  // read-only across the app, no bids
   isCrew: boolean;    // limited: past jobs, blueprints, submittals, photos, quick bid
   canEdit: boolean;   // owner OR crew (office is view-only). NOT a bid-access check.
@@ -20,6 +23,8 @@ const AuthContext = createContext<AuthState>({
   session: null,
   role: null,
   loading: true,
+  authNotice: null,
+  clearAuthNotice: () => {},
   signOut: async () => {},
   isOwner: false,
   isOffice: false,
@@ -42,10 +47,14 @@ async function fetchRole(userId: string): Promise<Role | null> {
   return (data.role as Role) ?? null;
 }
 
+const UNAUTHORIZED_NOTICE =
+  'Your account is not authorized to use this app. Contact Preston if you need access.';
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -59,10 +68,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const r = await fetchRole(s.user.id);
       if (!active) return;
       if (!r) {
+        setAuthNotice(UNAUTHORIZED_NOTICE);
         await supabase.auth.signOut();
         setSession(null);
         setRole(null);
       } else {
+        setAuthNotice(null);
         setSession(s);
         setRole(r);
       }
@@ -86,10 +97,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  const clearAuthNotice = () => setAuthNotice(null);
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setSession(null);
     setRole(null);
+    setAuthNotice(null);
   };
 
   const isOwner = role === 'owner';
@@ -99,7 +113,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <AuthContext.Provider
-      value={{ session, role, loading, signOut, isOwner, isOffice, isCrew, canEdit }}
+      value={{
+        session, role, loading, authNotice, clearAuthNotice,
+        signOut, isOwner, isOffice, isCrew, canEdit,
+      }}
     >
       {children}
     </AuthContext.Provider>
