@@ -207,18 +207,33 @@ export default function BidEstimator() {
       setLoading(true);
       setSaveError(null);
       try {
-        const { data, error } = await supabase
+        // Prefer the master price-book snapshot (Reece pipe prices, etc.),
+        // then fall back to the newest full takeoff bid.
+        const { data: master, error: masterError } = await supabase
           .from('project_bids')
           .select('*')
+          .eq('is_master', true)
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
-        if (error) throw error;
-        const loaded = data?.takeoff_data as BidDocument | undefined;
+          .maybeSingle();
+        if (masterError) throw masterError;
+
+        let loaded = master?.takeoff_data as BidDocument | undefined;
+        if (!(loaded && Array.isArray(loaded.page1))) {
+          const { data, error } = await supabase
+            .from('project_bids')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (error) throw error;
+          loaded = data?.takeoff_data as BidDocument | undefined;
+        }
+
         if (loaded && Array.isArray(loaded.page1)) {
           setDoc(loaded);
         } else {
-          setSaveError('Most recent bid is not a 4-page takeoff document.');
+          setSaveError('No saved 4-page takeoff document found.');
         }
       } catch (err) {
         setSaveError(getErrorMessage(err, 'Failed to load bid.'));

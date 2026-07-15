@@ -1,0 +1,22 @@
+-- DOCUMENTATION ONLY — applied manually on hosted project keyldymctpsvdjllliio.
+-- Reece quote S123995913 (7/14/2026, expires 8/13/2026) pipe price refresh.
+--
+-- Bid estimator unit prices live inside project_bids.takeoff_data JSON (and the
+-- frontend seed BID_ITEMS_SEED.json / QuickBidEstimator catalog). There is no
+-- separate pipe_prices table.
+--
+-- Live updates performed:
+--   1. Patched takeoff_data prices on existing full takeoff bid
+--      601ef23a-a3bb-40ce-961a-c4774957c8f1
+--   2. Inserted master snapshot bid "Reece pipe prices 7-14-26"
+--      5bd2cb66-59bc-4267-9db2-b10101c0ffd8 (is_master = true)
+--
+-- Categories updated from the quote ($/ft unless noted):
+--   PVC SCH40 solid 1-1/2..4, Type L hard copper, black gas pipe,
+--   CPVC FlowGuard, Uponor AquaPEX, NH CI soil pipe 1-1/2..4,
+--   Karlson no-hub bands 1-1/2..4, Husky HD-2000 bands 2..4.
+-- Left unchanged (not on quote): soft copper, M copper, Scotch Kote,
+--   6"/8" PVC & CI, 1-1/4" PEX, fittings-only rows.
+
+-- no-op marker so this file is safe if someone runs it:
+select 1;
