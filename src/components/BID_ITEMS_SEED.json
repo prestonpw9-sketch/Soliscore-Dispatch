@@ -380,26 +380,26 @@
     },
     {
       "size": "ft. 4\" PVC",
-      "item": "Solid Core - Ferguson",
-      "price": 3.93,
+      "item": "Solid Core - Reece",
+      "price": 2.644,
       "mult": 1
     },
     {
       "size": "ft. 3\" PVC",
-      "item": "Solid Core - Ferguson",
-      "price": 2.82,
+      "item": "Solid Core - Reece",
+      "price": 1.855,
       "mult": 1
     },
     {
       "size": "ft. 2\" PVC",
-      "item": "Solid Core - Ferguson",
-      "price": 1.36,
+      "item": "Solid Core - Reece",
+      "price": 0.881,
       "mult": 1
     },
     {
       "size": "ft. 1-1/2\" PVC",
-      "item": "Solid Core - Ferguson",
-      "price": 1.01,
+      "item": "Solid Core - Reece",
+      "price": 0.666,
       "mult": 1
     },
     {
@@ -465,42 +465,42 @@
         },
         {
           "item": "3\" \"L\" HARD COPPER",
-          "price": 26.36,
+          "price": 59.4,
           "mult": 1
         },
         {
           "item": "2 1/2\" \"L\" HARD COPPER",
-          "price": 18.27,
+          "price": 40.104,
           "mult": 1
         },
         {
           "item": "2\" \"L\" HARD COPPER",
-          "price": 13.29,
+          "price": 25.959,
           "mult": 1
         },
         {
           "item": "1-1/2\" \"L\" HARD COPPER",
-          "price": 8.26,
+          "price": 16.59,
           "mult": 1
         },
         {
           "item": "1-1/4\" \"L\" Hard Copper",
-          "price": 6.49,
+          "price": 13.071,
           "mult": 1
         },
         {
           "item": "1\" \"L\" Hard Copper",
-          "price": 4.77,
+          "price": 7.078,
           "mult": 1
         },
         {
           "item": "3/4\" \"L\" Hard Copper",
-          "price": 3.34,
+          "price": 4.815,
           "mult": 1
         },
         {
           "item": "1/2\" \"L\" Hard Copper",
-          "price": 2.05,
+          "price": 2.943,
           "mult": 1
         },
         {
@@ -543,42 +543,42 @@
       "lines": [
         {
           "item": "3\" BLK",
-          "price": 8.2,
+          "price": 8.534,
           "mult": 1
         },
         {
           "item": "2-1/2\" BLK",
-          "price": 6.24,
+          "price": 6.501,
           "mult": 1
         },
         {
           "item": "2\" BLK",
-          "price": 3.93,
+          "price": 3.968,
           "mult": 1
         },
         {
           "item": "1-1/2\" BLK",
-          "price": 2.93,
+          "price": 2.953,
           "mult": 1
         },
         {
           "item": "1-1/4\" blk",
-          "price": 2.44,
+          "price": 2.458,
           "mult": 1
         },
         {
           "item": "1\"          blk",
-          "price": 1.81,
+          "price": 1.822,
           "mult": 1
         },
         {
           "item": "3/4       blk",
-          "price": 1.22,
+          "price": 1.266,
           "mult": 1
         },
         {
           "item": "1/2\"     blk",
-          "price": 0.92,
+          "price": 0.956,
           "mult": 1
         }
       ],
@@ -629,32 +629,32 @@
       "lines": [
         {
           "item": "2\"",
-          "price": 3.908,
+          "price": 4.741,
           "mult": 1.05
         },
         {
           "item": "1-1/2\"",
-          "price": 2.501,
+          "price": 2.845,
           "mult": 1.05
         },
         {
           "item": "1-1/4\"",
-          "price": 1.88,
+          "price": 1.647,
           "mult": 1.05
         },
         {
           "item": "1\"",
-          "price": 1.0773,
+          "price": 1.225,
           "mult": 1.05
         },
         {
           "item": "3/4\"",
-          "price": 0.5022,
+          "price": 0.619,
           "mult": 1.05
         },
         {
           "item": "1/2\"",
-          "price": 0.363,
+          "price": 0.408,
           "mult": 1.05
         }
       ],
@@ -667,12 +667,12 @@
       "lines": [
         {
           "item": "2\" PEX",
-          "price": 6.19,
+          "price": 8.257,
           "mult": 1.05
         },
         {
           "item": "1-1/2\" PEX",
-          "price": 3.01,
+          "price": 4.286,
           "mult": 1.05
         },
         {
@@ -682,22 +682,22 @@
         },
         {
           "item": "1\" PEX",
-          "price": 1.34,
+          "price": 1.412,
           "mult": 1.05
         },
         {
           "item": "3/4\"PEX",
-          "price": 0.66,
+          "price": 0.776,
           "mult": 1.05
         },
         {
           "item": "1/2\"PEX",
-          "price": 0.39,
+          "price": 0.449,
           "mult": 1.05
         }
       ],
       "fittingsPct": 0.6,
-      "tier": 1.0
+      "tier": 1
     }
   ],
   "page3": [
@@ -1361,20 +1361,20 @@
     },
     {
       "size": "4\"",
-      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
-      "price": 5.75,
+      "item": "NO HUB BANDS (Standard - Not Husky) - Reece",
+      "price": 10.131,
       "mult": 1
     },
     {
       "size": "3\"",
-      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
-      "price": 4.88,
+      "item": "NO HUB BANDS (Standard - Not Husky) - Reece",
+      "price": 9.159,
       "mult": 1
     },
     {
       "size": "2\"",
-      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
-      "price": 4.07,
+      "item": "NO HUB BANDS (Standard - Not Husky) - Reece",
+      "price": 7.166,
       "mult": 1
     },
     {
@@ -1385,8 +1385,8 @@
     },
     {
       "size": "1-1/2\"",
-      "item": "NO HUB BANDS (Standard - Not Husky) - Ferguson",
-      "price": 3.91,
+      "item": "NO HUB BANDS (Standard - Not Husky) - Reece",
+      "price": 6.747,
       "mult": 1
     },
     {
@@ -1404,19 +1404,19 @@
     {
       "size": "4\"",
       "item": "HUSKY BANDS",
-      "price": 17.42,
+      "price": 14.322,
       "mult": 1
     },
     {
       "size": "3\"",
       "item": "HUSKY BANDS",
-      "price": 15.07,
+      "price": 12.325,
       "mult": 1
     },
     {
       "size": "2\"",
       "item": "HUSKY BANDS",
-      "price": 15.07,
+      "price": 10.666,
       "mult": 1
     },
     {
@@ -1446,25 +1446,25 @@
     {
       "size": "4\"",
       "item": "NH CI Pipe",
-      "price": 17.4804,
+      "price": 18.402,
       "mult": 1
     },
     {
       "size": "3\"",
       "item": "NH CI Pipe",
-      "price": 13.4694,
+      "price": 14.179,
       "mult": 1
     },
     {
       "size": "2\"",
       "item": "NH CI Pipe",
-      "price": 9.7398,
+      "price": 10.254,
       "mult": 1
     },
     {
       "size": "1-1/2\"",
       "item": "NH CI Pipe",
-      "price": 9.7188,
+      "price": 10.231,
       "mult": 1
     }
   ]
