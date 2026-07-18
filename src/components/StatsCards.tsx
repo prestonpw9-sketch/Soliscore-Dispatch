@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Briefcase, Map, Camera, Users, FolderOpen,
 } from 'lucide-react';
 import type { Job } from '@/lib/data';
+import { supabase } from '@/lib/supabase';
 import ActiveJobsModal  from './ActiveJobsModal';
 import BlueprintsModal  from './BlueprintsModal';
 import SitePhotosModal  from './SitePhotosModal';
@@ -29,8 +30,18 @@ const StatsCards: React.FC<Props> = ({
   const [blueprintsModalOpen, setBlueprintsModalOpen] = useState(false);
   const [photosModalOpen, setPhotosModalOpen] = useState(false);
   const [submittalsModalOpen, setSubmittalsModalOpen] = useState(false);
+  const [submittalsCount, setSubmittalsCount] = useState(0);
 
-  const submittals = jobs.filter(j => j.status === 'pending');
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const { count, error } = await supabase
+        .from('submittals')
+        .select('id', { count: 'exact', head: true });
+      if (active && !error) setSubmittalsCount(count ?? 0);
+    })();
+    return () => { active = false; };
+  }, [submittalsModalOpen]);
 
   return (
     <>
@@ -122,7 +133,7 @@ const StatsCards: React.FC<Props> = ({
           </div>
           <div>
             <h4 className="text-3xl font-black text-white tracking-tight leading-none">
-              {submittals.length}
+              {submittalsCount}
             </h4>
             <p className="text-sm font-bold text-white/90 mt-2">Submittals</p>
           </div>
