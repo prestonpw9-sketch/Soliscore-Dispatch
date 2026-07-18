@@ -15,53 +15,10 @@ function isPlaceholder(name: string): boolean {
   return name === '.emptyFolderPlaceholder';
 }
 
-/** Count submittal files from the DB table. */
-async function countSubmittalsInDb(): Promise<number> {
-  const { count, error } = await supabase
-    .from('submittals')
-    .select('*', { count: 'exact', head: true });
-  if (error) {
-    console.error('Error counting submittals:', error);
-    return 0;
-  }
-  return count ?? 0;
-}
-
-/** Count files in the submittals storage bucket (job_id/filename layout). */
-async function countSubmittalsInStorage(): Promise<number> {
-  const { data: folders, error: listError } = await supabase.storage
-    .from(BUCKET)
-    .list('', { limit: 200 });
-  if (listError) {
-    console.error('Error listing submittals storage:', listError);
-    return 0;
-  }
-
-  const counts = await Promise.all(
-    (folders ?? [])
-      .filter(f => !isPlaceholder(f.name))
-      .map(async folder => {
-        const { data: files, error } = await supabase.storage
-          .from(BUCKET)
-          .list(folder.name, { limit: 200 });
-        if (error) {
-          console.error(`Error listing submittals/${folder.name}:`, error);
-          return 0;
-        }
-        return (files ?? []).filter(f => !isPlaceholder(f.name)).length;
-      }),
-  );
-
-  return counts.reduce((sum, n) => sum + n, 0);
-}
-
-/** Total submittal files — DB rows plus any storage-only uploads (e.g. webhook). */
+/** Total submittal files — same source as the Submittals modal list. */
 export async function fetchSubmittalsCount(): Promise<number> {
-  const [dbCount, storageCount] = await Promise.all([
-    countSubmittalsInDb(),
-    countSubmittalsInStorage(),
-  ]);
-  return Math.max(dbCount, storageCount);
+  const rows = await fetchAllSubmittals();
+  return rows.length;
 }
 
 /** Load submittals from the DB table. */

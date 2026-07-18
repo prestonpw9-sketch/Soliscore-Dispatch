@@ -42,7 +42,7 @@ const StatsCards: React.FC<Props> = ({
   useEffect(() => {
     if (authLoading || !session) return;
     void refreshSubmittalsCount();
-  }, [authLoading, session, submittalsModalOpen, refreshSubmittalsCount]);
+  }, [authLoading, session, refreshSubmittalsCount]);
 
   return (
     <>
@@ -149,7 +149,7 @@ const StatsCards: React.FC<Props> = ({
         isOpen={submittalsModalOpen}
         onClose={() => setSubmittalsModalOpen(false)}
         jobs={jobs}
-        onChanged={refreshSubmittalsCount}
+        onCountChange={setSubmittalsCount}
       />
     </>
   );
