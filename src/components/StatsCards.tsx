@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Briefcase, Map, Camera, Users, FolderOpen,
 } from 'lucide-react';
 import type { Job } from '@/lib/data';
-import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
+import { fetchSubmittalsCount } from '@/lib/submittals';
 import ActiveJobsModal  from './ActiveJobsModal';
 import BlueprintsModal  from './BlueprintsModal';
 import SitePhotosModal  from './SitePhotosModal';
@@ -26,22 +27,22 @@ const StatsCards: React.FC<Props> = ({
   activePlumbers,
   onOpenTeam,
 }) => {
+  const { session, loading: authLoading } = useAuth();
   const [jobsModalOpen, setJobsModalOpen]     = useState(false);
   const [blueprintsModalOpen, setBlueprintsModalOpen] = useState(false);
   const [photosModalOpen, setPhotosModalOpen] = useState(false);
   const [submittalsModalOpen, setSubmittalsModalOpen] = useState(false);
   const [submittalsCount, setSubmittalsCount] = useState(0);
 
+  const refreshSubmittalsCount = useCallback(async () => {
+    const count = await fetchSubmittalsCount();
+    setSubmittalsCount(count);
+  }, []);
+
   useEffect(() => {
-    let active = true;
-    void (async () => {
-      const { count, error } = await supabase
-        .from('submittals')
-        .select('id', { count: 'exact', head: true });
-      if (active && !error) setSubmittalsCount(count ?? 0);
-    })();
-    return () => { active = false; };
-  }, [submittalsModalOpen]);
+    if (authLoading || !session) return;
+    void refreshSubmittalsCount();
+  }, [authLoading, session, submittalsModalOpen, refreshSubmittalsCount]);
 
   return (
     <>
@@ -144,7 +145,12 @@ const StatsCards: React.FC<Props> = ({
       <ActiveJobsModal  isOpen={jobsModalOpen}       onClose={() => setJobsModalOpen(false)} />
       <BlueprintsModal  isOpen={blueprintsModalOpen} onClose={() => setBlueprintsModalOpen(false)} />
       <SitePhotosModal  isOpen={photosModalOpen}     onClose={() => setPhotosModalOpen(false)} jobs={jobs} />
-      <SubmittalsModal  isOpen={submittalsModalOpen} onClose={() => setSubmittalsModalOpen(false)} jobs={jobs} />
+      <SubmittalsModal
+        isOpen={submittalsModalOpen}
+        onClose={() => setSubmittalsModalOpen(false)}
+        jobs={jobs}
+        onChanged={refreshSubmittalsCount}
+      />
     </>
   );
 };
