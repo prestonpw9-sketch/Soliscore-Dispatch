@@ -1,15 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Plus, Trash2, Briefcase, Loader2 } from 'lucide-react';
+import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
 
 interface Job {
   id: number;
-  customerName: string;
-  address: string;
+  title: string | null;
+  customerName: string | null;
+  location: string | null;
+  address: string | null;
   status: string;
   phase: string;
   date: string;
-  description: string;
+  description: string | null;
+}
+
+function jobDisplayName(job: Job): string {
+  return job.title?.trim() || job.customerName?.trim() || 'Untitled Job';
+}
+
+function jobDisplayAddress(job: Job): string {
+  return job.location?.trim() || job.address?.trim() || '';
 }
 
 interface Props {
@@ -18,17 +29,21 @@ interface Props {
 }
 
 const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
+  const { canEdit } = useAuth();
   const [jobs, setJobs]               = useState<Job[]>([]);
   const [loading, setLoading]         = useState(false);
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [editingId, setEditingId]     = useState<number | null>(null);
+  const [editTitle, setEditTitle]     = useState('');
   const [newCustomer, setNewCustomer] = useState('');
   const [newAddress, setNewAddress]   = useState('');
   const [newPhase, setNewPhase]       = useState('Rough-In');
   const [newDate, setNewDate]         = useState(new Date().toISOString().split('T')[0]);
   const modalRef    = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -38,6 +53,10 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
   useEffect(() => {
     if (isOpen) setTimeout(() => firstFocusRef.current?.focus(), 0);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (editingId !== null) setTimeout(() => editInputRef.current?.focus(), 0);
+  }, [editingId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -58,14 +77,14 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [isOpen]);
+  }, [isOpen, onClose]);
 
   const fetchJobs = async () => {
     setLoading(true);
     setError(null);
     const { data, error: fetchError } = await supabase
       .from('jobs')
-      .select('id, customerName, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description')
       .neq('status', 'completed')
       .order('date', { ascending: true });
     if (fetchError) { setError(fetchError.message); }
@@ -81,13 +100,13 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     const { data, error: insertError } = await supabase
       .from('jobs')
       .insert({
-        customerName: newCustomer.trim(),
-        address: newAddress.trim(),
+        title: newCustomer.trim(),
+        location: newAddress.trim(),
         phase: newPhase,
         date: newDate,
         status: 'scheduled',
       })
-      .select()
+      .select('id, title, customerName, location, address, status, phase, date, description')
       .single();
     if (insertError) { setError(insertError.message); }
     else if (data) {
@@ -98,12 +117,49 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     setSaving(false);
   };
 
+  const startEditing = (job: Job) => {
+    setEditingId(job.id);
+    setEditTitle(jobDisplayName(job) === 'Untitled Job' ? '' : jobDisplayName(job));
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditTitle('');
+  };
+
+  const saveTitle = async (id: number) => {
+    const trimmed = editTitle.trim();
+    if (!trimmed) {
+      setError('Job name cannot be empty.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    const { data, error: updateError } = await supabase
+      .from('jobs')
+      .update({ title: trimmed })
+      .eq('id', id)
+      .select('id, title, customerName, location, address, status, phase, date, description')
+      .single();
+    if (updateError) {
+      setError(updateError.message);
+    } else if (data) {
+      setJobs(prev => prev.map(j => (j.id === id ? data : j)));
+      cancelEditing();
+    }
+    setSaving(false);
+  };
+
   const handleDelete = async (id: number) => {
     setSaving(true);
     setError(null);
     const { error: deleteError } = await supabase.from('jobs').delete().eq('id', id);
     if (deleteError) { setError(deleteError.message); }
-    else { setJobs(prev => prev.filter(j => j.id !== id)); setConfirmDeleteId(null); }
+    else {
+      setJobs(prev => prev.filter(j => j.id !== id));
+      setConfirmDeleteId(null);
+      if (editingId === id) cancelEditing();
+    }
     setSaving(false);
   };
 
@@ -148,12 +204,62 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
           )}
           {!loading && jobs.map(job => {
             const isDeleting = confirmDeleteId === job.id;
+            const isEditing = editingId === job.id;
+            const displayName = jobDisplayName(job);
+            const displayAddress = jobDisplayAddress(job);
             return (
               <div key={job.id} className="p-4 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col md:flex-row gap-4 justify-between md:items-center">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Briefcase className="w-4 h-4 text-indigo-500 shrink-0" />
-                    <h3 className="font-bold text-slate-900 dark:text-white">{job.customerName || 'Untitled Job'}</h3>
+                    {isEditing ? (
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <input
+                          ref={editInputRef}
+                          type="text"
+                          value={editTitle}
+                          onChange={e => setEditTitle(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') void saveTitle(job.id);
+                            if (e.key === 'Escape') cancelEditing();
+                          }}
+                          aria-label="Job name"
+                          className="flex-1 min-w-0 bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-lg px-3 py-1 text-sm font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void saveTitle(job.id)}
+                          disabled={saving || !editTitle.trim()}
+                          aria-label="Save job name"
+                          className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEditing}
+                          disabled={saving}
+                          aria-label="Cancel editing"
+                          className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <h3 className="font-bold text-slate-900 dark:text-white">{displayName}</h3>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => startEditing(job)}
+                            aria-label={`Edit name for ${displayName}`}
+                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </>
+                    )}
                     <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
                       {job.phase}
                     </span>
@@ -165,11 +271,11 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
                       {job.status}
                     </span>
                   </div>
-                  {job.address && <p className="text-sm text-slate-500 mt-1">{job.address}</p>}
+                  {displayAddress && <p className="text-sm text-slate-500 mt-1">{displayAddress}</p>}
                   <p className="text-xs text-slate-400 mt-0.5">{job.date}</p>
                 </div>
                 <div className="shrink-0 self-start md:self-center">
-                  {isDeleting ? (
+                  {canEdit && (isDeleting ? (
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-red-600 font-semibold whitespace-nowrap">Remove job?</span>
                       <button type="button" onClick={() => handleDelete(job.id)} disabled={saving}
@@ -182,7 +288,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
                       className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors">
                       <Trash2 className="w-5 h-5" />
                     </button>
-                  )}
+                  ))}
                 </div>
               </div>
             );
@@ -190,34 +296,36 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
         </div>
 
         {/* Add job form */}
-        <div className="p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 shrink-0">
-          <form onSubmit={handleAdd} className="flex flex-col gap-3">
-            <div className="flex gap-3">
-              <input ref={firstFocusRef} type="text" value={newCustomer} onChange={e => setNewCustomer(e.target.value)}
-                placeholder="Customer name…" aria-label="Customer name"
-                className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
-              <input type="text" value={newAddress} onChange={e => setNewAddress(e.target.value)}
-                placeholder="Address…" aria-label="Address"
-                className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
-            </div>
-            <div className="flex gap-3">
-              <select value={newPhase} onChange={e => setNewPhase(e.target.value)} aria-label="Phase"
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                <option>Rough-In</option>
-                <option>Top-Out</option>
-                <option>Trim</option>
-                <option>Final</option>
-                <option>Service</option>
-              </select>
-              <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} aria-label="Job date"
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
-              <button type="submit" disabled={saving || !newCustomer.trim()}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
-              </button>
-            </div>
-          </form>
-        </div>
+        {canEdit && (
+          <div className="p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 shrink-0">
+            <form onSubmit={handleAdd} className="flex flex-col gap-3">
+              <div className="flex gap-3">
+                <input ref={firstFocusRef} type="text" value={newCustomer} onChange={e => setNewCustomer(e.target.value)}
+                  placeholder="Customer name…" aria-label="Customer name"
+                  className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+                <input type="text" value={newAddress} onChange={e => setNewAddress(e.target.value)}
+                  placeholder="Address…" aria-label="Address"
+                  className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+              <div className="flex gap-3">
+                <select value={newPhase} onChange={e => setNewPhase(e.target.value)} aria-label="Phase"
+                  className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none">
+                  <option>Rough-In</option>
+                  <option>Top-Out</option>
+                  <option>Trim</option>
+                  <option>Final</option>
+                  <option>Service</option>
+                </select>
+                <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} aria-label="Job date"
+                  className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+                <button type="submit" disabled={saving || !newCustomer.trim()}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </div>
     </div>
   );

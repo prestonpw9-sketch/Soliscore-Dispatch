@@ -11,6 +11,8 @@ interface Props {
   jobs: Job[];
   technicians: Technician[];
   techPriorities: TechDailyPriority[];
+  submittalsCount: number;
+  refreshSubmittals: () => Promise<void>;
   todayStr: string;
   canEdit: boolean;
   onViewCalendar: () => void;
@@ -48,6 +50,8 @@ const Dashboard: React.FC<Props> = ({
   jobs,
   technicians,
   techPriorities,
+  submittalsCount,
+  refreshSubmittals,
   todayStr,
   canEdit,
   onViewCalendar,
@@ -116,6 +120,8 @@ const Dashboard: React.FC<Props> = ({
         activeBlueprints={4}
         sitePhotos={12}
         activePlumbers={activePlumbers}
+        submittalsCount={submittalsCount}
+        refreshSubmittals={refreshSubmittals}
         onOpenTeam={() => setIsTeamModalOpen(true)}
       />
 

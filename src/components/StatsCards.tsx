@@ -14,6 +14,8 @@ interface Props {
   activeBlueprints: number;
   sitePhotos: number;
   activePlumbers: number;
+  submittalsCount: number;
+  refreshSubmittals: () => Promise<void>;
   onOpenTeam: () => void;
 }
 
@@ -23,14 +25,14 @@ const StatsCards: React.FC<Props> = ({
   activeBlueprints,
   sitePhotos,
   activePlumbers,
+  submittalsCount,
+  refreshSubmittals,
   onOpenTeam,
 }) => {
   const [jobsModalOpen, setJobsModalOpen]     = useState(false);
   const [blueprintsModalOpen, setBlueprintsModalOpen] = useState(false);
   const [photosModalOpen, setPhotosModalOpen] = useState(false);
   const [submittalsModalOpen, setSubmittalsModalOpen] = useState(false);
-
-  const submittals = jobs.filter(j => j.status === 'pending');
 
   return (
     <>
@@ -122,7 +124,7 @@ const StatsCards: React.FC<Props> = ({
           </div>
           <div>
             <h4 className="text-3xl font-black text-white tracking-tight leading-none">
-              {submittals.length}
+              {submittalsCount}
             </h4>
             <p className="text-sm font-bold text-white/90 mt-2">Submittals</p>
           </div>
@@ -133,7 +135,12 @@ const StatsCards: React.FC<Props> = ({
       <ActiveJobsModal  isOpen={jobsModalOpen}       onClose={() => setJobsModalOpen(false)} />
       <BlueprintsModal  isOpen={blueprintsModalOpen} onClose={() => setBlueprintsModalOpen(false)} />
       <SitePhotosModal  isOpen={photosModalOpen}     onClose={() => setPhotosModalOpen(false)} jobs={jobs} />
-      <SubmittalsModal  isOpen={submittalsModalOpen} onClose={() => setSubmittalsModalOpen(false)} jobs={jobs} />
+      <SubmittalsModal
+        isOpen={submittalsModalOpen}
+        onClose={() => setSubmittalsModalOpen(false)}
+        jobs={jobs}
+        onRefresh={refreshSubmittals}
+      />
     </>
   );
 };
