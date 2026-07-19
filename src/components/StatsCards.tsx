@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Briefcase, Map, Camera, Users, FolderOpen,
 } from 'lucide-react';
 import type { Job } from '@/lib/data';
+import { useAuth } from '@/lib/AuthContext';
+import { fetchSubmittalsCount } from '@/lib/submittals';
 import ActiveJobsModal  from './ActiveJobsModal';
 import BlueprintsModal  from './BlueprintsModal';
 import SitePhotosModal  from './SitePhotosModal';
@@ -15,7 +17,8 @@ interface Props {
   sitePhotos: number;
   activePlumbers: number;
   submittalsCount: number;
-  refreshSubmittals: () => Promise<void>;
+  refreshSubmittals: () => Promise<number | void>;
+  reportSubmittalsCount: (count: number) => void;
   onOpenTeam: () => void;
 }
 
@@ -27,12 +30,26 @@ const StatsCards: React.FC<Props> = ({
   activePlumbers,
   submittalsCount,
   refreshSubmittals,
+  reportSubmittalsCount,
   onOpenTeam,
 }) => {
+  const { session, loading: authLoading } = useAuth();
   const [jobsModalOpen, setJobsModalOpen]     = useState(false);
   const [blueprintsModalOpen, setBlueprintsModalOpen] = useState(false);
   const [photosModalOpen, setPhotosModalOpen] = useState(false);
   const [submittalsModalOpen, setSubmittalsModalOpen] = useState(false);
+
+  // Belt-and-suspenders: also count directly when the dashboard cards mount.
+  // If the parent hook raced ahead of auth, this second fetch corrects it.
+  useEffect(() => {
+    if (authLoading || !session) return;
+    let cancelled = false;
+    void (async () => {
+      const count = await fetchSubmittalsCount();
+      if (!cancelled && count > 0) reportSubmittalsCount(count);
+    })();
+    return () => { cancelled = true; };
+  }, [authLoading, session, reportSubmittalsCount, submittalsModalOpen]);
 
   return (
     <>
@@ -139,6 +156,7 @@ const StatsCards: React.FC<Props> = ({
         isOpen={submittalsModalOpen}
         onClose={() => setSubmittalsModalOpen(false)}
         jobs={jobs}
+        onCountChange={reportSubmittalsCount}
         onRefresh={refreshSubmittals}
       />
     </>

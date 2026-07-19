@@ -14,12 +14,14 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   jobs: Job[];
-  onRefresh?: () => void | Promise<void>;
+  /** Push the loaded file count straight to the dashboard scorecard. */
+  onCountChange?: (count: number) => void;
+  onRefresh?: () => void | Promise<unknown>;
 }
 
 const BUCKET = 'submittals';
 
-const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onRefresh }) => {
+const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange, onRefresh }) => {
   const { canEdit } = useAuth();
   const [submittals, setSubmittals] = useState<Submittal[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -40,9 +42,11 @@ const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onRefresh }) 
     setError(null);
     const rows = await fetchAllSubmittals();
     setSubmittals(rows);
+    // Update the scorecard from the list we already have — no second fetch.
+    onCountChange?.(rows.length);
     setLoading(false);
     await onRefresh?.();
-  }, [onRefresh]);
+  }, [onCountChange, onRefresh]);
 
   useEffect(() => {
     if (isOpen) void fetchSubmittals();
@@ -105,7 +109,11 @@ const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onRefresh }) 
       const { error: rowError } = await supabase.from('submittals').delete().eq('id', s.id);
       if (rowError) { setError(rowError.message); return; }
     }
-    setSubmittals(prev => prev.filter(x => x.id !== s.id));
+    setSubmittals(prev => {
+      const next = prev.filter(x => x.id !== s.id);
+      onCountChange?.(next.length);
+      return next;
+    });
     setConfirmDelete(null);
     void onRefresh?.();
   };

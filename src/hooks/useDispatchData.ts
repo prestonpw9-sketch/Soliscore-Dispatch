@@ -118,9 +118,16 @@ export const useDispatchData = () => {
     try {
       const count = await fetchSubmittalsCount();
       setSubmittalsCount(count);
+      return count;
     } catch (err) {
       console.error('Error fetching submittals count:', err);
+      return 0;
     }
+  }, []);
+
+  /** Let the Submittals modal push the count it already loaded (avoids a second fetch). */
+  const reportSubmittalsCount = useCallback((count: number) => {
+    setSubmittalsCount(count);
   }, []);
 
   const fetchTechPriorities = useCallback(async () => {
@@ -173,6 +180,16 @@ export const useDispatchData = () => {
       fetchTechPriorities(),
       fetchSubmittals(),
     ])
+      .then(async () => {
+        // Retry once after the main sync — covers the rare case where the first
+        // count request raced ahead of the auth token on the Supabase client.
+        if (!active) return;
+        const count = await fetchSubmittals();
+        if (active && count === 0) {
+          await new Promise(r => setTimeout(r, 750));
+          if (active) await fetchSubmittals();
+        }
+      })
       .finally(() => {
         if (active) {
           clearTimeout(timeout);
@@ -462,6 +479,7 @@ export const useDispatchData = () => {
     techPriorities,
     submittalsCount,
     refreshSubmittals: fetchSubmittals,
+    reportSubmittalsCount,
     refresh,
     createJob,
     updateJob,
