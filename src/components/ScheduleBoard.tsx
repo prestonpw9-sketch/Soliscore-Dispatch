@@ -6,6 +6,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Technician, JobTask, TaskStatus } from '@/lib/data';
+import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
 
@@ -271,11 +272,20 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
     await onRefresh();
   }, [jobs, fetchTasks, onRefresh]);
 
-  const saveJobDates = useCallback(async (job: Job, start: string, end: string) => {
+  const saveJobDates = useCallback(async (job: Job, start: string, end: string, phase: string) => {
     const safeEnd = end < start ? start : end;
-    const { error: err } = await supabase.from('jobs').update({ date: start, end_date: safeEnd }).eq('id', job.id);
+    const { error: err } = await supabase
+      .from('jobs')
+      .update({ date: start, end_date: safeEnd, phase })
+      .eq('id', job.id);
     if (err) { setError(err.message); return; }
     setEditJob(null);
+    await onRefresh();
+  }, [onRefresh]);
+
+  const saveJobPhase = useCallback(async (job: Job, phase: string) => {
+    const { error: err } = await supabase.from('jobs').update({ phase }).eq('id', job.id);
+    if (err) { setError(err.message); return; }
     await onRefresh();
   }, [onRefresh]);
 
@@ -461,20 +471,36 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                     {/* Job group header row */}
                     <div className="flex items-stretch bg-slate-50/70 dark:bg-slate-800/30">
                       <div className="w-80 shrink-0 px-4 py-2.5 flex items-center gap-2 min-w-0">
-                        <button
-                          type="button"
-                          disabled={!canEdit}
-                          onClick={() => setEditJob(job)}
-                          className="min-w-0 text-left disabled:cursor-default"
-                          title={canEdit ? 'Edit job dates' : undefined}
-                        >
-                          <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
-                            {job.customerName}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            {job.serviceType && (
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            disabled={!canEdit}
+                            onClick={() => setEditJob(job)}
+                            className="min-w-0 w-full text-left disabled:cursor-default"
+                            title={canEdit ? 'Edit job schedule' : undefined}
+                          >
+                            <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                              {job.customerName}
+                            </div>
+                          </button>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {canEdit ? (
+                              <select
+                                value={job.phase || 'Rough-In'}
+                                onChange={e => void saveJobPhase(job, e.target.value)}
+                                aria-label={`Phase for ${job.customerName}`}
+                                className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 outline-none cursor-pointer"
+                              >
+                                {PLUMBING_PHASES.map(p => (
+                                  <option key={p} value={p}>{p}</option>
+                                ))}
+                                {job.phase && !(PLUMBING_PHASES as readonly string[]).includes(job.phase) && (
+                                  <option value={job.phase}>{job.phase}</option>
+                                )}
+                              </select>
+                            ) : (
                               <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
-                                {job.serviceType}
+                                {job.phase || 'Rough-In'}
                               </span>
                             )}
                             <span className="text-[10px] text-slate-400">
@@ -483,7 +509,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                               {parseYMD(jobEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                             </span>
                           </div>
-                        </button>
+                        </div>
                         <span className={`ml-auto shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full ${
                           jobBehind
                             ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
@@ -650,6 +676,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
       {editJob && (
         <EditJobDatesModal job={editJob} onClose={() => setEditJob(null)} onSave={saveJobDates} />
       )}
+
       {logTask && (
         <LogTodayModal
           task={logTask}
@@ -718,13 +745,29 @@ const AddCrewInline: React.FC<{
 const EditJobDatesModal: React.FC<{
   job: Job;
   onClose: () => void;
-  onSave: (job: Job, start: string, end: string) => Promise<void> | void;
+  onSave: (job: Job, start: string, end: string, phase: string) => Promise<void> | void;
 }> = ({ job, onClose, onSave }) => {
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
+  const [phase, setPhase] = useState(job.phase || 'Rough-In');
   return (
     <ModalShell title="Edit job schedule" onClose={onClose}>
       <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{job.customerName}</p>
+      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mt-3">
+        Plumbing phase
+        <select
+          value={phase}
+          onChange={e => setPhase(e.target.value)}
+          className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+        >
+          {PLUMBING_PHASES.map(p => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+          {phase && !(PLUMBING_PHASES as readonly string[]).includes(phase) && (
+            <option value={phase}>{phase}</option>
+          )}
+        </select>
+      </label>
       <div className="grid grid-cols-2 gap-3 mt-3">
         <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
           Start date
@@ -742,7 +785,7 @@ const EditJobDatesModal: React.FC<{
           className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
           Cancel
         </button>
-        <button type="button" onClick={() => void onSave(job, start, end)}
+        <button type="button" onClick={() => void onSave(job, start, end, phase)}
           className="flex-1 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold inline-flex items-center justify-center gap-1">
           <Check className="w-4 h-4" /> Save
         </button>
