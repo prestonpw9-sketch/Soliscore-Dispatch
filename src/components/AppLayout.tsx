@@ -77,6 +77,7 @@ const AppLayout: React.FC = () => {
     techPriorities,
     submittalsCount,
     refreshSubmittals,
+    reportSubmittalsCount,
     setFirstPriorityJob,
   } = useDispatchData();
 
@@ -408,6 +409,7 @@ const AppLayout: React.FC = () => {
                   techPriorities={techPriorities}
                   submittalsCount={submittalsCount}
                   refreshSubmittals={refreshSubmittals}
+                  reportSubmittalsCount={reportSubmittalsCount}
                   todayStr={todayStr}
                   canEdit={canEdit}
                   onViewCalendar={() => setView('schedule')}

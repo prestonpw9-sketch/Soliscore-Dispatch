@@ -15,10 +15,19 @@ function isPlaceholder(name: string): boolean {
   return name === '.emptyFolderPlaceholder';
 }
 
-/** Total submittal files — same source as the Submittals modal list. */
+/**
+ * Fast count from the submittals table (exact row count).
+ * This is the source of truth for the dashboard scorecard.
+ */
 export async function fetchSubmittalsCount(): Promise<number> {
-  const rows = await fetchAllSubmittals();
-  return rows.length;
+  const { count, error } = await supabase
+    .from('submittals')
+    .select('*', { count: 'exact', head: true });
+  if (error) {
+    console.error('Error counting submittals:', error);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 /** Load submittals from the DB table. */
@@ -80,7 +89,7 @@ export async function fetchStorageOnlySubmittals(
 /** All submittals: DB rows merged with storage-only files. */
 export async function fetchAllSubmittals(): Promise<SubmittalRecord[]> {
   const dbRows = await fetchSubmittalsFromDb();
-  const existingPaths = new Set(dbRows.map(r => r.file_path));
+  const existingPaths = new Set(dbRows.map(r => r.file_path).filter(Boolean));
   const storageRows = await fetchStorageOnlySubmittals(existingPaths);
   return [...dbRows, ...storageRows];
 }
