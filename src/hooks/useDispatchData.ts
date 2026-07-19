@@ -4,9 +4,17 @@ import { useAuth } from '@/lib/AuthContext';
 import { fetchSubmittalsCount } from '@/lib/submittals';
 import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
 import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
-import type { Job, Customer, Technician, TechDailyPriority } from '@/lib/data';
+import type { Job, JobStatus, Customer, Technician, TechDailyPriority } from '@/lib/data';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
+
+/** Map DB / legacy values onto the single status language. */
+function normalizeJobStatus(raw: unknown): JobStatus {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value === 'active' || value === 'completed' || value === 'scheduled') return value;
+  // Legacy "pending" and anything unexpected → scheduled.
+  return 'scheduled';
+}
 
 function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
   const id = String(c.id ?? '');
@@ -73,7 +81,7 @@ export const useDispatchData = () => {
         address:           j.location ?? j.address ?? 'Tucson, AZ',
         description:       j.description ?? '',
         phase:             j.phase ?? 'Rough-In',
-        status:            j.status ?? 'pending',
+        status:            normalizeJobStatus(j.status),
         startTime:         j.startTime ?? '08:00',
         endTime:           j.endTime ?? '10:00',
         date:              j.date ?? new Date().toISOString().split('T')[0],
@@ -271,7 +279,7 @@ export const useDispatchData = () => {
       location:     jobData.address ?? 'Tucson, AZ',
       description:  jobData.description ?? '',
       phase:        jobData.phase ?? 'Rough-In',
-      status:       'pending',
+      status:       'scheduled',
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
@@ -383,7 +391,7 @@ export const useDispatchData = () => {
     // FIX: read from ref — same stale closure fix as rescheduleJob
     const job = jobsRef.current.find(j => j.id === id);
     if (!job) return;
-    const newStatus = job.status === 'completed' ? 'pending' : 'completed';
+    const newStatus = job.status === 'completed' ? 'scheduled' : 'completed';
     setJobs(prev => prev.map(j => j.id === id ? { ...j, status: newStatus } : j));
     const { error: sbError } = await supabase
       .from('jobs').update({ status: newStatus }).eq('id', id);

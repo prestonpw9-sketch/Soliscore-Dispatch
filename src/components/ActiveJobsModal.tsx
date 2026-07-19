@@ -323,7 +323,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
                     )}
                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
                       job.status === 'active' ? 'bg-emerald-100 text-emerald-700' :
-                      job.status === 'pending' ? 'bg-orange-100 text-orange-700' :
+                      job.status === 'scheduled' ? 'bg-orange-100 text-orange-700' :
                       'bg-slate-100 text-slate-600'
                     }`}>
                       {job.status}
