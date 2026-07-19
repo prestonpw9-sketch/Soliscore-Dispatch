@@ -25,9 +25,11 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   jobs: Job[];
+  onCountChange?: (count: number) => void;
+  onRefresh?: () => void | Promise<unknown>;
 }
 
-const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs }) => {
+const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange, onRefresh }) => {
   const [photos, setPhotos]               = useState<SitePhoto[]>([]);
   const [loading, setLoading]             = useState(false);
   const [uploading, setUploading]         = useState(false);
@@ -77,7 +79,9 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs }) => {
         };
       });
     setPhotos(photoList);
+    onCountChange?.(photoList.length);
     setLoading(false);
+    await onRefresh?.();
   };
 
   const groups = useMemo(
@@ -143,8 +147,13 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs }) => {
     if (deleteError) {
       setError(deleteError.message);
     } else {
-      setPhotos(prev => prev.filter(p => p.name !== name));
+      setPhotos(prev => {
+        const next = prev.filter(p => p.name !== name);
+        onCountChange?.(next.length);
+        return next;
+      });
       setConfirmDeleteId(null);
+      await onRefresh?.();
     }
   };
 

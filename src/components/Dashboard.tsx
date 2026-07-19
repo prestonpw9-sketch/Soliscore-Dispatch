@@ -12,8 +12,15 @@ interface Props {
   technicians: Technician[];
   techPriorities: TechDailyPriority[];
   submittalsCount: number;
+  blueprintsCount: number;
+  sitePhotosCount: number;
   refreshSubmittals: () => Promise<number | void>;
+  refreshBlueprints: () => Promise<number | void>;
+  refreshSitePhotos: () => Promise<number | void>;
   reportSubmittalsCount: (count: number) => void;
+  reportBlueprintsCount: (count: number) => void;
+  reportSitePhotosCount: (count: number) => void;
+  onJobsChanged?: () => void | Promise<unknown>;
   todayStr: string;
   canEdit: boolean;
   onViewCalendar: () => void;
@@ -52,8 +59,15 @@ const Dashboard: React.FC<Props> = ({
   technicians,
   techPriorities,
   submittalsCount,
+  blueprintsCount,
+  sitePhotosCount,
   refreshSubmittals,
+  refreshBlueprints,
+  refreshSitePhotos,
   reportSubmittalsCount,
+  reportBlueprintsCount,
+  reportSitePhotosCount,
+  onJobsChanged,
   todayStr,
   canEdit,
   onViewCalendar,
@@ -119,12 +133,17 @@ const Dashboard: React.FC<Props> = ({
       <StatsCards
         jobs={jobs}
         activeJobCount={activeJobCount}
-        activeBlueprints={4}
-        sitePhotos={12}
+        activeBlueprints={blueprintsCount}
+        sitePhotos={sitePhotosCount}
         activePlumbers={activePlumbers}
         submittalsCount={submittalsCount}
         refreshSubmittals={refreshSubmittals}
+        refreshBlueprints={refreshBlueprints}
+        refreshSitePhotos={refreshSitePhotos}
         reportSubmittalsCount={reportSubmittalsCount}
+        reportBlueprintsCount={reportBlueprintsCount}
+        reportSitePhotosCount={reportSitePhotosCount}
+        onJobsChanged={onJobsChanged}
         onOpenTeam={() => setIsTeamModalOpen(true)}
       />
 

@@ -2,7 +2,11 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { fetchSubmittalsCount } from '@/lib/submittals';
+import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
+import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
 import type { Job, Customer, Technician, TechDailyPriority } from '@/lib/data';
+
+export type MutationResult = { ok: true } | { ok: false; message: string };
 
 function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
   const id = String(c.id ?? '');
@@ -47,6 +51,8 @@ export const useDispatchData = () => {
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techPriorities, setTechPriorities] = useState<TechDailyPriority[]>([]);
   const [submittalsCount, setSubmittalsCount] = useState(0);
+  const [blueprintsCount, setBlueprintsCount] = useState(0);
+  const [sitePhotosCount, setSitePhotosCount] = useState(0);
 
   // FIX: keep a stable ref to jobs so rescheduleJob's DB write
   // always reads the latest job without needing `jobs` in its dep array.
@@ -125,9 +131,37 @@ export const useDispatchData = () => {
     }
   }, []);
 
-  /** Let the Submittals modal push the count it already loaded (avoids a second fetch). */
+  const fetchBlueprints = useCallback(async () => {
+    try {
+      const count = await fetchBlueprintsCount();
+      setBlueprintsCount(count);
+      return count;
+    } catch (err) {
+      console.error('Error fetching blueprints count:', err);
+      return 0;
+    }
+  }, []);
+
+  const fetchSitePhotos = useCallback(async () => {
+    try {
+      const count = await fetchSitePhotosCount();
+      setSitePhotosCount(count);
+      return count;
+    } catch (err) {
+      console.error('Error fetching site photos count:', err);
+      return 0;
+    }
+  }, []);
+
+  /** Let modals push a count they already loaded (avoids a second fetch). */
   const reportSubmittalsCount = useCallback((count: number) => {
     setSubmittalsCount(count);
+  }, []);
+  const reportBlueprintsCount = useCallback((count: number) => {
+    setBlueprintsCount(count);
+  }, []);
+  const reportSitePhotosCount = useCallback((count: number) => {
+    setSitePhotosCount(count);
   }, []);
 
   const fetchTechPriorities = useCallback(async () => {
@@ -179,6 +213,8 @@ export const useDispatchData = () => {
       fetchCustomers(),
       fetchTechPriorities(),
       fetchSubmittals(),
+      fetchBlueprints(),
+      fetchSitePhotos(),
     ])
       .then(async () => {
         // Retry once after the main sync — covers the rare case where the first
@@ -198,7 +234,10 @@ export const useDispatchData = () => {
       });
 
     return () => { active = false; clearTimeout(timeout); };
-  }, [session, authLoading, fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities, fetchSubmittals]);
+  }, [
+    session, authLoading, fetchJobs, fetchTeam, fetchCustomers,
+    fetchTechPriorities, fetchSubmittals, fetchBlueprints, fetchSitePhotos,
+  ]);
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -207,13 +246,18 @@ export const useDispatchData = () => {
       fetchCustomers(),
       fetchTechPriorities(),
       fetchSubmittals(),
+      fetchBlueprints(),
+      fetchSitePhotos(),
     ]);
-  }, [fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities, fetchSubmittals]);
+  }, [
+    fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities,
+    fetchSubmittals, fetchBlueprints, fetchSitePhotos,
+  ]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   // FIX: accepts typed `Omit<Job, 'id'>` instead of `any`
-  const createJob = useCallback(async (jobData: Omit<Job, 'id'>) => {
+  const createJob = useCallback(async (jobData: Omit<Job, 'id'>): Promise<MutationResult> => {
     // Multi-crew: prefer the array, fall back to the legacy single id. Keep
     // technician_id in sync (= first crew member) for older views.
     const crew = Array.from(
@@ -240,29 +284,27 @@ export const useDispatchData = () => {
     }]).select('id').single();
     if (sbError) {
       console.error('Error saving job to DB:', sbError);
-      return;
+      return { ok: false, message: sbError.message || 'Could not schedule job.' };
     }
     // Seed a job_tasks row for every assigned crew member (task blank, span = job range).
     const newJobId = inserted?.id;
     if (newJobId && crew.length) {
-      const rows = crew.map(techId => ({
-        job_id:           newJobId,
-        technician_id:    techId,
-        task:             '',
-        start_date:       startDate,
-        end_date:         endDate,
-        status:           'not_started',
-        percent_complete: 0,
-      }));
-      const { error: taskError } = await supabase.from('job_tasks').insert(rows);
-      if (taskError) console.error('Error seeding job_tasks:', taskError);
+      const taskError = await syncJobTasksForCrew(newJobId, crew, startDate, endDate);
+      if (taskError) {
+        // Job exists; surface the schedule-row issue but treat create as ok.
+        console.error('Error seeding job_tasks:', taskError);
+      }
     }
     // FIX: await refresh so callers get updated state after createJob resolves
     await refresh();
+    return { ok: true };
   }, [refresh]);
 
   // Update an existing job (used when editing from the dashboard / calendar).
-  const updateJob = useCallback(async (jobId: string, jobData: Omit<Job, 'id'>) => {
+  const updateJob = useCallback(async (
+    jobId: string,
+    jobData: Omit<Job, 'id'>,
+  ): Promise<MutationResult> => {
     const crew = Array.from(new Set((jobData.technicianIds ?? []).filter(Boolean)));
     const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
     const startDate = jobData.date;
@@ -282,9 +324,20 @@ export const useDispatchData = () => {
     }).eq('id', jobId);
     if (sbError) {
       console.error('Error updating job:', sbError);
-      return;
+      return { ok: false, message: sbError.message || 'Could not update job.' };
+    }
+    // Keep Schedule board task rows in sync with the assigned crew.
+    const taskError = await syncJobTasksForCrew(
+      jobId,
+      primary ? (crew.length ? crew : [primary]) : [],
+      startDate,
+      endDate,
+    );
+    if (taskError) {
+      console.error('Error syncing job_tasks:', taskError);
     }
     await refresh();
+    return { ok: true };
   }, [refresh]);
 
   const rescheduleJob = useCallback(async (
@@ -358,11 +411,15 @@ export const useDispatchData = () => {
 
   // Assign MULTIPLE crew to a job. Writes technician_ids[] and keeps the legacy
   // technician_id in sync (= first crew member, or null) for older views.
+  // Also syncs job_tasks so the Schedule board shows the same crew.
   const assignTechnicians = useCallback(async (
     jobId: string, technicianIds: string[],
-  ) => {
+  ): Promise<MutationResult> => {
     const cleaned = Array.from(new Set((technicianIds || []).filter(Boolean)));
     const primary = cleaned[0] ?? null;
+    const current = jobsRef.current.find(j => j.id === jobId);
+    const startDate = current?.date ?? new Date().toISOString().split('T')[0];
+    const endDate = current?.endDate ?? current?.date ?? startDate;
     setJobs(prev => prev.map(j =>
       j.id === jobId ? { ...j, technicianIds: cleaned, technicianId: primary } : j
     ));
@@ -373,7 +430,16 @@ export const useDispatchData = () => {
     if (sbError) {
       console.error('Failed to assign crew:', sbError);
       await refresh();
+      return { ok: false, message: sbError.message || 'Could not assign crew.' };
     }
+    const taskError = await syncJobTasksForCrew(jobId, cleaned, startDate, endDate);
+    if (taskError) {
+      console.error('Failed to sync job_tasks after crew assign:', taskError);
+      await refresh();
+      return { ok: false, message: taskError };
+    }
+    await refresh();
+    return { ok: true };
   }, [refresh]);
 
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
@@ -478,8 +544,14 @@ export const useDispatchData = () => {
     technicians,
     techPriorities,
     submittalsCount,
+    blueprintsCount,
+    sitePhotosCount,
     refreshSubmittals: fetchSubmittals,
+    refreshBlueprints: fetchBlueprints,
+    refreshSitePhotos: fetchSitePhotos,
     reportSubmittalsCount,
+    reportBlueprintsCount,
+    reportSitePhotosCount,
     refresh,
     createJob,
     updateJob,

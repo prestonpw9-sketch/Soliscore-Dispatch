@@ -27,9 +27,11 @@ function jobDisplayAddress(job: Job): string {
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  /** Refresh dashboard/schedule after add/edit/delete. */
+  onJobsChanged?: () => void | Promise<unknown>;
 }
 
-const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
+const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) => {
   const { canEdit } = useAuth();
   const [jobs, setJobs]               = useState<Job[]>([]);
   const [loading, setLoading]         = useState(false);
@@ -115,6 +117,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
       setJobs(prev => [...prev, data]);
       setNewCustomer('');
       setNewAddress('');
+      await onJobsChanged?.();
     }
     setSaving(false);
   };
@@ -150,6 +153,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     } else if (data) {
       setJobs(prev => prev.map(j => (j.id === id ? data : j)));
       cancelEditing();
+      await onJobsChanged?.();
     }
     setSaving(false);
   };
@@ -167,6 +171,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
       setError(updateError.message);
     } else if (data) {
       setJobs(prev => prev.map(j => (j.id === id ? data : j)));
+      await onJobsChanged?.();
     }
     setSaving(false);
   };
@@ -180,6 +185,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
       setJobs(prev => prev.filter(j => j.id !== id));
       setConfirmDeleteId(null);
       if (editingId === id) cancelEditing();
+      await onJobsChanged?.();
     }
     setSaving(false);
   };

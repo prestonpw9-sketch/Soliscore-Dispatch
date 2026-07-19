@@ -5,6 +5,7 @@ import {
 import type { Job } from '@/lib/data';
 import { useAuth } from '@/lib/AuthContext';
 import { fetchSubmittalsCount } from '@/lib/submittals';
+import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
 import ActiveJobsModal  from './ActiveJobsModal';
 import BlueprintsModal  from './BlueprintsModal';
 import SitePhotosModal  from './SitePhotosModal';
@@ -18,7 +19,12 @@ interface Props {
   activePlumbers: number;
   submittalsCount: number;
   refreshSubmittals: () => Promise<number | void>;
+  refreshBlueprints: () => Promise<number | void>;
+  refreshSitePhotos: () => Promise<number | void>;
   reportSubmittalsCount: (count: number) => void;
+  reportBlueprintsCount: (count: number) => void;
+  reportSitePhotosCount: (count: number) => void;
+  onJobsChanged?: () => void | Promise<unknown>;
   onOpenTeam: () => void;
 }
 
@@ -30,7 +36,12 @@ const StatsCards: React.FC<Props> = ({
   activePlumbers,
   submittalsCount,
   refreshSubmittals,
+  refreshBlueprints,
+  refreshSitePhotos,
   reportSubmittalsCount,
+  reportBlueprintsCount,
+  reportSitePhotosCount,
+  onJobsChanged,
   onOpenTeam,
 }) => {
   const { session, loading: authLoading } = useAuth();
@@ -40,16 +51,26 @@ const StatsCards: React.FC<Props> = ({
   const [submittalsModalOpen, setSubmittalsModalOpen] = useState(false);
 
   // Belt-and-suspenders: also count directly when the dashboard cards mount.
-  // If the parent hook raced ahead of auth, this second fetch corrects it.
   useEffect(() => {
     if (authLoading || !session) return;
     let cancelled = false;
     void (async () => {
-      const count = await fetchSubmittalsCount();
-      if (!cancelled && count > 0) reportSubmittalsCount(count);
+      const [subs, prints, photos] = await Promise.all([
+        fetchSubmittalsCount(),
+        fetchBlueprintsCount(),
+        fetchSitePhotosCount(),
+      ]);
+      if (cancelled) return;
+      if (subs > 0) reportSubmittalsCount(subs);
+      if (prints > 0) reportBlueprintsCount(prints);
+      if (photos > 0) reportSitePhotosCount(photos);
     })();
     return () => { cancelled = true; };
-  }, [authLoading, session, reportSubmittalsCount, submittalsModalOpen]);
+  }, [
+    authLoading, session,
+    reportSubmittalsCount, reportBlueprintsCount, reportSitePhotosCount,
+    submittalsModalOpen, blueprintsModalOpen, photosModalOpen,
+  ]);
 
   return (
     <>
@@ -149,9 +170,24 @@ const StatsCards: React.FC<Props> = ({
       </div>
 
       {/* Modals */}
-      <ActiveJobsModal  isOpen={jobsModalOpen}       onClose={() => setJobsModalOpen(false)} />
-      <BlueprintsModal  isOpen={blueprintsModalOpen} onClose={() => setBlueprintsModalOpen(false)} />
-      <SitePhotosModal  isOpen={photosModalOpen}     onClose={() => setPhotosModalOpen(false)} jobs={jobs} />
+      <ActiveJobsModal
+        isOpen={jobsModalOpen}
+        onClose={() => setJobsModalOpen(false)}
+        onJobsChanged={onJobsChanged}
+      />
+      <BlueprintsModal
+        isOpen={blueprintsModalOpen}
+        onClose={() => setBlueprintsModalOpen(false)}
+        onCountChange={reportBlueprintsCount}
+        onRefresh={refreshBlueprints}
+      />
+      <SitePhotosModal
+        isOpen={photosModalOpen}
+        onClose={() => setPhotosModalOpen(false)}
+        jobs={jobs}
+        onCountChange={reportSitePhotosCount}
+        onRefresh={refreshSitePhotos}
+      />
       <SubmittalsModal
         isOpen={submittalsModalOpen}
         onClose={() => setSubmittalsModalOpen(false)}
