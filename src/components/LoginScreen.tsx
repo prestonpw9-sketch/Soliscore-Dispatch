@@ -1,18 +1,50 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
 
 export default function LoginScreen() {
+  const { authNotice, clearAuthNotice } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (authNotice) setError(authNotice);
+  }, [authNotice]);
+
+  const handleForgotPassword = async () => {
+    const clean = email.trim().toLowerCase();
+    if (!clean) {
+      setNotice(null);
+      setError('Enter your email above, then tap Forgot password.');
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    clearAuthNotice();
+    setResetBusy(true);
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(clean, {
+      redirectTo: window.location.origin,
+    });
+    setResetBusy(false);
+    if (resetError) {
+      setError(resetError.message);
+      return;
+    }
+    setNotice(`Password reset link sent to ${clean}. Check your inbox (and spam).`);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = email.trim().toLowerCase();
     setError(null);
+    setNotice(null);
+    clearAuthNotice();
     setBusy(true);
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: clean,
@@ -23,12 +55,11 @@ export default function LoginScreen() {
     if (signInError) {
       setError(
         signInError.message.toLowerCase().includes('invalid')
-          ? 'Incorrect email or password. Please try again.'
+          ? 'Incorrect email or password. Use Forgot password if you need to reset it.'
           : signInError.message
       );
     }
-    // On success the AuthContext listener checks the role. If the account has no
-    // assigned role it is signed out automatically (not authorized).
+    // On success AuthContext checks user_roles. No assigned role => signed out with authNotice.
   };
 
   return (
@@ -89,17 +120,32 @@ export default function LoginScreen() {
               </div>
             )}
 
+            {notice && (
+              <div className="p-3 bg-teal-900/30 border border-teal-800 rounded-xl text-teal-200 text-sm font-medium">
+                {notice}
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || resetBusy}
               className="w-full flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl transition-colors"
             >
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
               {busy ? 'Signing in…' : 'Sign In'}
             </button>
 
+            <button
+              type="button"
+              disabled={busy || resetBusy}
+              onClick={() => void handleForgotPassword()}
+              className="w-full text-sm font-semibold text-teal-400 hover:text-teal-300 disabled:opacity-60 transition-colors"
+            >
+              {resetBusy ? 'Sending reset link…' : 'Forgot password?'}
+            </button>
+
             <p className="text-xs text-slate-500 text-center pt-2">
-              Access is limited to authorized ITDG Plumbing team members.
+              Use your ITDG email (e.g. you@itdgconstruction.com). Contact Preston if you still can&apos;t get in.
             </p>
           </form>
         </div>

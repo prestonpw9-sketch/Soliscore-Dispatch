@@ -37,7 +37,7 @@ export type ViewKey =
 import type { Role } from '@/lib/AuthContext';
 
 // Which roles can see each nav item.
-// owner = Preston/Greg (everything), office = read-only everywhere except bids,
+// owner = full access (Preston, Greg, Carol, …), office = read-only everywhere except bids,
 // crew = past jobs, blueprints, submittals, photos, quick bid only.
 const NAV_ITEMS: { key: ViewKey; label: string; icon: typeof LayoutDashboard; roles: Role[] }[] = [
   { key: 'dashboard', label: 'Dispatch Board',     icon: LayoutDashboard, roles: ['owner', 'office', 'crew'] },
