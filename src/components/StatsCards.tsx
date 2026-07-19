@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   Briefcase, Map, Camera, Users, FolderOpen,
 } from 'lucide-react';
 import type { Job } from '@/lib/data';
-import { useAuth } from '@/lib/AuthContext';
-import { fetchSubmittalsCount } from '@/lib/submittals';
 import ActiveJobsModal  from './ActiveJobsModal';
 import BlueprintsModal  from './BlueprintsModal';
 import SitePhotosModal  from './SitePhotosModal';
@@ -16,6 +14,8 @@ interface Props {
   activeBlueprints: number;
   sitePhotos: number;
   activePlumbers: number;
+  submittalsCount: number;
+  refreshSubmittals: () => Promise<void>;
   onOpenTeam: () => void;
 }
 
@@ -25,24 +25,14 @@ const StatsCards: React.FC<Props> = ({
   activeBlueprints,
   sitePhotos,
   activePlumbers,
+  submittalsCount,
+  refreshSubmittals,
   onOpenTeam,
 }) => {
-  const { session, loading: authLoading } = useAuth();
   const [jobsModalOpen, setJobsModalOpen]     = useState(false);
   const [blueprintsModalOpen, setBlueprintsModalOpen] = useState(false);
   const [photosModalOpen, setPhotosModalOpen] = useState(false);
   const [submittalsModalOpen, setSubmittalsModalOpen] = useState(false);
-  const [submittalsCount, setSubmittalsCount] = useState(0);
-
-  const refreshSubmittalsCount = useCallback(async () => {
-    const count = await fetchSubmittalsCount();
-    setSubmittalsCount(count);
-  }, []);
-
-  useEffect(() => {
-    if (authLoading || !session) return;
-    void refreshSubmittalsCount();
-  }, [authLoading, session, refreshSubmittalsCount]);
 
   return (
     <>
@@ -149,7 +139,7 @@ const StatsCards: React.FC<Props> = ({
         isOpen={submittalsModalOpen}
         onClose={() => setSubmittalsModalOpen(false)}
         jobs={jobs}
-        onCountChange={setSubmittalsCount}
+        onRefresh={refreshSubmittals}
       />
     </>
   );

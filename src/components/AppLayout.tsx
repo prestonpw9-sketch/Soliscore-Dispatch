@@ -75,6 +75,8 @@ const AppLayout: React.FC = () => {
     fireTechnician,
     createCustomer,
     techPriorities,
+    submittalsCount,
+    refreshSubmittals,
     setFirstPriorityJob,
   } = useDispatchData();
 
@@ -404,6 +406,8 @@ const AppLayout: React.FC = () => {
                   jobs={jobs}
                   technicians={technicians}
                   techPriorities={techPriorities}
+                  submittalsCount={submittalsCount}
+                  refreshSubmittals={refreshSubmittals}
                   todayStr={todayStr}
                   canEdit={canEdit}
                   onViewCalendar={() => setView('schedule')}

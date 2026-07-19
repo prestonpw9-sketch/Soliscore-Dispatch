@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
+import { fetchSubmittalsCount } from '@/lib/submittals';
 import type { Job, Customer, Technician, TechDailyPriority } from '@/lib/data';
 
 function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
@@ -45,6 +46,7 @@ export const useDispatchData = () => {
   const [customers, setCustomers]     = useState<Customer[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techPriorities, setTechPriorities] = useState<TechDailyPriority[]>([]);
+  const [submittalsCount, setSubmittalsCount] = useState(0);
 
   // FIX: keep a stable ref to jobs so rescheduleJob's DB write
   // always reads the latest job without needing `jobs` in its dep array.
@@ -112,6 +114,15 @@ export const useDispatchData = () => {
     }
   }, []);
 
+  const fetchSubmittals = useCallback(async () => {
+    try {
+      const count = await fetchSubmittalsCount();
+      setSubmittalsCount(count);
+    } catch (err) {
+      console.error('Error fetching submittals count:', err);
+    }
+  }, []);
+
   const fetchTechPriorities = useCallback(async () => {
     try {
       const { data, error: sbError } = await supabase
@@ -155,7 +166,13 @@ export const useDispatchData = () => {
       }
     }, 12000);
 
-    void Promise.allSettled([fetchJobs(), fetchTeam(), fetchCustomers(), fetchTechPriorities()])
+    void Promise.allSettled([
+      fetchJobs(),
+      fetchTeam(),
+      fetchCustomers(),
+      fetchTechPriorities(),
+      fetchSubmittals(),
+    ])
       .finally(() => {
         if (active) {
           clearTimeout(timeout);
@@ -164,11 +181,17 @@ export const useDispatchData = () => {
       });
 
     return () => { active = false; clearTimeout(timeout); };
-  }, [session, authLoading, fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities]);
+  }, [session, authLoading, fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities, fetchSubmittals]);
 
   const refresh = useCallback(async () => {
-    await Promise.all([fetchJobs(), fetchTeam(), fetchCustomers(), fetchTechPriorities()]);
-  }, [fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities]);
+    await Promise.all([
+      fetchJobs(),
+      fetchTeam(),
+      fetchCustomers(),
+      fetchTechPriorities(),
+      fetchSubmittals(),
+    ]);
+  }, [fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities, fetchSubmittals]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -437,6 +460,8 @@ export const useDispatchData = () => {
     customers,
     technicians,
     techPriorities,
+    submittalsCount,
+    refreshSubmittals: fetchSubmittals,
     refresh,
     createJob,
     updateJob,

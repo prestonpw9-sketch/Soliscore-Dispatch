@@ -14,12 +14,12 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   jobs: Job[];
-  onCountChange?: (count: number) => void;
+  onRefresh?: () => void | Promise<void>;
 }
 
 const BUCKET = 'submittals';
 
-const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange }) => {
+const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onRefresh }) => {
   const { canEdit } = useAuth();
   const [submittals, setSubmittals] = useState<Submittal[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -40,9 +40,9 @@ const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
     setError(null);
     const rows = await fetchAllSubmittals();
     setSubmittals(rows);
-    onCountChange?.(rows.length);
     setLoading(false);
-  }, [onCountChange]);
+    await onRefresh?.();
+  }, [onRefresh]);
 
   useEffect(() => {
     if (isOpen) void fetchSubmittals();
@@ -105,12 +105,9 @@ const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
       const { error: rowError } = await supabase.from('submittals').delete().eq('id', s.id);
       if (rowError) { setError(rowError.message); return; }
     }
-    setSubmittals(prev => {
-      const next = prev.filter(x => x.id !== s.id);
-      onCountChange?.(next.length);
-      return next;
-    });
+    setSubmittals(prev => prev.filter(x => x.id !== s.id));
     setConfirmDelete(null);
+    void onRefresh?.();
   };
 
   const openFile = (filePath: string) => {
