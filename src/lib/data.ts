@@ -1,7 +1,8 @@
 export type JobType = 'emergency' | 'maintenance' | 'installation' | 'inspection';
 export type Priority = 'emergency' | 'high' | 'normal' | 'low';
 export type CallStatus = 'active' | 'missed' | 'callback' | 'completed';
-export type JobStatus = 'scheduled' | 'pending' | 'active' | 'completed';
+/** Job lifecycle: scheduled (on board) → active (in progress) → completed. */
+export type JobStatus = 'scheduled' | 'active' | 'completed';
 
 export interface Call {
   id: string;
@@ -174,7 +175,7 @@ export const mockJobs: Job[] = [
     customerName: 'Canyon Ranch',
     address: '8600 E Rockcliff Rd',
     type: 'installation',
-    status: 'pending',
+    status: 'scheduled',
     technicianId: 't1',
     date: todayStr,
     startTime: '08:00',
@@ -190,7 +191,7 @@ export const mockJobs: Job[] = [
     customerName: 'Sarah Jenkins',
     address: '1423 W Baseline Rd',
     type: 'maintenance',
-    status: 'pending',
+    status: 'scheduled',
     technicianId: 't2',
     date: todayStr,
     startTime: '13:00',

@@ -136,7 +136,12 @@ const AppLayout: React.FC = () => {
       }),
       todayDate:         todayStr,
       activeJobs:        jobs.filter(j => j.status !== 'completed').length,
-      pendingDispatches: jobs.filter(j => j.status === 'pending').length,
+      // Unassigned scheduled jobs still waiting for a crew.
+      pendingDispatches: jobs.filter(j =>
+        j.status === 'scheduled'
+        && !j.technicianId
+        && !(j.technicianIds?.length)
+      ).length,
       techsOnDuty,
       openJobsToday,
       totalJobsToday:    todayOpen.length,
