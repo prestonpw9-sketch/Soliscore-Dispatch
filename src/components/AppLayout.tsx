@@ -57,6 +57,7 @@ const AppLayout: React.FC = () => {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [selectedJob, setSelectedJob]       = useState<Job | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
+  const [toastTone, setToastTone]           = useState<'success' | 'error'>('success');
 
   const {
     loading,
@@ -76,8 +77,14 @@ const AppLayout: React.FC = () => {
     createCustomer,
     techPriorities,
     submittalsCount,
+    blueprintsCount,
+    sitePhotosCount,
     refreshSubmittals,
+    refreshBlueprints,
+    refreshSitePhotos,
     reportSubmittalsCount,
+    reportBlueprintsCount,
+    reportSitePhotosCount,
     setFirstPriorityJob,
   } = useDispatchData();
 
@@ -148,7 +155,8 @@ const AppLayout: React.FC = () => {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, tone: 'success' | 'error' = 'success') => {
+    setToastTone(tone);
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
   };
@@ -213,7 +221,11 @@ const AppLayout: React.FC = () => {
 
   const handleAssignCrew = (jobId: string, technicianIds: string[]) => {
     void (async () => {
-      await assignTechnicians(jobId, technicianIds);
+      const result = await assignTechnicians(jobId, technicianIds);
+      if (result.ok === false) {
+        showToast(result.message, 'error');
+        return;
+      }
       const n = technicianIds.length;
       showToast(n === 0 ? 'Crew cleared (0 assigned)' : `Crew updated (${n} assigned)`);
     })();
@@ -221,13 +233,14 @@ const AppLayout: React.FC = () => {
 
   const handleCreateJob = (job: Omit<Job, 'id'>) => {
     void (async () => {
-      if (editingJobId) {
-        await updateJob(editingJobId, job);
-        showToast('Job updated');
-      } else {
-        await createJob(job);
-        showToast('Job scheduled successfully');
+      const result = editingJobId
+        ? await updateJob(editingJobId, job)
+        : await createJob(job);
+      if (result.ok === false) {
+        showToast(result.message, 'error');
+        return;
       }
+      showToast(editingJobId ? 'Job updated' : 'Job scheduled successfully');
       setEditingJobId(null);
     })();
   };
@@ -408,8 +421,15 @@ const AppLayout: React.FC = () => {
                   technicians={technicians}
                   techPriorities={techPriorities}
                   submittalsCount={submittalsCount}
+                  blueprintsCount={blueprintsCount}
+                  sitePhotosCount={sitePhotosCount}
                   refreshSubmittals={refreshSubmittals}
+                  refreshBlueprints={refreshBlueprints}
+                  refreshSitePhotos={refreshSitePhotos}
                   reportSubmittalsCount={reportSubmittalsCount}
+                  reportBlueprintsCount={reportBlueprintsCount}
+                  reportSitePhotosCount={reportSitePhotosCount}
+                  onJobsChanged={refresh}
                   todayStr={todayStr}
                   canEdit={canEdit}
                   onViewCalendar={() => setView('schedule')}
@@ -481,7 +501,10 @@ const AppLayout: React.FC = () => {
           aria-live="polite"
           className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 pointer-events-none"
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-400" aria-hidden="true" />
+          <span
+            className={`w-2 h-2 rounded-full ${toastTone === 'error' ? 'bg-red-400' : 'bg-emerald-400'}`}
+            aria-hidden="true"
+          />
           {toast}
         </div>
       )}

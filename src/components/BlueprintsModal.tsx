@@ -16,6 +16,8 @@ interface ProjectGroup {
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  onCountChange?: (count: number) => void;
+  onRefresh?: () => void | Promise<unknown>;
 }
 
 // Strips the leading "1718745600000-" timestamp prefix while keeping the rest of the
@@ -24,7 +26,7 @@ function stripTimestamp(fileName: string): string {
   return fileName.replace(/^\d+-/, '');
 }
 
-const BlueprintsModal: React.FC<Props> = ({ isOpen, onClose }) => {
+const BlueprintsModal: React.FC<Props> = ({ isOpen, onClose, onCountChange, onRefresh }) => {
   const [files, setFiles]                         = useState<BlueprintFile[]>([]);
   const [loading, setLoading]                     = useState(false);
   const [uploading, setUploading]                 = useState(false);
@@ -46,14 +48,15 @@ const BlueprintsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     if (fetchError) {
       setError(fetchError.message);
     } else {
-      setFiles(
-        (data ?? [])
-          .filter(f => f.name !== '.emptyFolderPlaceholder')
-          .map(f => ({ id: f.id, name: f.name, created_at: f.created_at })) as BlueprintFile[]
-      );
+      const next = (data ?? [])
+        .filter(f => f.name !== '.emptyFolderPlaceholder')
+        .map(f => ({ id: f.id, name: f.name, created_at: f.created_at })) as BlueprintFile[];
+      setFiles(next);
+      onCountChange?.(next.length);
     }
     setLoading(false);
-  }, []);
+    await onRefresh?.();
+  }, [onCountChange, onRefresh]);
 
   useEffect(() => {
     if (isOpen) void fetchFiles();
@@ -141,8 +144,13 @@ const BlueprintsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     if (deleteError) {
       setError(deleteError.message);
     } else {
-      setFiles(prev => prev.filter(f => f.name !== fileName));
+      setFiles(prev => {
+        const next = prev.filter(f => f.name !== fileName);
+        onCountChange?.(next.length);
+        return next;
+      });
       setConfirmDelete(null);
+      await onRefresh?.();
     }
   };
 
