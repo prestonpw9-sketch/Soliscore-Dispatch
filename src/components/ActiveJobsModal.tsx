@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
+import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 
 interface Job {
   id: number;
@@ -37,6 +38,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [editingId, setEditingId]     = useState<number | null>(null);
   const [editTitle, setEditTitle]     = useState('');
+  const [editPhase, setEditPhase]     = useState('Rough-In');
   const [newCustomer, setNewCustomer] = useState('');
   const [newAddress, setNewAddress]   = useState('');
   const [newPhase, setNewPhase]       = useState('Rough-In');
@@ -120,14 +122,16 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const startEditing = (job: Job) => {
     setEditingId(job.id);
     setEditTitle(jobDisplayName(job) === 'Untitled Job' ? '' : jobDisplayName(job));
+    setEditPhase(job.phase || 'Rough-In');
   };
 
   const cancelEditing = () => {
     setEditingId(null);
     setEditTitle('');
+    setEditPhase('Rough-In');
   };
 
-  const saveTitle = async (id: number) => {
+  const saveJobEdits = async (id: number) => {
     const trimmed = editTitle.trim();
     if (!trimmed) {
       setError('Job name cannot be empty.');
@@ -137,7 +141,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     setError(null);
     const { data, error: updateError } = await supabase
       .from('jobs')
-      .update({ title: trimmed })
+      .update({ title: trimmed, phase: editPhase })
       .eq('id', id)
       .select('id, title, customerName, location, address, status, phase, date, description')
       .single();
@@ -146,6 +150,23 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
     } else if (data) {
       setJobs(prev => prev.map(j => (j.id === id ? data : j)));
       cancelEditing();
+    }
+    setSaving(false);
+  };
+
+  const handlePhaseChange = async (id: number, phase: string) => {
+    setSaving(true);
+    setError(null);
+    const { data, error: updateError } = await supabase
+      .from('jobs')
+      .update({ phase })
+      .eq('id', id)
+      .select('id, title, customerName, location, address, status, phase, date, description')
+      .single();
+    if (updateError) {
+      setError(updateError.message);
+    } else if (data) {
+      setJobs(prev => prev.map(j => (j.id === id ? data : j)));
     }
     setSaving(false);
   };
@@ -213,24 +234,38 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Briefcase className="w-4 h-4 text-indigo-500 shrink-0" />
                     {isEditing ? (
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
                         <input
                           ref={editInputRef}
                           type="text"
                           value={editTitle}
                           onChange={e => setEditTitle(e.target.value)}
                           onKeyDown={e => {
-                            if (e.key === 'Enter') void saveTitle(job.id);
+                            if (e.key === 'Enter') void saveJobEdits(job.id);
                             if (e.key === 'Escape') cancelEditing();
                           }}
                           aria-label="Job name"
-                          className="flex-1 min-w-0 bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-lg px-3 py-1 text-sm font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                          className="flex-1 min-w-[10rem] bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-lg px-3 py-1 text-sm font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
                         />
+                        <select
+                          value={editPhase}
+                          onChange={e => setEditPhase(e.target.value)}
+                          aria-label="Job phase"
+                          className="bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-lg px-2 py-1 text-[11px] font-black uppercase text-indigo-700 dark:text-indigo-300 focus:ring-2 focus:ring-indigo-500 outline-none"
+                        >
+                          {PLUMBING_PHASES.map(p => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                          {/* Keep legacy phase values selectable if present */}
+                          {editPhase && !(PLUMBING_PHASES as readonly string[]).includes(editPhase) && (
+                            <option value={editPhase}>{editPhase}</option>
+                          )}
+                        </select>
                         <button
                           type="button"
-                          onClick={() => void saveTitle(job.id)}
+                          onClick={() => void saveJobEdits(job.id)}
                           disabled={saving || !editTitle.trim()}
-                          aria-label="Save job name"
+                          aria-label="Save job"
                           className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors disabled:opacity-50"
                         >
                           <Check className="w-4 h-4" />
@@ -252,17 +287,34 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
                           <button
                             type="button"
                             onClick={() => startEditing(job)}
-                            aria-label={`Edit name for ${displayName}`}
+                            aria-label={`Edit ${displayName}`}
                             className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                         )}
+                        {canEdit ? (
+                          <select
+                            value={job.phase || 'Rough-In'}
+                            onChange={e => void handlePhaseChange(job.id, e.target.value)}
+                            disabled={saving}
+                            aria-label={`Phase for ${displayName}`}
+                            className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 outline-none cursor-pointer disabled:opacity-50"
+                          >
+                            {PLUMBING_PHASES.map(p => (
+                              <option key={p} value={p}>{p}</option>
+                            ))}
+                            {job.phase && !(PLUMBING_PHASES as readonly string[]).includes(job.phase) && (
+                              <option value={job.phase}>{job.phase}</option>
+                            )}
+                          </select>
+                        ) : (
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                            {job.phase}
+                          </span>
+                        )}
                       </>
                     )}
-                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
-                      {job.phase}
-                    </span>
                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
                       job.status === 'active' ? 'bg-emerald-100 text-emerald-700' :
                       job.status === 'pending' ? 'bg-orange-100 text-orange-700' :
@@ -310,11 +362,9 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose }) => {
               <div className="flex gap-3">
                 <select value={newPhase} onChange={e => setNewPhase(e.target.value)} aria-label="Phase"
                   className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                  <option>Rough-In</option>
-                  <option>Top-Out</option>
-                  <option>Trim</option>
-                  <option>Final</option>
-                  <option>Service</option>
+                  {PLUMBING_PHASES.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
                 </select>
                 <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} aria-label="Job date"
                   className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
