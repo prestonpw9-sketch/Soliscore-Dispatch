@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft, ChevronRight, CalendarRange, Loader2, Plus, Trash2, X,
-  ClipboardCheck, ArrowRightLeft, Check, AlertTriangle, CheckCircle2,
+  ClipboardCheck, ArrowRightLeft, Check, AlertTriangle, CheckCircle2, Pencil,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -274,14 +274,51 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
 
   const saveJobDates = useCallback(async (job: Job, start: string, end: string, phase: string) => {
     const safeEnd = end < start ? start : end;
+    const oldStart = job.date;
+    const shiftDays = daysBetween(oldStart, start);
+
     const { error: err } = await supabase
       .from('jobs')
       .update({ date: start, end_date: safeEnd, phase })
       .eq('id', job.id);
     if (err) { setError(err.message); return; }
+
+    // Keep crew task bars aligned when the whole job is pushed forward/back.
+    const jobTasks = tasks.filter(t => t.jobId === job.id);
+    if (jobTasks.length && shiftDays !== 0) {
+      await Promise.all(jobTasks.map(async t => {
+        const nextStart = addDays(t.startDate, shiftDays);
+        const nextEnd = addDays(t.endDate, shiftDays);
+        const { error: taskErr } = await supabase
+          .from('job_tasks')
+          .update({ start_date: nextStart, end_date: nextEnd })
+          .eq('id', t.id);
+        if (taskErr) console.error('Failed to shift job_task dates:', taskErr);
+      }));
+    } else if (jobTasks.length && (oldStart !== start || (job.endDate ?? job.date) !== safeEnd)) {
+      // Start unchanged but end changed (or zero-shift range reset) — clamp tasks into new job window.
+      await Promise.all(jobTasks.map(async t => {
+        let nextStart = t.startDate < start ? start : t.startDate;
+        let nextEnd = t.endDate > safeEnd ? safeEnd : t.endDate;
+        if (nextEnd < nextStart) nextEnd = nextStart;
+        if (nextStart === t.startDate && nextEnd === t.endDate) return;
+        const { error: taskErr } = await supabase
+          .from('job_tasks')
+          .update({ start_date: nextStart, end_date: nextEnd })
+          .eq('id', t.id);
+        if (taskErr) console.error('Failed to clamp job_task dates:', taskErr);
+      }));
+    }
+
     setEditJob(null);
+    // If the job moved outside the current month/timeline, jump the board to its new start.
+    if (safeEnd < rangeStart || start > rangeEnd) {
+      const d = parseYMD(start);
+      setAnchor(mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d);
+    }
+    await fetchTasks();
     await onRefresh();
-  }, [onRefresh]);
+  }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode]);
 
   const saveJobPhase = useCallback(async (job: Job, phase: string) => {
     const { error: err } = await supabase.from('jobs').update({ phase }).eq('id', job.id);
@@ -476,11 +513,14 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                             type="button"
                             disabled={!canEdit}
                             onClick={() => setEditJob(job)}
-                            className="min-w-0 w-full text-left disabled:cursor-default"
-                            title={canEdit ? 'Edit job schedule' : undefined}
+                            className="min-w-0 w-full text-left disabled:cursor-default group/edit"
+                            title={canEdit ? 'Edit job dates & phase' : undefined}
                           >
-                            <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
-                              {job.customerName}
+                            <div className="font-bold text-sm text-slate-900 dark:text-white truncate inline-flex items-center gap-1.5 max-w-full">
+                              <span className="truncate">{job.customerName}</span>
+                              {canEdit && (
+                                <Pencil className="w-3 h-3 text-slate-400 opacity-0 group-hover/edit:opacity-100 transition-opacity shrink-0" />
+                              )}
                             </div>
                           </button>
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
@@ -503,11 +543,24 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                                 {job.phase || 'Rough-In'}
                               </span>
                             )}
-                            <span className="text-[10px] text-slate-400">
-                              {parseYMD(jobStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                              {' – '}
-                              {parseYMD(jobEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            </span>
+                            {canEdit ? (
+                              <button
+                                type="button"
+                                onClick={() => setEditJob(job)}
+                                className="text-[10px] text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 font-semibold underline-offset-2 hover:underline"
+                                title="Change start and end dates"
+                              >
+                                {parseYMD(jobStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                {' – '}
+                                {parseYMD(jobEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">
+                                {parseYMD(jobStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                {' – '}
+                                {parseYMD(jobEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <span className={`ml-auto shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full ${
@@ -521,10 +574,14 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                       {/* Job bar */}
                       <div className="relative" style={{ width: gridWidth }}>
                         {jobBar && (
-                          <div
+                          <button
+                            type="button"
+                            disabled={!canEdit}
+                            onClick={() => canEdit && setEditJob(job)}
+                            title={canEdit ? 'Change job dates' : undefined}
                             className={`absolute top-1/2 -translate-y-1/2 h-3 rounded-full ${
                               jobBehind ? 'bg-red-400/70 dark:bg-red-500/50' : 'bg-indigo-400/60 dark:bg-indigo-500/40'
-                            }`}
+                            } ${canEdit ? 'cursor-pointer hover:brightness-110' : 'cursor-default'}`}
                             style={jobBar}
                           />
                         )}
@@ -750,9 +807,39 @@ const EditJobDatesModal: React.FC<{
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
   const [phase, setPhase] = useState(job.phase || 'Rough-In');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(job, start, end < start ? start : end, phase);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ModalShell title="Edit job schedule" onClose={onClose}>
       <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{job.customerName}</p>
+      <p className="text-xs text-slate-500 mt-1">
+        Change the start/end dates to push this job forward or back. Crew task bars move with the job.
+      </p>
+      <div className="grid grid-cols-2 gap-3 mt-4">
+        <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+          Start date
+          <input type="date" value={start} onChange={e => {
+            const next = e.target.value;
+            setStart(next);
+            if (end < next) setEnd(next);
+          }}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+        <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+          End date
+          <input type="date" value={end} min={start} onChange={e => setEnd(e.target.value)}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+      </div>
       <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mt-3">
         Plumbing phase
         <select
@@ -768,26 +855,14 @@ const EditJobDatesModal: React.FC<{
           )}
         </select>
       </label>
-      <div className="grid grid-cols-2 gap-3 mt-3">
-        <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-          Start date
-          <input type="date" value={start} onChange={e => setStart(e.target.value)}
-            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
-        </label>
-        <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-          End date
-          <input type="date" value={end} min={start} onChange={e => setEnd(e.target.value)}
-            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
-        </label>
-      </div>
       <div className="flex gap-2 mt-5">
-        <button type="button" onClick={onClose}
-          className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
+        <button type="button" onClick={onClose} disabled={saving}
+          className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">
           Cancel
         </button>
-        <button type="button" onClick={() => void onSave(job, start, end, phase)}
-          className="flex-1 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold inline-flex items-center justify-center gap-1">
-          <Check className="w-4 h-4" /> Save
+        <button type="button" onClick={() => void handleSave()} disabled={saving || !start || !end}
+          className="flex-1 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-sm font-bold inline-flex items-center justify-center gap-1">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save dates
         </button>
       </div>
     </ModalShell>
