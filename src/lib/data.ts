@@ -82,11 +82,14 @@ export interface Technician {
   skills?: string[];
 }
 
-/** First-stop routing: one priority job per technician per calendar day. */
+/** Route pins: ranked stop (1st / 2nd) per technician per calendar day. */
+export type StopRank = 1 | 2;
+
 export interface TechDailyPriority {
   technicianId: string;
   workDate: string;
   jobId: string;
+  stopRank: StopRank;
 }
 
 export interface Customer {

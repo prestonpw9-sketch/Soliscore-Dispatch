@@ -85,7 +85,7 @@ const AppLayout: React.FC = () => {
     reportSubmittalsCount,
     reportBlueprintsCount,
     reportSitePhotosCount,
-    setFirstPriorityJob,
+    setStopPriority,
   } = useDispatchData();
 
   const { updateContext } = useAIProviderContext();
@@ -191,16 +191,19 @@ const AppLayout: React.FC = () => {
     }
   };
 
-  const handleSetFirstPriority = async (
+  const handleSetStopPriority = async (
     technicianId: string,
     workDate: string,
     jobId: string,
+    rank: 1 | 2 | null,
   ) => {
     try {
-      await setFirstPriorityJob(technicianId, workDate, jobId);
-      showToast('First stop updated.');
+      await setStopPriority(technicianId, workDate, jobId, rank);
+      if (rank === 1) showToast('1st stop updated.');
+      else if (rank === 2) showToast('2nd stop updated.');
+      else showToast('Stop pin cleared.');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Could not set first stop.');
+      showToast(err instanceof Error ? err.message : 'Could not update stop pin.');
     }
   };
 
@@ -443,7 +446,7 @@ const AppLayout: React.FC = () => {
                   onHire={hireTechnician}
                   onFire={fireTechnician}
                   onJobClick={openJobForEdit}
-                  onSetFirstPriority={handleSetFirstPriority}
+                  onSetStopPriority={handleSetStopPriority}
                 />
               )}
 
