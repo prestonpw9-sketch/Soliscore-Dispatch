@@ -176,12 +176,13 @@ export const useDispatchData = () => {
     try {
       const { data, error: sbError } = await supabase
         .from('tech_daily_priorities')
-        .select('technician_id, work_date, job_id');
+        .select('technician_id, work_date, job_id, stop_rank');
       if (sbError) throw sbError;
       setTechPriorities((data ?? []).map(row => ({
         technicianId: String(row.technician_id),
         workDate: String(row.work_date),
         jobId: String(row.job_id),
+        stopRank: (Number(row.stop_rank) === 2 ? 2 : 1) as 1 | 2,
       })));
     } catch (err) {
       console.error('Error fetching tech priorities:', err);
@@ -525,24 +526,68 @@ export const useDispatchData = () => {
     await refresh();
   }, [refresh]);
 
+  /**
+   * Pin a job as 1st or 2nd stop for a tech/day, or clear the pin (rank = null).
+   * Ensures a job is never both ranks, and each rank holds at most one job.
+   */
+  const setStopPriority = useCallback(async (
+    technicianId: string,
+    workDate: string,
+    jobId: string,
+    rank: 1 | 2 | null,
+  ) => {
+    const jobNum = Number(jobId);
+
+    // Always clear this job from any existing rank for that day first.
+    const { error: clearJobErr } = await supabase
+      .from('tech_daily_priorities')
+      .delete()
+      .eq('technician_id', technicianId)
+      .eq('work_date', workDate)
+      .eq('job_id', jobNum);
+    if (clearJobErr) {
+      console.error('Error clearing job stop pin:', clearJobErr);
+      throw new Error(clearJobErr.message);
+    }
+
+    if (rank == null) {
+      await fetchTechPriorities();
+      return;
+    }
+
+    // Replace whoever currently holds this rank.
+    const { error: clearRankErr } = await supabase
+      .from('tech_daily_priorities')
+      .delete()
+      .eq('technician_id', technicianId)
+      .eq('work_date', workDate)
+      .eq('stop_rank', rank);
+    if (clearRankErr) {
+      console.error('Error clearing stop rank:', clearRankErr);
+      throw new Error(clearRankErr.message);
+    }
+
+    const { error: insertErr } = await supabase
+      .from('tech_daily_priorities')
+      .insert({
+        technician_id: technicianId,
+        work_date: workDate,
+        job_id: jobNum,
+        stop_rank: rank,
+      });
+    if (insertErr) {
+      console.error('Error setting stop priority:', insertErr);
+      throw new Error(insertErr.message);
+    }
+    await fetchTechPriorities();
+  }, [fetchTechPriorities]);
+
+  /** @deprecated Prefer setStopPriority — kept as a thin 1st-stop wrapper. */
   const setFirstPriorityJob = useCallback(async (
     technicianId: string,
     workDate: string,
     jobId: string,
-  ) => {
-    const { error: sbError } = await supabase
-      .from('tech_daily_priorities')
-      .upsert({
-        technician_id: technicianId,
-        work_date: workDate,
-        job_id: Number(jobId),
-      }, { onConflict: 'technician_id,work_date' });
-    if (sbError) {
-      console.error('Error setting first priority job:', sbError);
-      throw new Error(sbError.message);
-    }
-    await fetchTechPriorities();
-  }, [fetchTechPriorities]);
+  ) => setStopPriority(technicianId, workDate, jobId, 1), [setStopPriority]);
 
   return {
     loading,
@@ -572,5 +617,6 @@ export const useDispatchData = () => {
     fireTechnician,
     createCustomer,
     setFirstPriorityJob,
+    setStopPriority,
   };
 };
