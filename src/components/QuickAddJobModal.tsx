@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, MapPin, Sparkles, Loader2, User, CalendarDays, Check, Users, Wrench } from 'lucide-react';
-import type { Customer, Technician, Job, JobType, Priority, JobStatus } from '@/lib/data';
-import { SERVICE_TYPES } from '@/lib/data';
+import type { Customer, Technician, Job, JobType, Priority, JobStatus, TechTimeOff } from '@/lib/data';
+import { SERVICE_TYPES, isTechOffOnRange } from '@/lib/data';
 
 
 // ── Guard functions ────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ interface Props {
   onClose: () => void;
   customers: Customer[];
   technicians: Technician[];
+  techTimeOff?: TechTimeOff[];
   jobs: Job[];
   weekDates: string[];
   defaults?: Partial<Job>;
@@ -58,6 +59,7 @@ const QuickAddJobModal: React.FC<Props> = ({
   onClose,
   customers,
   technicians,
+  techTimeOff = [],
   weekDates,
   defaults,
   onCreate,
@@ -179,6 +181,12 @@ const QuickAddJobModal: React.FC<Props> = ({
   };
 
   const toggleTechnician = (id: string) => {
+    const resolvedEnd = endDate && endDate >= date ? endDate : date;
+    const leave = isTechOffOnRange(id, date || resolvedEnd, resolvedEnd || date, techTimeOff);
+    if (leave && !technicianIds.includes(id)) {
+      // Hard block — cannot select someone who is off on these dates.
+      return;
+    }
     setTechnicianIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
     );
@@ -214,6 +222,16 @@ const QuickAddJobModal: React.FC<Props> = ({
 
     // Full-day jobs: no time-of-day. Ensure end >= start.
     const resolvedEnd = endDate && endDate >= date ? endDate : date;
+
+    for (const techId of technicianIds) {
+      const leave = isTechOffOnRange(techId, date, resolvedEnd, techTimeOff);
+      if (leave) {
+        setRecError(
+          `${technicians.find(t => t.id === techId)?.name ?? 'Crew member'} is off on those dates.`,
+        );
+        return;
+      }
+    }
 
     const customer = customers.find(
       c => c.name.toLowerCase() === customerName.toLowerCase()
@@ -478,12 +496,27 @@ const QuickAddJobModal: React.FC<Props> = ({
                 <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 divide-y divide-slate-100 dark:divide-slate-700/60">
                   {technicians.map(t => {
                     const checked = technicianIds.includes(t.id);
+                    const resolvedEnd = endDate && endDate >= date ? endDate : date;
+                    const leave = date
+                      ? isTechOffOnRange(t.id, date, resolvedEnd || date, techTimeOff)
+                      : undefined;
+                    const span = leave
+                      ? (leave.startDate === leave.endDate
+                        ? leave.startDate
+                        : `${leave.startDate}–${leave.endDate}`)
+                      : '';
                     return (
                       <button
                         key={t.id}
                         type="button"
+                        disabled={!!leave && !checked}
                         onClick={() => toggleTechnician(t.id)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                        title={leave ? `Off ${span}` : undefined}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                          leave && !checked
+                            ? 'text-slate-400 cursor-not-allowed opacity-60'
+                            : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60'
+                        }`}
                       >
                         <span
                           className={`inline-flex items-center justify-center w-4 h-4 rounded border shrink-0 ${
@@ -495,7 +528,11 @@ const QuickAddJobModal: React.FC<Props> = ({
                           {checked && <Check className="w-3 h-3" />}
                         </span>
                         <span className="truncate">{t.name}</span>
-                        <span className="ml-auto text-[10px] font-medium text-slate-400">{t.role}</span>
+                        {leave ? (
+                          <span className="ml-auto text-[10px] font-black uppercase text-rose-500">Off {span}</span>
+                        ) : (
+                          <span className="ml-auto text-[10px] font-medium text-slate-400">{t.role}</span>
+                        )}
                       </button>
                     );
                   })}

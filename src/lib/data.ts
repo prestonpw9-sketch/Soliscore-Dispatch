@@ -92,6 +92,56 @@ export interface TechDailyPriority {
   stopRank: StopRank;
 }
 
+/** Logged leave for a technician (single day when start === end). */
+export interface TechTimeOff {
+  id: string;
+  technicianId: string;
+  startDate: string;
+  endDate: string;
+  note: string | null;
+  createdAt?: string;
+}
+
+/** Editable dispatch reminder banner (single row). */
+export interface DispatchAnnouncement {
+  id: number;
+  message: string;
+  updatedAt?: string;
+}
+
+/** Inclusive YYYY-MM-DD range overlap. */
+export function datesOverlap(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string,
+): boolean {
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+/** First leave row that overlaps [start, end] for this tech, if any. */
+export function isTechOffOnRange(
+  techId: string,
+  start: string,
+  end: string,
+  rows: TechTimeOff[],
+): TechTimeOff | undefined {
+  const safeEnd = end < start ? start : end;
+  return rows.find(
+    r =>
+      r.technicianId === techId
+      && datesOverlap(start, safeEnd, r.startDate, r.endDate),
+  );
+}
+
+export function isTechOffOnDay(
+  techId: string,
+  day: string,
+  rows: TechTimeOff[],
+): boolean {
+  return !!isTechOffOnRange(techId, day, day, rows);
+}
+
 export interface Customer {
   id: string;
   name: string;

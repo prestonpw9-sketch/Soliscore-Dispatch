@@ -20,6 +20,7 @@ import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
 import { useAuth } from '@/lib/AuthContext';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
+import DispatchBanner from './DispatchBanner';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -76,6 +77,8 @@ const AppLayout: React.FC = () => {
     fireTechnician,
     createCustomer,
     techPriorities,
+    techTimeOff,
+    announcement,
     submittalsCount,
     blueprintsCount,
     sitePhotosCount,
@@ -86,6 +89,9 @@ const AppLayout: React.FC = () => {
     reportBlueprintsCount,
     reportSitePhotosCount,
     setStopPriority,
+    addTimeOff,
+    deleteTimeOff,
+    updateAnnouncement,
   } = useDispatchData();
 
   const { updateContext } = useAIProviderContext();
@@ -423,11 +429,21 @@ const AppLayout: React.FC = () => {
             </div>
           ) : (
             <>
+              {(view === 'dashboard' || view === 'schedule') && (
+                <div className="mb-4">
+                  <DispatchBanner
+                    announcement={announcement}
+                    onSave={updateAnnouncement}
+                  />
+                </div>
+              )}
+
               {view === 'dashboard' && (
                 <Dashboard
                   jobs={jobs}
                   technicians={technicians}
                   techPriorities={techPriorities}
+                  techTimeOff={techTimeOff}
                   submittalsCount={submittalsCount}
                   blueprintsCount={blueprintsCount}
                   sitePhotosCount={sitePhotosCount}
@@ -447,6 +463,8 @@ const AppLayout: React.FC = () => {
                   onFire={fireTechnician}
                   onJobClick={openJobForEdit}
                   onSetStopPriority={handleSetStopPriority}
+                  onAddTimeOff={addTimeOff}
+                  onDeleteTimeOff={deleteTimeOff}
                 />
               )}
 
@@ -454,6 +472,7 @@ const AppLayout: React.FC = () => {
                 <ScheduleBoard
                   jobs={jobs}
                   technicians={technicians}
+                  techTimeOff={techTimeOff}
                   onRefresh={refresh}
                 />
               )}
@@ -484,6 +503,7 @@ const AppLayout: React.FC = () => {
         }}
         customers={customers}
         technicians={technicians}
+        techTimeOff={techTimeOff}
         jobs={jobs}
         weekDates={weekDates}
         defaults={modalDefaults}

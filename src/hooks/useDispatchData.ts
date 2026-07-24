@@ -4,7 +4,8 @@ import { useAuth } from '@/lib/AuthContext';
 import { fetchSubmittalsCount } from '@/lib/submittals';
 import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
 import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
-import type { Job, JobStatus, Customer, Technician, TechDailyPriority } from '@/lib/data';
+import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
+import { isTechOffOnRange } from '@/lib/data';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -58,6 +59,8 @@ export const useDispatchData = () => {
   const [customers, setCustomers]     = useState<Customer[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techPriorities, setTechPriorities] = useState<TechDailyPriority[]>([]);
+  const [techTimeOff, setTechTimeOff] = useState<TechTimeOff[]>([]);
+  const [announcement, setAnnouncement] = useState<DispatchAnnouncement | null>(null);
   const [submittalsCount, setSubmittalsCount] = useState(0);
   const [blueprintsCount, setBlueprintsCount] = useState(0);
   const [sitePhotosCount, setSitePhotosCount] = useState(0);
@@ -189,6 +192,48 @@ export const useDispatchData = () => {
     }
   }, []);
 
+  const fetchTechTimeOff = useCallback(async () => {
+    try {
+      const { data, error: sbError } = await supabase
+        .from('tech_time_off')
+        .select('id, technician_id, start_date, end_date, note, created_at')
+        .order('start_date', { ascending: true });
+      if (sbError) throw sbError;
+      setTechTimeOff((data ?? []).map(row => ({
+        id: String(row.id),
+        technicianId: String(row.technician_id),
+        startDate: String(row.start_date),
+        endDate: String(row.end_date),
+        note: row.note == null ? null : String(row.note),
+        createdAt: row.created_at ? String(row.created_at) : undefined,
+      })));
+    } catch (err) {
+      console.error('Error fetching tech time off:', err);
+    }
+  }, []);
+
+  const fetchAnnouncement = useCallback(async () => {
+    try {
+      const { data, error: sbError } = await supabase
+        .from('dispatch_announcements')
+        .select('id, message, updated_at')
+        .eq('id', 1)
+        .maybeSingle();
+      if (sbError) throw sbError;
+      if (!data) {
+        setAnnouncement(null);
+        return;
+      }
+      setAnnouncement({
+        id: Number(data.id),
+        message: String(data.message ?? ''),
+        updatedAt: data.updated_at ? String(data.updated_at) : undefined,
+      });
+    } catch (err) {
+      console.error('Error fetching announcement:', err);
+    }
+  }, []);
+
   // Only fetch once we actually have an auth session — under RLS, requests made
   // before the token is attached can hang indefinitely. We also clear the
   // loading flag after all fetches settle, with a hard timeout safety net so
@@ -221,6 +266,8 @@ export const useDispatchData = () => {
       fetchTeam(),
       fetchCustomers(),
       fetchTechPriorities(),
+      fetchTechTimeOff(),
+      fetchAnnouncement(),
       fetchSubmittals(),
       fetchBlueprints(),
       fetchSitePhotos(),
@@ -245,7 +292,8 @@ export const useDispatchData = () => {
     return () => { active = false; clearTimeout(timeout); };
   }, [
     session, authLoading, fetchJobs, fetchTeam, fetchCustomers,
-    fetchTechPriorities, fetchSubmittals, fetchBlueprints, fetchSitePhotos,
+    fetchTechPriorities, fetchTechTimeOff, fetchAnnouncement,
+    fetchSubmittals, fetchBlueprints, fetchSitePhotos,
   ]);
 
   const refresh = useCallback(async () => {
@@ -254,12 +302,15 @@ export const useDispatchData = () => {
       fetchTeam(),
       fetchCustomers(),
       fetchTechPriorities(),
+      fetchTechTimeOff(),
+      fetchAnnouncement(),
       fetchSubmittals(),
       fetchBlueprints(),
       fetchSitePhotos(),
     ]);
   }, [
     fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities,
+    fetchTechTimeOff, fetchAnnouncement,
     fetchSubmittals, fetchBlueprints, fetchSitePhotos,
   ]);
 
@@ -275,6 +326,21 @@ export const useDispatchData = () => {
     const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
     const startDate = jobData.date;
     const endDate   = jobData.endDate ?? jobData.date;
+
+    for (const techId of crew) {
+      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      if (leave) {
+        const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        return {
+          ok: false,
+          message: `${techName} is off ${span}. Remove them before scheduling.`,
+        };
+      }
+    }
+
     const { data: inserted, error: sbError } = await supabase.from('jobs').insert([{
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
@@ -307,7 +373,7 @@ export const useDispatchData = () => {
     // FIX: await refresh so callers get updated state after createJob resolves
     await refresh();
     return { ok: true };
-  }, [refresh]);
+  }, [refresh, techTimeOff, technicians]);
 
   // Update an existing job (used when editing from the dashboard / calendar).
   const updateJob = useCallback(async (
@@ -318,6 +384,21 @@ export const useDispatchData = () => {
     const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
     const startDate = jobData.date;
     const endDate   = jobData.endDate ?? jobData.date;
+
+    for (const techId of crew) {
+      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      if (leave) {
+        const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        return {
+          ok: false,
+          message: `${techName} is off ${span}. Remove them before saving.`,
+        };
+      }
+    }
+
     const { error: sbError } = await supabase.from('jobs').update({
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
@@ -347,7 +428,7 @@ export const useDispatchData = () => {
     }
     await refresh();
     return { ok: true };
-  }, [refresh]);
+  }, [refresh, techTimeOff, technicians]);
 
   const rescheduleJob = useCallback(async (
     id: string, newDate: string, newStartHour: number,
@@ -429,6 +510,21 @@ export const useDispatchData = () => {
     const current = jobsRef.current.find(j => j.id === jobId);
     const startDate = current?.date ?? new Date().toISOString().split('T')[0];
     const endDate = current?.endDate ?? current?.date ?? startDate;
+
+    for (const techId of cleaned) {
+      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      if (leave) {
+        const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        return {
+          ok: false,
+          message: `${techName} is off ${span}. Cannot assign them on those dates.`,
+        };
+      }
+    }
+
     setJobs(prev => prev.map(j =>
       j.id === jobId ? { ...j, technicianIds: cleaned, technicianId: primary } : j
     ));
@@ -449,7 +545,7 @@ export const useDispatchData = () => {
     }
     await refresh();
     return { ok: true };
-  }, [refresh]);
+  }, [refresh, techTimeOff, technicians]);
 
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase: newPhase } : j));
@@ -589,6 +685,57 @@ export const useDispatchData = () => {
     jobId: string,
   ) => setStopPriority(technicianId, workDate, jobId, 1), [setStopPriority]);
 
+  const addTimeOff = useCallback(async (
+    technicianId: string,
+    startDate: string,
+    endDate: string,
+    note?: string | null,
+  ): Promise<MutationResult> => {
+    const safeEnd = endDate < startDate ? startDate : endDate;
+    const { error: sbError } = await supabase.from('tech_time_off').insert([{
+      technician_id: technicianId,
+      start_date: startDate,
+      end_date: safeEnd,
+      note: note?.trim() || null,
+    }]);
+    if (sbError) {
+      console.error('Error adding time off:', sbError);
+      return { ok: false, message: sbError.message || 'Could not save day off.' };
+    }
+    await fetchTechTimeOff();
+    return { ok: true };
+  }, [fetchTechTimeOff]);
+
+  const deleteTimeOff = useCallback(async (id: string): Promise<MutationResult> => {
+    const { error: sbError } = await supabase.from('tech_time_off').delete().eq('id', id);
+    if (sbError) {
+      console.error('Error deleting time off:', sbError);
+      return { ok: false, message: sbError.message || 'Could not remove day off.' };
+    }
+    await fetchTechTimeOff();
+    return { ok: true };
+  }, [fetchTechTimeOff]);
+
+  const updateAnnouncement = useCallback(async (message: string): Promise<MutationResult> => {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return { ok: false, message: 'Reminder cannot be empty.' };
+    }
+    const { error: sbError } = await supabase
+      .from('dispatch_announcements')
+      .upsert({
+        id: 1,
+        message: trimmed,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+    if (sbError) {
+      console.error('Error updating announcement:', sbError);
+      return { ok: false, message: sbError.message || 'Could not save reminder.' };
+    }
+    await fetchAnnouncement();
+    return { ok: true };
+  }, [fetchAnnouncement]);
+
   return {
     loading,
     error,
@@ -596,6 +743,8 @@ export const useDispatchData = () => {
     customers,
     technicians,
     techPriorities,
+    techTimeOff,
+    announcement,
     submittalsCount,
     blueprintsCount,
     sitePhotosCount,
@@ -618,5 +767,8 @@ export const useDispatchData = () => {
     createCustomer,
     setFirstPriorityJob,
     setStopPriority,
+    addTimeOff,
+    deleteTimeOff,
+    updateAnnouncement,
   };
 };

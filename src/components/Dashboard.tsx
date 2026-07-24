@@ -1,6 +1,7 @@
 import React from 'react';
-import { ArrowRight, Calculator, CalendarDays, Star } from 'lucide-react';
-import type { Job, Technician, TechDailyPriority } from '@/lib/data';
+import { ArrowRight, Calculator, CalendarDays, Star, CalendarOff } from 'lucide-react';
+import type { Job, Technician, TechDailyPriority, TechTimeOff } from '@/lib/data';
+import { isTechOffOnDay } from '@/lib/data';
 import StatsCards from './StatsCards';
 import JobCard from './JobCard';
 import { BlueprintCard } from './BlueprintCard';
@@ -11,6 +12,7 @@ interface Props {
   jobs: Job[];
   technicians: Technician[];
   techPriorities: TechDailyPriority[];
+  techTimeOff: TechTimeOff[];
   submittalsCount: number;
   blueprintsCount: number;
   sitePhotosCount: number;
@@ -35,6 +37,13 @@ interface Props {
     jobId: string,
     rank: 1 | 2 | null,
   ) => Promise<void>;
+  onAddTimeOff?: (
+    technicianId: string,
+    startDate: string,
+    endDate: string,
+    note?: string | null,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>;
+  onDeleteTimeOff?: (id: string) => Promise<{ ok: true } | { ok: false; message: string }>;
 }
 
 function jobHasTech(job: Job, techId: string) {
@@ -66,6 +75,7 @@ const Dashboard: React.FC<Props> = ({
   jobs,
   technicians,
   techPriorities,
+  techTimeOff,
   submittalsCount,
   blueprintsCount,
   sitePhotosCount,
@@ -85,6 +95,8 @@ const Dashboard: React.FC<Props> = ({
   onFire,
   onJobClick,
   onSetStopPriority,
+  onAddTimeOff,
+  onDeleteTimeOff,
 }) => {
   const [isTeamModalOpen, setIsTeamModalOpen] = React.useState(false);
   const [pinning, setPinning] = React.useState<string | null>(null);
@@ -115,6 +127,8 @@ const Dashboard: React.FC<Props> = ({
       return { tech: t, jobs: techJobs };
     })
     .filter(route => route.jobs.length > 0);
+
+  const offToday = technicians.filter(t => isTechOffOnDay(t.id, todayStr, techTimeOff));
 
   const handlePin = async (technicianId: string, jobId: string, stopCount: number) => {
     if (!onSetStopPriority) return;
@@ -201,6 +215,23 @@ const Dashboard: React.FC<Props> = ({
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {offToday.length > 0 && (
+              <div className="p-4 bg-rose-50/80 dark:bg-rose-950/20">
+                <p className="text-[10px] font-black uppercase tracking-wide text-rose-600 dark:text-rose-300 mb-2 flex items-center gap-1">
+                  <CalendarOff className="w-3.5 h-3.5" /> Off today — do not schedule
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {offToday.map(t => (
+                    <span
+                      key={t.id}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 text-sm font-bold text-rose-700 dark:text-rose-300"
+                    >
+                      {t.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {techRoutes.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-400 font-medium">
                 No remaining jobs on the schedule for today.
@@ -297,6 +328,9 @@ const Dashboard: React.FC<Props> = ({
       <TeamModal
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
+        techTimeOff={techTimeOff}
+        onAddTimeOff={onAddTimeOff}
+        onDeleteTimeOff={onDeleteTimeOff}
       />
     </div>
   );

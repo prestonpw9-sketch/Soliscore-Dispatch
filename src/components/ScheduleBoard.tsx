@@ -5,7 +5,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
-import type { Job, Technician, JobTask, TaskStatus } from '@/lib/data';
+import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/data';
+import { isTechOffOnRange, isTechOffOnDay } from '@/lib/data';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
@@ -105,6 +106,7 @@ function mapTask(r: RawTaskRow, fallbackStart: string, fallbackEnd: string): Job
 interface Props {
   jobs: Job[];
   technicians: Technician[];
+  techTimeOff?: TechTimeOff[];
   onRefresh: () => Promise<void> | void;
 }
 
@@ -112,7 +114,7 @@ interface Props {
 
 const COL_W = 36; // px per day column
 
-const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
+const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh }) => {
   const { canEdit } = useAuth();
 
   const [mode, setMode] = useState<'month' | 'timeline'>('month');
@@ -215,6 +217,19 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
   }, [fetchTasks]);
 
   const addCrewToJob = useCallback(async (job: Job, techIds: string[]) => {
+    const jobStart = job.date;
+    const jobEnd = job.endDate ?? job.date;
+    for (const id of techIds) {
+      const leave = isTechOffOnRange(id, jobStart, jobEnd, techTimeOff);
+      if (leave) {
+        const name = technicians.find(t => t.id === id)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        setError(`${name} is off ${span}. Cannot assign them to this job.`);
+        return;
+      }
+    }
     const existing = new Set(tasks.filter(t => t.jobId === job.id).map(t => t.technicianId));
     const rows = techIds
       .filter(id => !existing.has(id))
@@ -235,7 +250,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
     await supabase.from('jobs').update({ technician_ids: merged, technician_id: merged[0] ?? null }).eq('id', job.id);
     await fetchTasks();
     await onRefresh();
-  }, [tasks, fetchTasks, onRefresh]);
+  }, [tasks, fetchTasks, onRefresh, techTimeOff, technicians]);
 
   const removeCrewRow = useCallback(async (task: JobTask) => {
     const { error: err } = await supabase.from('job_tasks').delete().eq('id', task.id);
@@ -252,6 +267,22 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
   const moveTaskToJob = useCallback(async (task: JobTask, newJobId: string) => {
     const newJob = jobs.find(j => j.id === newJobId);
     if (!newJob) return;
+    if (task.technicianId) {
+      const leave = isTechOffOnRange(
+        task.technicianId,
+        newJob.date,
+        newJob.endDate ?? newJob.date,
+        techTimeOff,
+      );
+      if (leave) {
+        const name = technicians.find(t => t.id === task.technicianId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        setError(`${name} is off ${span}. Cannot move them onto that job.`);
+        return;
+      }
+    }
     const { error: err } = await supabase
       .from('job_tasks')
       .update({ job_id: newJobId, start_date: newJob.date, end_date: newJob.endDate ?? newJob.date })
@@ -270,7 +301,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
     setMoveTask(null);
     await fetchTasks();
     await onRefresh();
-  }, [jobs, fetchTasks, onRefresh]);
+  }, [jobs, fetchTasks, onRefresh, techTimeOff, technicians]);
 
   const saveJobDates = useCallback(async (job: Job, start: string, end: string, phase: string) => {
     const safeEnd = end < start ? start : end;
@@ -446,12 +477,22 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
       {technicians.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Crew colors:</span>
-          {technicians.map(t => (
-            <span key={t.id} className="inline-flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-full ring-1 ring-black/10" style={{ backgroundColor: techColor(t.id) }} />
-              <span className="text-xs font-bold" style={{ color: techColor(t.id) }}>{t.name}</span>
-            </span>
-          ))}
+          {technicians.map(t => {
+            const off = isTechOffOnDay(t.id, today, techTimeOff);
+            return (
+              <span
+                key={t.id}
+                className={`inline-flex items-center gap-1.5 ${off ? 'opacity-50' : ''}`}
+                title={off ? 'Off today' : undefined}
+              >
+                <span className="w-3 h-3 rounded-full ring-1 ring-black/10" style={{ backgroundColor: techColor(t.id) }} />
+                <span className="text-xs font-bold" style={{ color: off ? '#94a3b8' : techColor(t.id) }}>{t.name}</span>
+                {off && (
+                  <span className="text-[9px] font-black uppercase tracking-wide text-rose-600 dark:text-rose-400">OFF</span>
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
 
@@ -594,7 +635,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                         <div className="w-80 shrink-0 px-4 py-2 text-xs text-slate-400 italic">
                           No crew assigned yet.
                           {canEdit && (
-                            <AddCrewInline job={job} tasks={tasks} technicians={technicians} onAdd={addCrewToJob} />
+                            <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
                           )}
                         </div>
                         <div style={{ width: gridWidth }} />
@@ -716,7 +757,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                     {canEdit && rows.length > 0 && (
                       <div className="flex">
                         <div className="w-80 shrink-0 px-4 pb-2">
-                          <AddCrewInline job={job} tasks={tasks} technicians={technicians} onAdd={addCrewToJob} />
+                          <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
                         </div>
                         <div style={{ width: gridWidth }} />
                       </div>
@@ -760,11 +801,14 @@ const AddCrewInline: React.FC<{
   job: Job;
   tasks: JobTask[];
   technicians: Technician[];
+  techTimeOff: TechTimeOff[];
   onAdd: (job: Job, ids: string[]) => Promise<void> | void;
-}> = ({ job, tasks, technicians, onAdd }) => {
+}> = ({ job, tasks, technicians, techTimeOff, onAdd }) => {
   const [open, setOpen] = useState(false);
   const assigned = new Set(tasks.filter(t => t.jobId === job.id).map(t => t.technicianId));
   const available = technicians.filter(t => !assigned.has(t.id));
+  const jobStart = job.date;
+  const jobEnd = job.endDate ?? job.date;
 
   if (!open) {
     return (
@@ -779,17 +823,33 @@ const AddCrewInline: React.FC<{
       {available.length === 0 ? (
         <p className="text-[10px] text-slate-400 px-1 py-1">All crew already on this job.</p>
       ) : (
-        available.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => { void onAdd(job, [t.id]); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-2 py-1 text-left text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded"
-          >
-            <Plus className="w-3 h-3 text-indigo-500" /> {t.name}
-            <span className="ml-auto text-[9px] text-slate-400">{t.role}</span>
-          </button>
-        ))
+        available.map(t => {
+          const leave = isTechOffOnRange(t.id, jobStart, jobEnd, techTimeOff);
+          const span = leave
+            ? (leave.startDate === leave.endDate ? leave.startDate : `${leave.startDate}–${leave.endDate}`)
+            : '';
+          return (
+            <button
+              key={t.id}
+              type="button"
+              disabled={!!leave}
+              title={leave ? `Off ${span}` : undefined}
+              onClick={() => { if (!leave) { void onAdd(job, [t.id]); setOpen(false); } }}
+              className={`w-full flex items-center gap-2 px-2 py-1 text-left text-[11px] font-semibold rounded ${
+                leave
+                  ? 'text-slate-400 cursor-not-allowed opacity-60'
+                  : 'text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
+              }`}
+            >
+              <Plus className="w-3 h-3 text-indigo-500" /> {t.name}
+              {leave ? (
+                <span className="ml-auto text-[9px] font-black uppercase text-rose-500">Off {span}</span>
+              ) : (
+                <span className="ml-auto text-[9px] text-slate-400">{t.role}</span>
+              )}
+            </button>
+          );
+        })
       )}
       <button type="button" onClick={() => setOpen(false)}
         className="w-full mt-1 text-[10px] text-slate-400 hover:text-slate-600">Done</button>
