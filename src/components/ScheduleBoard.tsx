@@ -31,9 +31,24 @@ function daysBetween(a: string, b: string): number {
   // Inclusive whole-day count from a..b (b - a in days).
   return Math.round((parseYMD(b).getTime() - parseYMD(a).getTime()) / 86_400_000);
 }
-const todayYMD = () => toYMD(new Date());
 
-// Build the visible day columns.
+/** Solidcore local calendar day (America/Phoenix) — avoids UTC year/day drift. */
+function todayYMD(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Phoenix',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/** First of the current Phoenix month as a local Date (for month navigation). */
+function phoenixMonthAnchor(fromYmd = todayYMD()): Date {
+  const [y, m] = fromYmd.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, 1);
+}
+
+// Build the visible day columns — month mode always emits every day of that month/year.
 function buildDays(anchor: Date, mode: 'month' | 'timeline'): string[] {
   if (mode === 'month') {
     const year = anchor.getFullYear();
@@ -112,21 +127,22 @@ interface Props {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-const COL_W = 36; // px per day column
+const LABEL_W = 220; // px — job/crew label column
+const TIMELINE_COL_W = 36; // px — fixed day width in timeline mode
+const MIN_MONTH_COL_W = 26; // px — readable day number; month mode grows to fill
 
 const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh }) => {
   const { canEdit } = useAuth();
 
   const [mode, setMode] = useState<'month' | 'timeline'>('month');
-  const [anchor, setAnchor] = useState<Date>(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
+  const [anchor, setAnchor] = useState<Date>(() => phoenixMonthAnchor());
 
   const [tasks, setTasks] = useState<JobTask[]>([]);
   const [latestNotes, setLatestNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const boardRef = React.useRef<HTMLDivElement>(null);
+  const [boardWidth, setBoardWidth] = useState(960);
 
   // Popovers / modals
   const [editJob, setEditJob] = useState<Job | null>(null);
@@ -136,6 +152,25 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   const days = useMemo(() => buildDays(anchor, mode), [anchor, mode]);
   const rangeStart = days[0];
   const rangeEnd = days[days.length - 1];
+
+  // Month mode: size columns so every day of the month fits in the board width.
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setBoardWidth(w);
+    });
+    ro.observe(el);
+    setBoardWidth(el.clientWidth || 960);
+    return () => ro.disconnect();
+  }, []);
+
+  const colW = useMemo(() => {
+    if (mode === 'timeline') return TIMELINE_COL_W;
+    const inner = Math.max(200, boardWidth - LABEL_W);
+    return Math.max(MIN_MONTH_COL_W, Math.floor(inner / Math.max(1, days.length)));
+  }, [mode, boardWidth, days.length]);
 
   const technicianName = useCallback(
     (id: string | null) => technicians.find(t => t.id === id)?.name ?? 'Unassigned',
@@ -401,7 +436,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     if (e < rangeStart || s > rangeEnd) return null;
     const offset = daysBetween(rangeStart, s);
     const span = daysBetween(s, e) + 1;
-    return { left: offset * COL_W, width: span * COL_W - 4 };
+    return { left: offset * colW, width: Math.max(colW - 4, 4) + (span - 1) * colW };
   };
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -412,15 +447,19 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     ? new Date(a.getFullYear(), a.getMonth() + 1, 1)
     : parseYMD(addDays(toYMD(a), 14)));
   const goToday = () => setAnchor(() => {
-    const d = new Date();
-    return mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d;
+    if (mode === 'month') return phoenixMonthAnchor();
+    const [y, m, d] = todayYMD().split('-').map(Number);
+    return new Date(y, (m ?? 1) - 1, d ?? 1);
   });
 
   const headerLabel = mode === 'month'
     ? anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     : `${parseYMD(rangeStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${parseYMD(rangeEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-  const gridWidth = days.length * COL_W;
+  const gridWidth = days.length * colW;
+  const boardMinWidth = mode === 'month'
+    ? Math.max(boardWidth, LABEL_W + gridWidth)
+    : LABEL_W + gridWidth;
   const today = todayYMD();
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -497,13 +536,24 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       )}
 
       {/* Board */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+      <div
+        ref={boardRef}
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden"
+      >
         <div className="overflow-x-auto">
-          <div style={{ minWidth: 320 + gridWidth }}>
-            {/* Day header */}
+          <div style={{ minWidth: boardMinWidth, width: mode === 'month' ? '100%' : undefined }}>
+            {/* Day header — month mode includes every day of the anchored year/month */}
             <div className="flex sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700">
-              <div className="w-80 shrink-0 px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-500">
+              <div
+                className="shrink-0 px-3 py-2 text-xs font-black uppercase tracking-wide text-slate-500"
+                style={{ width: LABEL_W }}
+              >
                 Job / Crew
+                {mode === 'month' && (
+                  <span className="block normal-case tracking-normal font-semibold text-[10px] text-slate-400 mt-0.5">
+                    {days.length} days · {anchor.getFullYear()}
+                  </span>
+                )}
               </div>
               <div className="flex" style={{ width: gridWidth }}>
                 {days.map(d => {
@@ -515,7 +565,9 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                       className={`shrink-0 text-center py-1 border-l border-slate-100 dark:border-slate-800 ${
                         weekend ? 'bg-slate-100/60 dark:bg-slate-800/40' : ''
                       } ${isToday ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''}`}
-                      style={{ width: COL_W }}>
+                      style={{ width: colW }}
+                      title={d}
+                    >
                       <div className="text-[9px] text-slate-400 leading-none">
                         {dt.toLocaleDateString('en-US', { weekday: 'narrow' })}
                       </div>
@@ -548,7 +600,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                   <div key={job.id} className="border-b border-slate-100 dark:border-slate-800">
                     {/* Job group header row */}
                     <div className="flex items-stretch bg-slate-50/70 dark:bg-slate-800/30">
-                      <div className="w-80 shrink-0 px-4 py-2.5 flex items-center gap-2 min-w-0">
+                      <div className="shrink-0 px-3 py-2.5 flex items-center gap-2 min-w-0" style={{ width: LABEL_W }}>
                         <div className="min-w-0 flex-1">
                           <button
                             type="button"
@@ -632,7 +684,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                     {/* Crew rows */}
                     {rows.length === 0 ? (
                       <div className="flex items-center">
-                        <div className="w-80 shrink-0 px-4 py-2 text-xs text-slate-400 italic">
+                        <div className="shrink-0 px-3 py-2 text-xs text-slate-400 italic" style={{ width: LABEL_W }}>
                           No crew assigned yet.
                           {canEdit && (
                             <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
@@ -647,7 +699,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                         return (
                           <div key={task.id} className="flex items-stretch hover:bg-slate-50/60 dark:hover:bg-slate-800/30 group">
                             {/* Left: crew + task editor */}
-                            <div className="w-80 shrink-0 px-4 py-2 flex flex-col gap-1 min-w-0">
+                            <div className="shrink-0 px-3 py-2 flex flex-col gap-1 min-w-0" style={{ width: LABEL_W }}>
                               <div className="flex items-center gap-2">
                                 <span
                                   className="shrink-0 w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-slate-900"
@@ -732,7 +784,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                                       className={`shrink-0 border-l border-slate-50 dark:border-slate-800/60 ${
                                         weekend ? 'bg-slate-50/40 dark:bg-slate-800/20' : ''
                                       } ${d === today ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}
-                                      style={{ width: COL_W }} />
+                                      style={{ width: colW }} />
                                   );
                                 })}
                               </div>
@@ -756,7 +808,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                     {/* Add crew action under each job */}
                     {canEdit && rows.length > 0 && (
                       <div className="flex">
-                        <div className="w-80 shrink-0 px-4 pb-2">
+                        <div className="shrink-0 px-3 pb-2" style={{ width: LABEL_W }}>
                           <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
                         </div>
                         <div style={{ width: gridWidth }} />

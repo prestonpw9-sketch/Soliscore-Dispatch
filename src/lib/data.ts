@@ -155,14 +155,28 @@ export interface Customer {
   notes: string;
 }
 
-// Date Helpers
-const today = new Date();
-export const todayStr = today.toISOString().split('T')[0];
+// Date Helpers — Phoenix local calendar (avoids UTC shifting the day/year).
+function phoenixYMD(d = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Phoenix',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+export const todayStr = phoenixYMD();
 
 export const weekDates = Array.from({ length: 7 }).map((_, i) => {
-  const d = new Date(today);
-  d.setDate(today.getDate() - today.getDay() + i);
-  return d.toISOString().split('T')[0];
+  // Build week Sun–Sat around Phoenix "today" using local date parts.
+  const [y, m, day] = todayStr.split('-').map(Number);
+  const base = new Date(y, (m ?? 1) - 1, day ?? 1);
+  const sunday = new Date(base);
+  sunday.setDate(base.getDate() - base.getDay() + i);
+  const yy = sunday.getFullYear();
+  const mm = String(sunday.getMonth() + 1).padStart(2, '0');
+  const dd = String(sunday.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 });
 
 export const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
