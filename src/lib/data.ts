@@ -156,7 +156,7 @@ export interface Customer {
 }
 
 // Date Helpers — Phoenix local calendar (avoids UTC shifting the day/year).
-function phoenixYMD(d = new Date()): string {
+export function phoenixTodayYMD(d = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Phoenix',
     year: 'numeric',
@@ -165,7 +165,7 @@ function phoenixYMD(d = new Date()): string {
   }).format(d);
 }
 
-export const todayStr = phoenixYMD();
+export const todayStr = phoenixTodayYMD();
 
 export const weekDates = Array.from({ length: 7 }).map((_, i) => {
   // Build week Sun–Sat around Phoenix "today" using local date parts.
