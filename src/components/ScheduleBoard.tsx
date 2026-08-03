@@ -123,15 +123,18 @@ interface Props {
   technicians: Technician[];
   techTimeOff?: TechTimeOff[];
   onRefresh: () => Promise<void> | void;
+  /** When set (e.g. from Master/Crew/Calendar), scroll that job group into view. */
+  focusJobId?: string | null;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-const LABEL_W = 220; // px — job/crew label column
+const LABEL_W_DESKTOP = 220; // px — job/crew label column
+const LABEL_W_MOBILE = 148;
 const TIMELINE_COL_W = 36; // px — fixed day width in timeline mode
 const MIN_MONTH_COL_W = 26; // px — readable day number; month mode grows to fill
 
-const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh }) => {
+const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh, focusJobId = null }) => {
   const { canEdit } = useAuth();
 
   const [mode, setMode] = useState<'month' | 'timeline'>('month');
@@ -142,6 +145,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const boardRef = React.useRef<HTMLDivElement>(null);
+  const jobGroupRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const [boardWidth, setBoardWidth] = useState(960);
 
   // Popovers / modals
@@ -152,6 +156,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   const days = useMemo(() => buildDays(anchor, mode), [anchor, mode]);
   const rangeStart = days[0];
   const rangeEnd = days[days.length - 1];
+  const LABEL_W = boardWidth < 640 ? LABEL_W_MOBILE : LABEL_W_DESKTOP;
 
   // Month mode: size columns so every day of the month fits in the board width.
   useEffect(() => {
@@ -338,14 +343,31 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     await onRefresh();
   }, [jobs, fetchTasks, onRefresh, techTimeOff, technicians]);
 
-  const saveJobDates = useCallback(async (job: Job, start: string, end: string, phase: string) => {
+  const saveJobDates = useCallback(async (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    milestones?: {
+      inspectionDate: string | null;
+      deadlineDate: string | null;
+      materialArrivalDate: string | null;
+    },
+  ) => {
     const safeEnd = end < start ? start : end;
     const oldStart = job.date;
     const shiftDays = daysBetween(oldStart, start);
 
+    const patch: Record<string, unknown> = { date: start, end_date: safeEnd, phase };
+    if (milestones) {
+      patch.inspection_date = milestones.inspectionDate;
+      patch.deadline_date = milestones.deadlineDate;
+      patch.material_arrival_date = milestones.materialArrivalDate;
+    }
+
     const { error: err } = await supabase
       .from('jobs')
-      .update({ date: start, end_date: safeEnd, phase })
+      .update(patch)
       .eq('id', job.id);
     if (err) { setError(err.message); return; }
 
@@ -428,6 +450,25 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       }))
       .sort((a, b) => a.job.date.localeCompare(b.job.date));
   }, [jobs, tasks, rangeStart, rangeEnd]);
+
+  // Jump board window + scroll when opened from Master / Crew / Calendar.
+  useEffect(() => {
+    if (!focusJobId) return;
+    const job = jobs.find(j => j.id === focusJobId);
+    if (!job) return;
+    const end = job.endDate ?? job.date;
+    if (end < rangeStart || job.date > rangeEnd) {
+      const d = parseYMD(job.date);
+      setAnchor(mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d);
+      return;
+    }
+    const el = jobGroupRefs.current[focusJobId];
+    if (el) {
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+  }, [focusJobId, jobs, rangeStart, rangeEnd, mode, groups]);
 
   // Position helper for a bar within the day grid.
   const barStyle = (start: string, end: string): React.CSSProperties | null => {
@@ -597,7 +638,13 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                 const jobEnd = job.endDate ?? job.date;
                 const jobBar = barStyle(jobStart, jobEnd);
                 return (
-                  <div key={job.id} className="border-b border-slate-100 dark:border-slate-800">
+                  <div
+                    key={job.id}
+                    ref={el => { jobGroupRefs.current[job.id] = el; }}
+                    className={`border-b border-slate-100 dark:border-slate-800 ${
+                      focusJobId === job.id ? 'ring-2 ring-inset ring-indigo-400 dark:ring-indigo-500' : ''
+                    }`}
+                  >
                     {/* Job group header row */}
                     <div className="flex items-stretch bg-slate-50/70 dark:bg-slate-800/30">
                       <div className="shrink-0 px-3 py-2.5 flex items-center gap-2 min-w-0" style={{ width: LABEL_W }}>
@@ -914,17 +961,34 @@ const AddCrewInline: React.FC<{
 const EditJobDatesModal: React.FC<{
   job: Job;
   onClose: () => void;
-  onSave: (job: Job, start: string, end: string, phase: string) => Promise<void> | void;
+  onSave: (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    milestones: {
+      inspectionDate: string | null;
+      deadlineDate: string | null;
+      materialArrivalDate: string | null;
+    },
+  ) => Promise<void> | void;
 }> = ({ job, onClose, onSave }) => {
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
   const [phase, setPhase] = useState(job.phase || 'Rough-In');
+  const [inspectionDate, setInspectionDate] = useState(job.inspectionDate ?? '');
+  const [deadlineDate, setDeadlineDate] = useState(job.deadlineDate ?? '');
+  const [materialArrivalDate, setMaterialArrivalDate] = useState(job.materialArrivalDate ?? '');
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await onSave(job, start, end < start ? start : end, phase);
+      await onSave(job, start, end < start ? start : end, phase, {
+        inspectionDate: inspectionDate || null,
+        deadlineDate: deadlineDate || null,
+        materialArrivalDate: materialArrivalDate || null,
+      });
     } finally {
       setSaving(false);
     }
@@ -967,6 +1031,24 @@ const EditJobDatesModal: React.FC<{
           )}
         </select>
       </label>
+      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Key dates (Calendar)</p>
+        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+          Inspection
+          <input type="date" value={inspectionDate} onChange={e => setInspectionDate(e.target.value)}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+          Deadline
+          <input type="date" value={deadlineDate} onChange={e => setDeadlineDate(e.target.value)}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+          Material arrival
+          <input type="date" value={materialArrivalDate} onChange={e => setMaterialArrivalDate(e.target.value)}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+      </div>
       <div className="flex gap-2 mt-5">
         <button type="button" onClick={onClose} disabled={saving}
           className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">

@@ -34,6 +34,10 @@ export interface Job {
   phase: string;
   serviceType?: string;
   estimatedDuration: number;
+  /** Optional milestone dates (YYYY-MM-DD) for Calendar view. */
+  inspectionDate?: string | null;
+  deadlineDate?: string | null;
+  materialArrivalDate?: string | null;
 }
 
 // Full-day service categories selected on a job (jobs.service_type).

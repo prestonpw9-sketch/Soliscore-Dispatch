@@ -90,6 +90,9 @@ export const useDispatchData = () => {
         date:              j.date ?? new Date().toISOString().split('T')[0],
         endDate:           j.end_date ?? j.date ?? new Date().toISOString().split('T')[0],
         serviceType:       j.service_type ?? '',
+        inspectionDate:    j.inspection_date ?? null,
+        deadlineDate:      j.deadline_date ?? null,
+        materialArrivalDate: j.material_arrival_date ?? null,
         technicianId:      j.technician_id ?? null,
         technicianIds:     Array.isArray(j.technician_ids)
                              ? j.technician_ids.filter(Boolean)
@@ -350,6 +353,9 @@ export const useDispatchData = () => {
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
+      inspection_date: jobData.inspectionDate || null,
+      deadline_date: jobData.deadlineDate || null,
+      material_arrival_date: jobData.materialArrivalDate || null,
       startTime:    jobData.startTime,
       endTime:      jobData.endTime,
       technician_id: primary,
@@ -407,6 +413,9 @@ export const useDispatchData = () => {
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
+      inspection_date: jobData.inspectionDate || null,
+      deadline_date: jobData.deadlineDate || null,
+      material_arrival_date: jobData.materialArrivalDate || null,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
       // NOTE: `jobs` has no `type` column — see createJob. Omitted so the update

@@ -7,7 +7,7 @@ import {
 import Sidebar from './Sidebar';
 import type { ViewKey } from './types';
 import Dashboard from './Dashboard';
-import ScheduleBoard from './ScheduleBoard';
+import MultiJobBoard from './MultiJobBoard';
 import CustomersView from './CustomersView';
 import SettingsView from './SettingsView';
 import QuickAddJobModal from './QuickAddJobModal';
@@ -29,7 +29,7 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
   customers:  { title: 'Customers',       subtitle: 'Full customer database and history' },
   estimator:  { title: 'Bid Estimator',   subtitle: 'Quick change orders and fast job bids' },
   takeoff:    { title: 'Full Bid Takeoff', subtitle: 'Full 4-page takeoff for ground-up buildings and houses' },
-  schedule:   { title: 'Schedule',        subtitle: 'Plan crews across jobs and track daily progress' },
+  schedule:   { title: 'Schedule',        subtitle: 'Master board, timeline, crew conflicts, and key dates' },
   settings:   { title: 'System Settings', subtitle: 'Manage profile configuration parameters' },
 };
 
@@ -469,7 +469,7 @@ const AppLayout: React.FC = () => {
               )}
 
               {view === 'schedule' && (
-                <ScheduleBoard
+                <MultiJobBoard
                   jobs={jobs}
                   technicians={technicians}
                   techTimeOff={techTimeOff}
