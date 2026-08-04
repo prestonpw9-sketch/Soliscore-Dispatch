@@ -16,6 +16,7 @@ import QuickBidEstimator from './QuickBidEstimator';
 import BidEstimator from './Bidestimator';
 import SlideOutPanel from './SlideOutPanel';
 import { weekDates, todayStr } from '@/lib/data';
+import { useDispatchBoardDate } from '@/hooks/useDispatchBoardDate';
 import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
 import { useAuth } from '@/lib/AuthContext';
@@ -60,6 +61,7 @@ const AppLayout: React.FC = () => {
   const [selectedJob, setSelectedJob]       = useState<Job | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
   const [toastTone, setToastTone]           = useState<'success' | 'error'>('success');
+  const { workDate: dispatchBoardDate, showingTomorrow: dispatchShowingTomorrow } = useDispatchBoardDate();
 
   const {
     loading,
@@ -107,7 +109,7 @@ const AppLayout: React.FC = () => {
       technicians.find(t => t.id === id)?.name;
 
     const todayOpen = jobs.filter(
-      j => jobActiveOnDay(j, todayStr) && j.status !== 'completed',
+      j => jobActiveOnDay(j, dispatchBoardDate) && j.status !== 'completed',
     );
 
     const openJobsToday = todayOpen.map(j => ({
@@ -141,7 +143,7 @@ const AppLayout: React.FC = () => {
         minute:   '2-digit',
         hour12:   true,
       }),
-      todayDate:         todayStr,
+      todayDate:         dispatchBoardDate,
       activeJobs:        jobs.filter(j => j.status !== 'completed').length,
       // Unassigned scheduled jobs still waiting for a crew.
       pendingDispatches: jobs.filter(j =>
@@ -163,7 +165,7 @@ const AppLayout: React.FC = () => {
           }
         : null,
     });
-  }, [jobs, technicians, view, selectedJob, updateContext]);
+  }, [jobs, technicians, view, selectedJob, updateContext, dispatchBoardDate]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -464,7 +466,8 @@ const AppLayout: React.FC = () => {
                   reportBlueprintsCount={reportBlueprintsCount}
                   reportSitePhotosCount={reportSitePhotosCount}
                   onJobsChanged={refresh}
-                  todayStr={todayStr}
+                  boardDate={dispatchBoardDate}
+                  showingTomorrow={dispatchShowingTomorrow}
                   canEdit={canEdit}
                   onViewCalendar={() => setView('schedule')}
                   onOpenEstimator={() => setEstimatorOpen(true)}

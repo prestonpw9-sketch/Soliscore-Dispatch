@@ -171,6 +171,45 @@ export function phoenixTodayYMD(d = new Date()): string {
   }).format(d);
 }
 
+/** Hour 0–23 in America/Phoenix for the given instant. */
+export function phoenixHour(d = new Date()): number {
+  const h = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Phoenix',
+    hour: 'numeric',
+    hour12: false,
+  }).format(d);
+  return Number.parseInt(h, 10);
+}
+
+export function addDaysYMD(ymd: string, days: number): string {
+  const [y, m, day] = ymd.split('-').map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, day ?? 1);
+  dt.setDate(dt.getDate() + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+/** After this hour (Phoenix), Dispatch Board shows the next calendar day's routes. */
+export const DISPATCH_BOARD_ROLLOVER_HOUR = 17;
+
+/**
+ * Calendar day used for crew routes on the Dispatch Board.
+ * From 5:00 PM Phoenix onward, rolls forward to tomorrow so evening planning matches the next workday.
+ */
+export function dispatchBoardWorkDate(now = new Date()): string {
+  const today = phoenixTodayYMD(now);
+  if (phoenixHour(now) >= DISPATCH_BOARD_ROLLOVER_HOUR) {
+    return addDaysYMD(today, 1);
+  }
+  return today;
+}
+
+export function isDispatchBoardShowingTomorrow(now = new Date()): boolean {
+  return dispatchBoardWorkDate(now) !== phoenixTodayYMD(now);
+}
+
 export const todayStr = phoenixTodayYMD();
 
 export const weekDates = Array.from({ length: 7 }).map((_, i) => {
