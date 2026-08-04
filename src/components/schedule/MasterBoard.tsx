@@ -1,9 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, MapPin, Users } from 'lucide-react';
+import {
+  ChevronDown, ChevronRight, MapPin, Users, AlertTriangle, ClipboardCheck, X,
+} from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Technician } from '@/lib/data';
-import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
+import {
+  PLUMBING_PHASES,
+  PHASE_HEADER_COLORS,
+  canChangePhase, phaseBlockedMessage,
+  normalizePhase,
+} from '@/lib/phases';
 import { formatShort, techColor } from '@/components/schedule/dateUtils';
 
 interface Props {
@@ -12,16 +19,6 @@ interface Props {
   onRefresh: () => Promise<void> | void;
   onOpenJob: (jobId: string) => void;
 }
-
-const PHASE_HEADER: Record<string, string> = {
-  Underground: 'bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200 border-amber-200 dark:border-amber-800',
-  'Rough-In': 'bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-200 border-blue-200 dark:border-blue-800',
-  'Top-Out': 'bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200 border-violet-200 dark:border-violet-800',
-  'Trim/Finish': 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200 border-emerald-200 dark:border-emerald-800',
-  'Service Call': 'bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-200 border-rose-200 dark:border-rose-800',
-  'T&M': 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700',
-  Other: 'bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200 border-orange-200 dark:border-orange-800',
-};
 
 function techIds(job: Job): string[] {
   if (job.technicianIds?.length) return job.technicianIds.filter(Boolean);
@@ -34,6 +31,9 @@ const MasterBoard: React.FC<Props> = ({ jobs, technicians, onRefresh, onOpenJob 
     Object.fromEntries([...PLUMBING_PHASES, 'Other'].map(p => [p, true])),
   );
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [blockMsg, setBlockMsg] = useState<string | null>(null);
+  const [dragOverPhase, setDragOverPhase] = useState<string | null>(null);
+  const [draggingJobId, setDraggingJobId] = useState<string | null>(null);
 
   const activeJobs = useMemo(
     () => jobs.filter(j => j.status !== 'completed'),
@@ -47,7 +47,7 @@ const MasterBoard: React.FC<Props> = ({ jobs, technicians, onRefresh, onOpenJob 
     buckets.Other = [];
 
     for (const job of activeJobs) {
-      const phase = job.phase || 'Rough-In';
+      const phase = normalizePhase(job.phase);
       if (known.has(phase)) buckets[phase].push(job);
       else buckets.Other.push(job);
     }
@@ -62,13 +62,39 @@ const MasterBoard: React.FC<Props> = ({ jobs, technicians, onRefresh, onOpenJob 
 
   const techName = (id: string) => technicians.find(t => t.id === id)?.name ?? 'Crew';
 
-  const savePhase = async (job: Job, phase: string) => {
-    if (!canEdit || phase === job.phase) return;
+  const attemptPhaseChange = async (job: Job, phase: string) => {
+    if (!canEdit || normalizePhase(phase) === normalizePhase(job.phase)) return;
+    const gate = canChangePhase(job.phase, phase, {
+      inspectionPassed: Boolean(job.inspectionPassed),
+    });
+    if (!gate.ok) {
+      setBlockMsg(gate.message);
+      return;
+    }
+    const next = normalizePhase(phase);
     setSavingId(job.id);
-    const { error } = await supabase.from('jobs').update({ phase }).eq('id', job.id);
+    setBlockMsg(null);
+    const { error } = await supabase.from('jobs').update({ phase: next }).eq('id', job.id);
     setSavingId(null);
     if (error) {
       console.error('Failed to update phase:', error);
+      setBlockMsg(error.message || 'Could not update phase.');
+      return;
+    }
+    await onRefresh();
+  };
+
+  const toggleInspectionPassed = async (job: Job) => {
+    if (!canEdit) return;
+    const next = !job.inspectionPassed;
+    setSavingId(job.id);
+    const { error } = await supabase
+      .from('jobs')
+      .update({ inspection_passed: next })
+      .eq('id', job.id);
+    setSavingId(null);
+    if (error) {
+      setBlockMsg(error.message || 'Could not update inspection status. Apply the phase_dependencies migration if this column is missing.');
       return;
     }
     await onRefresh();
@@ -78,40 +104,96 @@ const MasterBoard: React.FC<Props> = ({ jobs, technicians, onRefresh, onOpenJob 
     setOpenPhases(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const onDropPhase = (phase: string) => {
+    setDragOverPhase(null);
+    if (!draggingJobId) return;
+    const job = activeJobs.find(j => j.id === draggingJobId);
+    setDraggingJobId(null);
+    if (!job) return;
+    void attemptPhaseChange(job, phase);
+  };
+
+  const renderColumnBody = (col: { key: string; jobs: Job[] }) => (
+    <div
+      className={`flex-1 p-2 space-y-2 overflow-y-auto max-h-[70vh] transition-colors ${
+        dragOverPhase === col.key ? 'bg-indigo-50/80 dark:bg-indigo-950/30' : ''
+      }`}
+      onDragOver={e => {
+        if (!canEdit || col.key === 'Other') return;
+        e.preventDefault();
+        setDragOverPhase(col.key);
+      }}
+      onDragLeave={() => setDragOverPhase(prev => (prev === col.key ? null : prev))}
+      onDrop={e => {
+        e.preventDefault();
+        if (col.key === 'Other') return;
+        onDropPhase(col.key);
+      }}
+    >
+      {col.jobs.length === 0 ? (
+        <p className="text-[11px] text-slate-400 text-center py-6">
+          {canEdit && col.key !== 'Other' ? 'Drop job here' : 'No jobs'}
+        </p>
+      ) : (
+        col.jobs.map(job => (
+          <JobKanbanCard
+            key={job.id}
+            job={job}
+            canEdit={canEdit}
+            saving={savingId === job.id}
+            techName={techName}
+            onOpen={() => onOpenJob(job.id)}
+            onPhaseChange={phase => void attemptPhaseChange(job, phase)}
+            onToggleInspection={() => void toggleInspectionPassed(job)}
+            onDragStart={() => setDraggingJobId(job.id)}
+            onDragEnd={() => { setDraggingJobId(null); setDragOverPhase(null); }}
+          />
+        ))
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500 dark:text-slate-400 px-0.5">
-        All active jobs by plumbing phase. Tap a card to open its Timeline.
+        Pipeline: Rough-In → Top-Out → Trim → Final → Punch. Drag or change phase — skips are blocked.
+        Mark inspection passed before Trim.
       </p>
+
+      {blockMsg && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 text-sm text-amber-900 dark:text-amber-100"
+        >
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="flex-1 font-semibold leading-snug">{blockMsg}</p>
+          <button
+            type="button"
+            onClick={() => setBlockMsg(null)}
+            className="p-1 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300"
+            aria-label="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Desktop: horizontal Kanban */}
       <div className="hidden md:flex gap-3 overflow-x-auto pb-2 min-h-[420px]">
         {columns.map(col => (
           <div
             key={col.key}
-            className="shrink-0 w-72 flex flex-col bg-slate-100/80 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800"
+            className={`shrink-0 w-72 flex flex-col bg-slate-100/80 dark:bg-slate-900/60 rounded-xl border ${
+              dragOverPhase === col.key
+                ? 'border-indigo-400 dark:border-indigo-500'
+                : 'border-slate-200 dark:border-slate-800'
+            }`}
           >
-            <div className={`px-3 py-2.5 rounded-t-xl border-b font-black text-xs uppercase tracking-wide flex items-center justify-between ${PHASE_HEADER[col.key] ?? PHASE_HEADER.Other}`}>
+            <div className={`px-3 py-2.5 rounded-t-xl border-b font-black text-xs uppercase tracking-wide flex items-center justify-between ${PHASE_HEADER_COLORS[col.key] ?? PHASE_HEADER_COLORS.Other}`}>
               <span>{col.key}</span>
               <span className="tabular-nums opacity-80">{col.jobs.length}</span>
             </div>
-            <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[70vh]">
-              {col.jobs.length === 0 ? (
-                <p className="text-[11px] text-slate-400 text-center py-6">No jobs</p>
-              ) : (
-                col.jobs.map(job => (
-                  <JobKanbanCard
-                    key={job.id}
-                    job={job}
-                    canEdit={canEdit}
-                    saving={savingId === job.id}
-                    techName={techName}
-                    onOpen={() => onOpenJob(job.id)}
-                    onPhaseChange={phase => void savePhase(job, phase)}
-                  />
-                ))
-              )}
-            </div>
+            {renderColumnBody(col)}
           </div>
         ))}
       </div>
@@ -123,37 +205,23 @@ const MasterBoard: React.FC<Props> = ({ jobs, technicians, onRefresh, onOpenJob 
           return (
             <div
               key={col.key}
-              className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900"
+              className={`rounded-xl border overflow-hidden bg-white dark:bg-slate-900 ${
+                dragOverPhase === col.key
+                  ? 'border-indigo-400 dark:border-indigo-500'
+                  : 'border-slate-200 dark:border-slate-800'
+              }`}
             >
               <button
                 type="button"
                 onClick={() => togglePhase(col.key)}
-                className={`w-full min-h-[48px] px-3 py-2 flex items-center gap-2 text-left font-black text-xs uppercase tracking-wide ${PHASE_HEADER[col.key] ?? PHASE_HEADER.Other}`}
+                className={`w-full min-h-[48px] px-3 py-2 flex items-center gap-2 text-left font-black text-xs uppercase tracking-wide ${PHASE_HEADER_COLORS[col.key] ?? PHASE_HEADER_COLORS.Other}`}
                 aria-expanded={open}
               >
                 {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
                 <span className="flex-1">{col.key}</span>
                 <span className="tabular-nums opacity-80">{col.jobs.length}</span>
               </button>
-              {open && (
-                <div className="p-2 space-y-2">
-                  {col.jobs.length === 0 ? (
-                    <p className="text-[11px] text-slate-400 text-center py-4">No jobs in this phase</p>
-                  ) : (
-                    col.jobs.map(job => (
-                      <JobKanbanCard
-                        key={job.id}
-                        job={job}
-                        canEdit={canEdit}
-                        saving={savingId === job.id}
-                        techName={techName}
-                        onOpen={() => onOpenJob(job.id)}
-                        onPhaseChange={phase => void savePhase(job, phase)}
-                      />
-                    ))
-                  )}
-                </div>
-              )}
+              {open && renderColumnBody(col)}
             </div>
           );
         })}
@@ -169,12 +237,30 @@ const JobKanbanCard: React.FC<{
   techName: (id: string) => string;
   onOpen: () => void;
   onPhaseChange: (phase: string) => void;
-}> = ({ job, canEdit, saving, techName, onOpen, onPhaseChange }) => {
+  onToggleInspection: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+}> = ({
+  job, canEdit, saving, techName, onOpen, onPhaseChange, onToggleInspection, onDragStart, onDragEnd,
+}) => {
   const crew = techIds(job);
   const end = job.endDate ?? job.date;
+  const phase = normalizePhase(job.phase);
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm p-3 space-y-2">
+    <div
+      draggable={canEdit}
+      onDragStart={e => {
+        if (!canEdit) return;
+        e.dataTransfer.setData('text/plain', job.id);
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+      className={`rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm p-3 space-y-2 ${
+        canEdit ? 'cursor-grab active:cursor-grabbing' : ''
+      }`}
+    >
       <button
         type="button"
         onClick={onOpen}
@@ -209,9 +295,23 @@ const JobKanbanCard: React.FC<{
         </div>
       )}
 
+      <button
+        type="button"
+        disabled={!canEdit || saving}
+        onClick={e => { e.stopPropagation(); onToggleInspection(); }}
+        className={`w-full min-h-[36px] inline-flex items-center justify-center gap-1.5 text-[10px] font-black uppercase tracking-wide rounded-lg border px-2 ${
+          job.inspectionPassed
+            ? 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/40 dark:text-teal-300 dark:border-teal-800'
+            : 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+        } disabled:opacity-50`}
+      >
+        <ClipboardCheck className="w-3.5 h-3.5" />
+        {job.inspectionPassed ? 'Inspection passed' : 'Mark inspection passed'}
+      </button>
+
       {canEdit ? (
         <select
-          value={(PLUMBING_PHASES as readonly string[]).includes(job.phase) ? job.phase : job.phase || 'Rough-In'}
+          value={phase}
           disabled={saving}
           onChange={e => onPhaseChange(e.target.value)}
           aria-label={`Phase for ${job.customerName}`}
@@ -221,13 +321,10 @@ const JobKanbanCard: React.FC<{
           {PLUMBING_PHASES.map(p => (
             <option key={p} value={p}>{p}</option>
           ))}
-          {job.phase && !(PLUMBING_PHASES as readonly string[]).includes(job.phase) && (
-            <option value={job.phase}>{job.phase}</option>
-          )}
         </select>
       ) : (
         <span className="inline-block text-[10px] font-black uppercase tracking-wide text-slate-500">
-          {job.phase || 'Rough-In'}
+          {phase}
         </span>
       )}
     </div>

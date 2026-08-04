@@ -16,7 +16,6 @@ interface Props {
 
 const typeColors: Record<JobType, string> = {
   emergency:    'bg-red-500 border-red-600',
-  maintenance:  'bg-teal-500 border-teal-600',
   installation: 'bg-emerald-500 border-emerald-600',
   inspection:   'bg-purple-500 border-purple-600',
 };
@@ -202,7 +201,6 @@ const CalendarView: React.FC<Props> = ({
           >
             <option value="all">All Types</option>
             <option value="emergency">Emergency</option>
-            <option value="maintenance">Maintenance</option>
             <option value="installation">Installation</option>
             <option value="inspection">Inspection</option>
           </select>

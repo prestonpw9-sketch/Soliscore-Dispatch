@@ -1,4 +1,4 @@
-export type JobType = 'emergency' | 'maintenance' | 'installation' | 'inspection';
+export type JobType = 'emergency' | 'installation' | 'inspection';
 export type Priority = 'emergency' | 'high' | 'normal' | 'low';
 export type CallStatus = 'active' | 'missed' | 'callback' | 'completed';
 /** Job lifecycle: scheduled (on board) → active (in progress) → completed. */
@@ -38,6 +38,8 @@ export interface Job {
   inspectionDate?: string | null;
   deadlineDate?: string | null;
   materialArrivalDate?: string | null;
+  /** Required true before advancing Rough/Top-Out → Trim. */
+  inspectionPassed?: boolean;
 }
 
 // Full-day service categories selected on a job (jobs.service_type).
@@ -261,7 +263,7 @@ export const mockJobs: Job[] = [
     customerId: 'c2',
     customerName: 'Sarah Jenkins',
     address: '1423 W Baseline Rd',
-    type: 'maintenance',
+    type: 'installation',
     status: 'scheduled',
     technicianId: 't2',
     date: todayStr,

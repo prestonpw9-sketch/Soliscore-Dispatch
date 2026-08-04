@@ -8,7 +8,7 @@ import { SERVICE_TYPES, isTechOffOnRange } from '@/lib/data';
 
 
 const isJobType = (v: string): v is JobType =>
-  ['emergency', 'maintenance', 'installation', 'inspection'].includes(v);
+  ['emergency', 'installation', 'inspection'].includes(v);
 
 
 const isPriority = (v: string): v is Priority =>
@@ -74,7 +74,7 @@ const QuickAddJobModal: React.FC<Props> = ({
   const [showAddressDropdown, setShowAddressDropdown]     = useState(false);
 
 
-  const [type, setType]               = useState<JobType>('maintenance');
+  const [type, setType]               = useState<JobType>('installation');
   const [serviceType, setServiceType] = useState<string>(SERVICE_TYPES[0]);
   const [priority, setPriority]       = useState<Priority>('normal');
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
@@ -97,7 +97,7 @@ const QuickAddJobModal: React.FC<Props> = ({
     setAddress('');
     setDescription('');
     setPriority('normal');
-    setType('maintenance');
+    setType('installation');
     setServiceType(SERVICE_TYPES[0]);
     setTechnicianIds([]);
     setDate(weekDates[0] ?? '');
@@ -119,7 +119,7 @@ const QuickAddJobModal: React.FC<Props> = ({
       setAddress(defaults.address ?? '');
       setDescription(defaults.description ?? '');
       setPriority(isPriority(defaults.priority ?? '') ? (defaults.priority as Priority) : 'normal');
-      setType(isJobType(defaults.type ?? '') ? (defaults.type as JobType) : 'maintenance');
+      setType(isJobType(defaults.type ?? '') ? (defaults.type as JobType) : 'installation');
       setServiceType(defaults.serviceType || SERVICE_TYPES[0]);
       setTechnicianIds(
         defaults.technicianIds && defaults.technicianIds.length > 0
@@ -391,7 +391,6 @@ const QuickAddJobModal: React.FC<Props> = ({
                 className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none cursor-pointer"
               >
                 <option value="emergency">Emergency</option>
-                <option value="maintenance">Maintenance</option>
                 <option value="installation">Installation</option>
                 <option value="inspection">Inspection</option>
               </select>

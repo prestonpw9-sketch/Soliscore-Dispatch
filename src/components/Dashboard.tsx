@@ -28,6 +28,7 @@ interface Props {
   onViewCalendar: () => void;
   onOpenEstimator: () => void;
   onPhaseChange: (jobId: string, newPhase: string) => void;
+  onPhaseBlocked?: (message: string) => void;
   onHire: (name: string, role: string) => void;
   onFire: (id: string) => void;
   onJobClick?: (job: Job) => void;
@@ -91,6 +92,7 @@ const Dashboard: React.FC<Props> = ({
   onViewCalendar,
   onOpenEstimator,
   onPhaseChange,
+  onPhaseBlocked,
   onHire,
   onFire,
   onJobClick,
@@ -305,6 +307,7 @@ const Dashboard: React.FC<Props> = ({
                                 job={job}
                                 technicianName={tech.name}
                                 onPhaseChange={onPhaseChange}
+                                onPhaseBlocked={onPhaseBlocked}
                                 onClick={() => onJobClick?.(job)}
                               />
                             </div>

@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/data';
 import { isTechOffOnRange, isTechOffOnDay } from '@/lib/data';
-import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
+import { PLUMBING_PHASES, canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
 
@@ -144,6 +144,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   const [latestNotes, setLatestNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [phaseBlock, setPhaseBlock] = useState<string | null>(null);
   const boardRef = React.useRef<HTMLDivElement>(null);
   const jobGroupRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const [boardWidth, setBoardWidth] = useState(960);
@@ -352,13 +353,26 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       inspectionDate: string | null;
       deadlineDate: string | null;
       materialArrivalDate: string | null;
+      inspectionPassed: boolean;
     },
   ) => {
     const safeEnd = end < start ? start : end;
     const oldStart = job.date;
     const shiftDays = daysBetween(oldStart, start);
+    const inspectionPassed = milestones?.inspectionPassed ?? Boolean(job.inspectionPassed);
 
-    const patch: Record<string, unknown> = { date: start, end_date: safeEnd, phase };
+    const gate = canChangePhase(job.phase, phase, { inspectionPassed });
+    if (!gate.ok) {
+      setPhaseBlock(gate.message);
+      return;
+    }
+
+    const patch: Record<string, unknown> = {
+      date: start,
+      end_date: safeEnd,
+      phase: normalizePhase(phase),
+      inspection_passed: inspectionPassed,
+    };
     if (milestones) {
       patch.inspection_date = milestones.inspectionDate;
       patch.deadline_date = milestones.deadlineDate;
@@ -409,8 +423,17 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode]);
 
   const saveJobPhase = useCallback(async (job: Job, phase: string) => {
-    const { error: err } = await supabase.from('jobs').update({ phase }).eq('id', job.id);
+    const gate = canChangePhase(job.phase, phase, {
+      inspectionPassed: Boolean(job.inspectionPassed),
+    });
+    if (!gate.ok) {
+      setPhaseBlock(gate.message);
+      return;
+    }
+    const next = normalizePhase(phase);
+    const { error: err } = await supabase.from('jobs').update({ phase: next }).eq('id', job.id);
     if (err) { setError(err.message); return; }
+    setPhaseBlock(null);
     await onRefresh();
   }, [onRefresh]);
 
@@ -553,6 +576,19 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
         </div>
       )}
 
+      {phaseBlock && (
+        <div
+          role="alert"
+          className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl text-amber-900 dark:text-amber-100 text-sm font-semibold flex items-start gap-2"
+        >
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span className="flex-1">{phaseBlock}</span>
+          <button type="button" onClick={() => setPhaseBlock(null)} className="text-xs font-bold underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Crew color legend — each plumber's color so they spot themselves fast */}
       {technicians.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
@@ -666,7 +702,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             {canEdit ? (
                               <select
-                                value={job.phase || 'Rough-In'}
+                                value={normalizePhase(job.phase)}
                                 onChange={e => void saveJobPhase(job, e.target.value)}
                                 aria-label={`Phase for ${job.customerName}`}
                                 className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 outline-none cursor-pointer"
@@ -674,13 +710,10 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                                 {PLUMBING_PHASES.map(p => (
                                   <option key={p} value={p}>{p}</option>
                                 ))}
-                                {job.phase && !(PLUMBING_PHASES as readonly string[]).includes(job.phase) && (
-                                  <option value={job.phase}>{job.phase}</option>
-                                )}
                               </select>
                             ) : (
                               <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
-                                {job.phase || 'Rough-In'}
+                                {normalizePhase(job.phase)}
                               </span>
                             )}
                             {canEdit ? (
@@ -970,24 +1003,34 @@ const EditJobDatesModal: React.FC<{
       inspectionDate: string | null;
       deadlineDate: string | null;
       materialArrivalDate: string | null;
+      inspectionPassed: boolean;
     },
   ) => Promise<void> | void;
 }> = ({ job, onClose, onSave }) => {
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
-  const [phase, setPhase] = useState(job.phase || 'Rough-In');
+  const [phase, setPhase] = useState(normalizePhase(job.phase));
   const [inspectionDate, setInspectionDate] = useState(job.inspectionDate ?? '');
   const [deadlineDate, setDeadlineDate] = useState(job.deadlineDate ?? '');
   const [materialArrivalDate, setMaterialArrivalDate] = useState(job.materialArrivalDate ?? '');
+  const [inspectionPassed, setInspectionPassed] = useState(Boolean(job.inspectionPassed));
   const [saving, setSaving] = useState(false);
+  const [localBlock, setLocalBlock] = useState<string | null>(null);
 
   const handleSave = async () => {
+    const gate = canChangePhase(job.phase, phase, { inspectionPassed });
+    if (!gate.ok) {
+      setLocalBlock(gate.message);
+      return;
+    }
     setSaving(true);
+    setLocalBlock(null);
     try {
       await onSave(job, start, end < start ? start : end, phase, {
         inspectionDate: inspectionDate || null,
         deadlineDate: deadlineDate || null,
         materialArrivalDate: materialArrivalDate || null,
+        inspectionPassed,
       });
     } finally {
       setSaving(false);
@@ -1020,19 +1063,25 @@ const EditJobDatesModal: React.FC<{
         Plumbing phase
         <select
           value={phase}
-          onChange={e => setPhase(e.target.value)}
+          onChange={e => setPhase(normalizePhase(e.target.value))}
           className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
         >
           {PLUMBING_PHASES.map(p => (
             <option key={p} value={p}>{p}</option>
           ))}
-          {phase && !(PLUMBING_PHASES as readonly string[]).includes(phase) && (
-            <option value={phase}>{phase}</option>
-          )}
         </select>
       </label>
       <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
         <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Key dates (Calendar)</p>
+        <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={inspectionPassed}
+            onChange={e => setInspectionPassed(e.target.checked)}
+            className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+          />
+          Inspection passed (required before Trim)
+        </label>
         <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
           Inspection
           <input type="date" value={inspectionDate} onChange={e => setInspectionDate(e.target.value)}
@@ -1049,6 +1098,11 @@ const EditJobDatesModal: React.FC<{
             className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
         </label>
       </div>
+      {localBlock && (
+        <p className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+          {localBlock}
+        </p>
+      )}
       <div className="flex gap-2 mt-5">
         <button type="button" onClick={onClose} disabled={saving}
           className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">

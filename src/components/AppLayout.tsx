@@ -21,6 +21,7 @@ import { useDispatchData } from '@/hooks/useDispatchData';
 import { useAuth } from '@/lib/AuthContext';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import DispatchBanner from './DispatchBanner';
+import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -275,9 +276,18 @@ const AppLayout: React.FC = () => {
 
   const handlePhaseChange = (jobId: string, newPhase: string) => {
     void (async () => {
+      const current = jobs.find(j => j.id === jobId);
+      const gate = canChangePhase(current?.phase, newPhase, {
+        inspectionPassed: Boolean(current?.inspectionPassed),
+      });
+      if (!gate.ok) {
+        showToast(gate.message);
+        return;
+      }
+      const phase = normalizePhase(newPhase);
       const { error: updateError } = await supabase
         .from('jobs')
-        .update({ phase: newPhase })
+        .update({ phase })
         .eq('id', jobId);
 
       if (updateError) {
@@ -459,6 +469,7 @@ const AppLayout: React.FC = () => {
                   onViewCalendar={() => setView('schedule')}
                   onOpenEstimator={() => setEstimatorOpen(true)}
                   onPhaseChange={handlePhaseChange}
+                  onPhaseBlocked={showToast}
                   onHire={hireTechnician}
                   onFire={fireTechnician}
                   onJobClick={openJobForEdit}
