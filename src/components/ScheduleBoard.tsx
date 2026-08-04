@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/data';
 import { isTechOffOnRange, isTechOffOnDay } from '@/lib/data';
-import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
+import { PLUMBING_PHASES, canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
 
@@ -31,9 +31,24 @@ function daysBetween(a: string, b: string): number {
   // Inclusive whole-day count from a..b (b - a in days).
   return Math.round((parseYMD(b).getTime() - parseYMD(a).getTime()) / 86_400_000);
 }
-const todayYMD = () => toYMD(new Date());
 
-// Build the visible day columns.
+/** Solidcore local calendar day (America/Phoenix) — avoids UTC year/day drift. */
+function todayYMD(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Phoenix',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/** First of the current Phoenix month as a local Date (for month navigation). */
+function phoenixMonthAnchor(fromYmd = todayYMD()): Date {
+  const [y, m] = fromYmd.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, 1);
+}
+
+// Build the visible day columns — month mode always emits every day of that month/year.
 function buildDays(anchor: Date, mode: 'month' | 'timeline'): string[] {
   if (mode === 'month') {
     const year = anchor.getFullYear();
@@ -108,25 +123,31 @@ interface Props {
   technicians: Technician[];
   techTimeOff?: TechTimeOff[];
   onRefresh: () => Promise<void> | void;
+  /** When set (e.g. from Master/Crew/Calendar), scroll that job group into view. */
+  focusJobId?: string | null;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-const COL_W = 36; // px per day column
+const LABEL_W_DESKTOP = 220; // px — job/crew label column
+const LABEL_W_MOBILE = 148;
+const TIMELINE_COL_W = 36; // px — fixed day width in timeline mode
+const MIN_MONTH_COL_W = 26; // px — readable day number; month mode grows to fill
 
-const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh }) => {
+const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh, focusJobId = null }) => {
   const { canEdit } = useAuth();
 
   const [mode, setMode] = useState<'month' | 'timeline'>('month');
-  const [anchor, setAnchor] = useState<Date>(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
+  const [anchor, setAnchor] = useState<Date>(() => phoenixMonthAnchor());
 
   const [tasks, setTasks] = useState<JobTask[]>([]);
   const [latestNotes, setLatestNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [phaseBlock, setPhaseBlock] = useState<string | null>(null);
+  const boardRef = React.useRef<HTMLDivElement>(null);
+  const jobGroupRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+  const [boardWidth, setBoardWidth] = useState(960);
 
   // Popovers / modals
   const [editJob, setEditJob] = useState<Job | null>(null);
@@ -136,6 +157,26 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   const days = useMemo(() => buildDays(anchor, mode), [anchor, mode]);
   const rangeStart = days[0];
   const rangeEnd = days[days.length - 1];
+  const LABEL_W = boardWidth < 640 ? LABEL_W_MOBILE : LABEL_W_DESKTOP;
+
+  // Month mode: size columns so every day of the month fits in the board width.
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setBoardWidth(w);
+    });
+    ro.observe(el);
+    setBoardWidth(el.clientWidth || 960);
+    return () => ro.disconnect();
+  }, []);
+
+  const colW = useMemo(() => {
+    if (mode === 'timeline') return TIMELINE_COL_W;
+    const inner = Math.max(200, boardWidth - LABEL_W);
+    return Math.max(MIN_MONTH_COL_W, Math.floor(inner / Math.max(1, days.length)));
+  }, [mode, boardWidth, days.length]);
 
   const technicianName = useCallback(
     (id: string | null) => technicians.find(t => t.id === id)?.name ?? 'Unassigned',
@@ -303,14 +344,44 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     await onRefresh();
   }, [jobs, fetchTasks, onRefresh, techTimeOff, technicians]);
 
-  const saveJobDates = useCallback(async (job: Job, start: string, end: string, phase: string) => {
+  const saveJobDates = useCallback(async (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    milestones?: {
+      inspectionDate: string | null;
+      deadlineDate: string | null;
+      materialArrivalDate: string | null;
+      inspectionPassed: boolean;
+    },
+  ) => {
     const safeEnd = end < start ? start : end;
     const oldStart = job.date;
     const shiftDays = daysBetween(oldStart, start);
+    const inspectionPassed = milestones?.inspectionPassed ?? Boolean(job.inspectionPassed);
+
+    const gate = canChangePhase(job.phase, phase, { inspectionPassed });
+    if (!gate.ok) {
+      setPhaseBlock(gate.message);
+      return;
+    }
+
+    const patch: Record<string, unknown> = {
+      date: start,
+      end_date: safeEnd,
+      phase: normalizePhase(phase),
+      inspection_passed: inspectionPassed,
+    };
+    if (milestones) {
+      patch.inspection_date = milestones.inspectionDate;
+      patch.deadline_date = milestones.deadlineDate;
+      patch.material_arrival_date = milestones.materialArrivalDate;
+    }
 
     const { error: err } = await supabase
       .from('jobs')
-      .update({ date: start, end_date: safeEnd, phase })
+      .update(patch)
       .eq('id', job.id);
     if (err) { setError(err.message); return; }
 
@@ -352,8 +423,17 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode]);
 
   const saveJobPhase = useCallback(async (job: Job, phase: string) => {
-    const { error: err } = await supabase.from('jobs').update({ phase }).eq('id', job.id);
+    const gate = canChangePhase(job.phase, phase, {
+      inspectionPassed: Boolean(job.inspectionPassed),
+    });
+    if (!gate.ok) {
+      setPhaseBlock(gate.message);
+      return;
+    }
+    const next = normalizePhase(phase);
+    const { error: err } = await supabase.from('jobs').update({ phase: next }).eq('id', job.id);
     if (err) { setError(err.message); return; }
+    setPhaseBlock(null);
     await onRefresh();
   }, [onRefresh]);
 
@@ -394,6 +474,25 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       .sort((a, b) => a.job.date.localeCompare(b.job.date));
   }, [jobs, tasks, rangeStart, rangeEnd]);
 
+  // Jump board window + scroll when opened from Master / Crew / Calendar.
+  useEffect(() => {
+    if (!focusJobId) return;
+    const job = jobs.find(j => j.id === focusJobId);
+    if (!job) return;
+    const end = job.endDate ?? job.date;
+    if (end < rangeStart || job.date > rangeEnd) {
+      const d = parseYMD(job.date);
+      setAnchor(mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d);
+      return;
+    }
+    const el = jobGroupRefs.current[focusJobId];
+    if (el) {
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+  }, [focusJobId, jobs, rangeStart, rangeEnd, mode, groups]);
+
   // Position helper for a bar within the day grid.
   const barStyle = (start: string, end: string): React.CSSProperties | null => {
     const s = start < rangeStart ? rangeStart : start;
@@ -401,7 +500,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     if (e < rangeStart || s > rangeEnd) return null;
     const offset = daysBetween(rangeStart, s);
     const span = daysBetween(s, e) + 1;
-    return { left: offset * COL_W, width: span * COL_W - 4 };
+    return { left: offset * colW, width: Math.max(colW - 4, 4) + (span - 1) * colW };
   };
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -412,15 +511,19 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     ? new Date(a.getFullYear(), a.getMonth() + 1, 1)
     : parseYMD(addDays(toYMD(a), 14)));
   const goToday = () => setAnchor(() => {
-    const d = new Date();
-    return mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d;
+    if (mode === 'month') return phoenixMonthAnchor();
+    const [y, m, d] = todayYMD().split('-').map(Number);
+    return new Date(y, (m ?? 1) - 1, d ?? 1);
   });
 
   const headerLabel = mode === 'month'
     ? anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     : `${parseYMD(rangeStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${parseYMD(rangeEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-  const gridWidth = days.length * COL_W;
+  const gridWidth = days.length * colW;
+  const boardMinWidth = mode === 'month'
+    ? Math.max(boardWidth, LABEL_W + gridWidth)
+    : LABEL_W + gridWidth;
   const today = todayYMD();
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -473,6 +576,19 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
         </div>
       )}
 
+      {phaseBlock && (
+        <div
+          role="alert"
+          className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl text-amber-900 dark:text-amber-100 text-sm font-semibold flex items-start gap-2"
+        >
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span className="flex-1">{phaseBlock}</span>
+          <button type="button" onClick={() => setPhaseBlock(null)} className="text-xs font-bold underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Crew color legend — each plumber's color so they spot themselves fast */}
       {technicians.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
@@ -497,13 +613,24 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       )}
 
       {/* Board */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+      <div
+        ref={boardRef}
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden"
+      >
         <div className="overflow-x-auto">
-          <div style={{ minWidth: 320 + gridWidth }}>
-            {/* Day header */}
+          <div style={{ minWidth: boardMinWidth, width: mode === 'month' ? '100%' : undefined }}>
+            {/* Day header — month mode includes every day of the anchored year/month */}
             <div className="flex sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700">
-              <div className="w-80 shrink-0 px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-500">
+              <div
+                className="shrink-0 px-3 py-2 text-xs font-black uppercase tracking-wide text-slate-500"
+                style={{ width: LABEL_W }}
+              >
                 Job / Crew
+                {mode === 'month' && (
+                  <span className="block normal-case tracking-normal font-semibold text-[10px] text-slate-400 mt-0.5">
+                    {days.length} days · {anchor.getFullYear()}
+                  </span>
+                )}
               </div>
               <div className="flex" style={{ width: gridWidth }}>
                 {days.map(d => {
@@ -515,7 +642,9 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                       className={`shrink-0 text-center py-1 border-l border-slate-100 dark:border-slate-800 ${
                         weekend ? 'bg-slate-100/60 dark:bg-slate-800/40' : ''
                       } ${isToday ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''}`}
-                      style={{ width: COL_W }}>
+                      style={{ width: colW }}
+                      title={d}
+                    >
                       <div className="text-[9px] text-slate-400 leading-none">
                         {dt.toLocaleDateString('en-US', { weekday: 'narrow' })}
                       </div>
@@ -545,10 +674,16 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                 const jobEnd = job.endDate ?? job.date;
                 const jobBar = barStyle(jobStart, jobEnd);
                 return (
-                  <div key={job.id} className="border-b border-slate-100 dark:border-slate-800">
+                  <div
+                    key={job.id}
+                    ref={el => { jobGroupRefs.current[job.id] = el; }}
+                    className={`border-b border-slate-100 dark:border-slate-800 ${
+                      focusJobId === job.id ? 'ring-2 ring-inset ring-indigo-400 dark:ring-indigo-500' : ''
+                    }`}
+                  >
                     {/* Job group header row */}
                     <div className="flex items-stretch bg-slate-50/70 dark:bg-slate-800/30">
-                      <div className="w-80 shrink-0 px-4 py-2.5 flex items-center gap-2 min-w-0">
+                      <div className="shrink-0 px-3 py-2.5 flex items-center gap-2 min-w-0" style={{ width: LABEL_W }}>
                         <div className="min-w-0 flex-1">
                           <button
                             type="button"
@@ -567,7 +702,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             {canEdit ? (
                               <select
-                                value={job.phase || 'Rough-In'}
+                                value={normalizePhase(job.phase)}
                                 onChange={e => void saveJobPhase(job, e.target.value)}
                                 aria-label={`Phase for ${job.customerName}`}
                                 className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 outline-none cursor-pointer"
@@ -575,13 +710,10 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                                 {PLUMBING_PHASES.map(p => (
                                   <option key={p} value={p}>{p}</option>
                                 ))}
-                                {job.phase && !(PLUMBING_PHASES as readonly string[]).includes(job.phase) && (
-                                  <option value={job.phase}>{job.phase}</option>
-                                )}
                               </select>
                             ) : (
                               <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
-                                {job.phase || 'Rough-In'}
+                                {normalizePhase(job.phase)}
                               </span>
                             )}
                             {canEdit ? (
@@ -632,7 +764,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                     {/* Crew rows */}
                     {rows.length === 0 ? (
                       <div className="flex items-center">
-                        <div className="w-80 shrink-0 px-4 py-2 text-xs text-slate-400 italic">
+                        <div className="shrink-0 px-3 py-2 text-xs text-slate-400 italic" style={{ width: LABEL_W }}>
                           No crew assigned yet.
                           {canEdit && (
                             <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
@@ -647,7 +779,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                         return (
                           <div key={task.id} className="flex items-stretch hover:bg-slate-50/60 dark:hover:bg-slate-800/30 group">
                             {/* Left: crew + task editor */}
-                            <div className="w-80 shrink-0 px-4 py-2 flex flex-col gap-1 min-w-0">
+                            <div className="shrink-0 px-3 py-2 flex flex-col gap-1 min-w-0" style={{ width: LABEL_W }}>
                               <div className="flex items-center gap-2">
                                 <span
                                   className="shrink-0 w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-slate-900"
@@ -732,7 +864,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                                       className={`shrink-0 border-l border-slate-50 dark:border-slate-800/60 ${
                                         weekend ? 'bg-slate-50/40 dark:bg-slate-800/20' : ''
                                       } ${d === today ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}
-                                      style={{ width: COL_W }} />
+                                      style={{ width: colW }} />
                                   );
                                 })}
                               </div>
@@ -756,7 +888,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                     {/* Add crew action under each job */}
                     {canEdit && rows.length > 0 && (
                       <div className="flex">
-                        <div className="w-80 shrink-0 px-4 pb-2">
+                        <div className="shrink-0 px-3 pb-2" style={{ width: LABEL_W }}>
                           <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
                         </div>
                         <div style={{ width: gridWidth }} />
@@ -862,17 +994,44 @@ const AddCrewInline: React.FC<{
 const EditJobDatesModal: React.FC<{
   job: Job;
   onClose: () => void;
-  onSave: (job: Job, start: string, end: string, phase: string) => Promise<void> | void;
+  onSave: (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    milestones: {
+      inspectionDate: string | null;
+      deadlineDate: string | null;
+      materialArrivalDate: string | null;
+      inspectionPassed: boolean;
+    },
+  ) => Promise<void> | void;
 }> = ({ job, onClose, onSave }) => {
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
-  const [phase, setPhase] = useState(job.phase || 'Rough-In');
+  const [phase, setPhase] = useState(normalizePhase(job.phase));
+  const [inspectionDate, setInspectionDate] = useState(job.inspectionDate ?? '');
+  const [deadlineDate, setDeadlineDate] = useState(job.deadlineDate ?? '');
+  const [materialArrivalDate, setMaterialArrivalDate] = useState(job.materialArrivalDate ?? '');
+  const [inspectionPassed, setInspectionPassed] = useState(Boolean(job.inspectionPassed));
   const [saving, setSaving] = useState(false);
+  const [localBlock, setLocalBlock] = useState<string | null>(null);
 
   const handleSave = async () => {
+    const gate = canChangePhase(job.phase, phase, { inspectionPassed });
+    if (!gate.ok) {
+      setLocalBlock(gate.message);
+      return;
+    }
     setSaving(true);
+    setLocalBlock(null);
     try {
-      await onSave(job, start, end < start ? start : end, phase);
+      await onSave(job, start, end < start ? start : end, phase, {
+        inspectionDate: inspectionDate || null,
+        deadlineDate: deadlineDate || null,
+        materialArrivalDate: materialArrivalDate || null,
+        inspectionPassed,
+      });
     } finally {
       setSaving(false);
     }
@@ -904,17 +1063,46 @@ const EditJobDatesModal: React.FC<{
         Plumbing phase
         <select
           value={phase}
-          onChange={e => setPhase(e.target.value)}
+          onChange={e => setPhase(normalizePhase(e.target.value))}
           className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
         >
           {PLUMBING_PHASES.map(p => (
             <option key={p} value={p}>{p}</option>
           ))}
-          {phase && !(PLUMBING_PHASES as readonly string[]).includes(phase) && (
-            <option value={phase}>{phase}</option>
-          )}
         </select>
       </label>
+      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Key dates (Calendar)</p>
+        <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={inspectionPassed}
+            onChange={e => setInspectionPassed(e.target.checked)}
+            className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+          />
+          Inspection passed (required before Trim)
+        </label>
+        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+          Inspection
+          <input type="date" value={inspectionDate} onChange={e => setInspectionDate(e.target.value)}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+          Deadline
+          <input type="date" value={deadlineDate} onChange={e => setDeadlineDate(e.target.value)}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+          Material arrival
+          <input type="date" value={materialArrivalDate} onChange={e => setMaterialArrivalDate(e.target.value)}
+            className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </label>
+      </div>
+      {localBlock && (
+        <p className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+          {localBlock}
+        </p>
+      )}
       <div className="flex gap-2 mt-5">
         <button type="button" onClick={onClose} disabled={saving}
           className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">

@@ -4,8 +4,9 @@ import { useAuth } from '@/lib/AuthContext';
 import { fetchSubmittalsCount } from '@/lib/submittals';
 import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
 import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
-import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
+import type { Job, JobStatus, JobType, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
 import { isTechOffOnRange } from '@/lib/data';
+import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -15,6 +16,17 @@ function normalizeJobStatus(raw: unknown): JobStatus {
   if (value === 'active' || value === 'completed' || value === 'scheduled') return value;
   // Legacy "pending" and anything unexpected → scheduled.
   return 'scheduled';
+}
+
+function normalizePhaseLabel(raw: unknown): string {
+  return normalizePhase(typeof raw === 'string' ? raw : null);
+}
+
+function normalizeJobType(raw: unknown): JobType {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value === 'emergency' || value === 'installation' || value === 'inspection') return value;
+  // Legacy "maintenance" (and anything else) → installation.
+  return 'installation';
 }
 
 function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
@@ -83,18 +95,22 @@ export const useDispatchData = () => {
         customerName:      j.title ?? j.customerName ?? 'New Field Job',
         address:           j.location ?? j.address ?? 'Tucson, AZ',
         description:       j.description ?? '',
-        phase:             j.phase ?? 'Rough-In',
+        phase:             normalizePhaseLabel(j.phase),
         status:            normalizeJobStatus(j.status),
         startTime:         j.startTime ?? '08:00',
         endTime:           j.endTime ?? '10:00',
         date:              j.date ?? new Date().toISOString().split('T')[0],
         endDate:           j.end_date ?? j.date ?? new Date().toISOString().split('T')[0],
         serviceType:       j.service_type ?? '',
+        inspectionDate:    j.inspection_date ?? null,
+        deadlineDate:      j.deadline_date ?? null,
+        materialArrivalDate: j.material_arrival_date ?? null,
+        inspectionPassed:  Boolean(j.inspection_passed),
         technicianId:      j.technician_id ?? null,
         technicianIds:     Array.isArray(j.technician_ids)
                              ? j.technician_ids.filter(Boolean)
                              : (j.technician_id ? [j.technician_id] : []),
-        type:              j.type ?? 'maintenance',
+        type:              normalizeJobType(j.type),
         estimatedDuration: j.estimatedDuration ?? 120,
       }));
       setJobs(liveJobs);
@@ -345,11 +361,15 @@ export const useDispatchData = () => {
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
       description:  jobData.description ?? '',
-      phase:        jobData.phase ?? 'Rough-In',
+      phase:        normalizePhase(jobData.phase),
       status:       'scheduled',
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
+      inspection_date: jobData.inspectionDate || null,
+      deadline_date: jobData.deadlineDate || null,
+      material_arrival_date: jobData.materialArrivalDate || null,
+      inspection_passed: Boolean(jobData.inspectionPassed),
       startTime:    jobData.startTime,
       endTime:      jobData.endTime,
       technician_id: primary,
@@ -403,10 +423,14 @@ export const useDispatchData = () => {
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
       description:  jobData.description ?? '',
-      phase:        jobData.phase ?? 'Rough-In',
+      phase:        normalizePhase(jobData.phase),
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
+      inspection_date: jobData.inspectionDate || null,
+      deadline_date: jobData.deadlineDate || null,
+      material_arrival_date: jobData.materialArrivalDate || null,
+      inspection_passed: Boolean(jobData.inspectionPassed),
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
       // NOTE: `jobs` has no `type` column — see createJob. Omitted so the update
@@ -547,14 +571,24 @@ export const useDispatchData = () => {
     return { ok: true };
   }, [refresh, techTimeOff, technicians]);
 
-  const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
-    setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase: newPhase } : j));
+  const updateJobPhase = useCallback(async (jobId: string, newPhase: string): Promise<MutationResult> => {
+    const current = jobsRef.current.find(j => j.id === jobId);
+    const gate = canChangePhase(current?.phase, newPhase, {
+      inspectionPassed: Boolean(current?.inspectionPassed),
+    });
+    if (!gate.ok) {
+      return { ok: false, message: gate.message };
+    }
+    const phase = normalizePhase(newPhase);
+    setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase } : j));
     const { error: sbError } = await supabase
-      .from('jobs').update({ phase: newPhase }).eq('id', jobId);
+      .from('jobs').update({ phase }).eq('id', jobId);
     if (sbError) {
       console.error('Failed to update job phase:', sbError);
       await refresh();
+      return { ok: false, message: sbError.message || 'Could not update phase.' };
     }
+    return { ok: true };
   }, [refresh]);
 
   const hireTechnician = useCallback(async (name: string, role: string) => {

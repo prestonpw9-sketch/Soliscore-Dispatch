@@ -23,11 +23,14 @@ interface Props {
   reportBlueprintsCount: (count: number) => void;
   reportSitePhotosCount: (count: number) => void;
   onJobsChanged?: () => void | Promise<unknown>;
-  todayStr: string;
+  /** Work day shown on the board (rolls to tomorrow after 5 PM Phoenix). */
+  boardDate: string;
+  showingTomorrow?: boolean;
   canEdit: boolean;
   onViewCalendar: () => void;
   onOpenEstimator: () => void;
   onPhaseChange: (jobId: string, newPhase: string) => void;
+  onPhaseBlocked?: (message: string) => void;
   onHire: (name: string, role: string) => void;
   onFire: (id: string) => void;
   onJobClick?: (job: Job) => void;
@@ -86,11 +89,13 @@ const Dashboard: React.FC<Props> = ({
   reportBlueprintsCount,
   reportSitePhotosCount,
   onJobsChanged,
-  todayStr,
+  boardDate,
+  showingTomorrow = false,
   canEdit,
   onViewCalendar,
   onOpenEstimator,
   onPhaseChange,
+  onPhaseBlocked,
   onHire,
   onFire,
   onJobClick,
@@ -101,14 +106,17 @@ const Dashboard: React.FC<Props> = ({
   const [isTeamModalOpen, setIsTeamModalOpen] = React.useState(false);
   const [pinning, setPinning] = React.useState<string | null>(null);
 
-  const todayJobs = jobs.filter(j => jobActiveOnDay(j, todayStr));
+  const dayLabel = showingTomorrow ? 'tomorrow' : 'today';
+  const dayLabelTitle = showingTomorrow ? "Tomorrow's" : "Today's";
+
+  const todayJobs = jobs.filter(j => jobActiveOnDay(j, boardDate));
   const activeJobCount = jobs.filter(j => j.status !== 'completed').length;
   const activePlumbers = technicians.filter(t => t.role === 'Plumber').length;
 
   const priorityByTech = React.useMemo(() => {
     const map = new Map<string, RankMap>();
     techPriorities
-      .filter(p => p.workDate === todayStr)
+      .filter(p => p.workDate === boardDate)
       .forEach(p => {
         const entry = map.get(p.technicianId) ?? {};
         if (p.stopRank === 2) entry.second = p.jobId;
@@ -116,7 +124,7 @@ const Dashboard: React.FC<Props> = ({
         map.set(p.technicianId, entry);
       });
     return map;
-  }, [techPriorities, todayStr]);
+  }, [techPriorities, boardDate]);
 
   const techRoutes = technicians
     .map(t => {
@@ -128,7 +136,7 @@ const Dashboard: React.FC<Props> = ({
     })
     .filter(route => route.jobs.length > 0);
 
-  const offToday = technicians.filter(t => isTechOffOnDay(t.id, todayStr, techTimeOff));
+  const offToday = technicians.filter(t => isTechOffOnDay(t.id, boardDate, techTimeOff));
 
   const handlePin = async (technicianId: string, jobId: string, stopCount: number) => {
     if (!onSetStopPriority) return;
@@ -151,7 +159,7 @@ const Dashboard: React.FC<Props> = ({
 
     setPinning(`${technicianId}:${jobId}`);
     try {
-      await onSetStopPriority(technicianId, todayStr, jobId, next);
+      await onSetStopPriority(technicianId, boardDate, jobId, next);
     } finally {
       setPinning(null);
     }
@@ -195,14 +203,19 @@ const Dashboard: React.FC<Props> = ({
         <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
           <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
                 <CalendarDays className="w-4 h-4 text-indigo-500" aria-hidden="true" />
-                Today's Crew Routes
+                {dayLabelTitle} Crew Routes
+                {showingTomorrow && (
+                  <span className="text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
+                    After 5 PM
+                  </span>
+                )}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {canEdit
-                  ? 'Star 1st stop — and 2nd when a crew has 3+ stops today'
-                  : 'Jobs grouped by crew — starred stops shown at the top'}
+                  ? `Star 1st stop — and 2nd when a crew has 3+ stops ${dayLabel}`
+                  : `Jobs grouped by crew — starred stops shown at the top`}
               </p>
             </div>
             <button
@@ -218,7 +231,7 @@ const Dashboard: React.FC<Props> = ({
             {offToday.length > 0 && (
               <div className="p-4 bg-rose-50/80 dark:bg-rose-950/20">
                 <p className="text-[10px] font-black uppercase tracking-wide text-rose-600 dark:text-rose-300 mb-2 flex items-center gap-1">
-                  <CalendarOff className="w-3.5 h-3.5" /> Off today — do not schedule
+                  <CalendarOff className="w-3.5 h-3.5" /> Off {dayLabel} — do not schedule
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {offToday.map(t => (
@@ -234,7 +247,7 @@ const Dashboard: React.FC<Props> = ({
             )}
             {techRoutes.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-400 font-medium">
-                No remaining jobs on the schedule for today.
+                No remaining jobs on the schedule for {dayLabel}.
               </div>
             ) : (
               techRoutes.map(({ tech, jobs: techJobs }) => {
@@ -250,7 +263,7 @@ const Dashboard: React.FC<Props> = ({
                       </div>
                       <div>
                         <h4 className="font-bold text-slate-900 dark:text-white text-sm">{tech.name}</h4>
-                        <p className="text-xs text-slate-500">{techJobs.length} stop{techJobs.length === 1 ? '' : 's'} today</p>
+                        <p className="text-xs text-slate-500">{techJobs.length} stop{techJobs.length === 1 ? '' : 's'} {dayLabel}</p>
                       </div>
                     </div>
 
@@ -305,6 +318,7 @@ const Dashboard: React.FC<Props> = ({
                                 job={job}
                                 technicianName={tech.name}
                                 onPhaseChange={onPhaseChange}
+                                onPhaseBlocked={onPhaseBlocked}
                                 onClick={() => onJobClick?.(job)}
                               />
                             </div>

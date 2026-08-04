@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
-import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
+import { PLUMBING_PHASES, canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 
 interface Job {
   id: number;
@@ -14,6 +14,7 @@ interface Job {
   phase: string;
   date: string;
   description: string | null;
+  inspection_passed?: boolean | null;
 }
 
 function jobDisplayName(job: Job): string {
@@ -88,7 +89,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
     setError(null);
     const { data, error: fetchError } = await supabase
       .from('jobs')
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .neq('status', 'completed')
       .order('date', { ascending: true });
     if (fetchError) { setError(fetchError.message); }
@@ -110,7 +111,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
         date: newDate,
         status: 'scheduled',
       })
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .single();
     if (insertError) { setError(insertError.message); }
     else if (data) {
@@ -140,13 +141,21 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       setError('Job name cannot be empty.');
       return;
     }
+    const current = jobs.find(j => j.id === id);
+    const gate = canChangePhase(current?.phase, editPhase, {
+      inspectionPassed: Boolean(current?.inspection_passed),
+    });
+    if (!gate.ok) {
+      setError(gate.message ?? 'Phase change blocked.');
+      return;
+    }
     setSaving(true);
     setError(null);
     const { data, error: updateError } = await supabase
       .from('jobs')
-      .update({ title: trimmed, phase: editPhase })
+      .update({ title: trimmed, phase: normalizePhase(editPhase) })
       .eq('id', id)
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .single();
     if (updateError) {
       setError(updateError.message);
@@ -159,13 +168,22 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
   };
 
   const handlePhaseChange = async (id: number, phase: string) => {
+    const current = jobs.find(j => j.id === id);
+    const gate = canChangePhase(current?.phase, phase, {
+      inspectionPassed: Boolean(current?.inspection_passed),
+    });
+    if (!gate.ok) {
+      setError(gate.message);
+      return;
+    }
     setSaving(true);
     setError(null);
+    const next = normalizePhase(phase);
     const { data, error: updateError } = await supabase
       .from('jobs')
-      .update({ phase })
+      .update({ phase: next })
       .eq('id', id)
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .single();
     if (updateError) {
       setError(updateError.message);

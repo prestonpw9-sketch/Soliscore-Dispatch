@@ -1,4 +1,4 @@
-export type JobType = 'emergency' | 'maintenance' | 'installation' | 'inspection';
+export type JobType = 'emergency' | 'installation' | 'inspection';
 export type Priority = 'emergency' | 'high' | 'normal' | 'low';
 export type CallStatus = 'active' | 'missed' | 'callback' | 'completed';
 /** Job lifecycle: scheduled (on board) → active (in progress) → completed. */
@@ -34,6 +34,12 @@ export interface Job {
   phase: string;
   serviceType?: string;
   estimatedDuration: number;
+  /** Optional milestone dates (YYYY-MM-DD) for Calendar view. */
+  inspectionDate?: string | null;
+  deadlineDate?: string | null;
+  materialArrivalDate?: string | null;
+  /** Required true before advancing Rough/Top-Out → Trim. */
+  inspectionPassed?: boolean;
 }
 
 // Full-day service categories selected on a job (jobs.service_type).
@@ -155,14 +161,67 @@ export interface Customer {
   notes: string;
 }
 
-// Date Helpers
-const today = new Date();
-export const todayStr = today.toISOString().split('T')[0];
+// Date Helpers — Phoenix local calendar (avoids UTC shifting the day/year).
+export function phoenixTodayYMD(d = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Phoenix',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/** Hour 0–23 in America/Phoenix for the given instant. */
+export function phoenixHour(d = new Date()): number {
+  const h = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Phoenix',
+    hour: 'numeric',
+    hour12: false,
+  }).format(d);
+  return Number.parseInt(h, 10);
+}
+
+export function addDaysYMD(ymd: string, days: number): string {
+  const [y, m, day] = ymd.split('-').map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, day ?? 1);
+  dt.setDate(dt.getDate() + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+/** After this hour (Phoenix), Dispatch Board shows the next calendar day's routes. */
+export const DISPATCH_BOARD_ROLLOVER_HOUR = 17;
+
+/**
+ * Calendar day used for crew routes on the Dispatch Board.
+ * From 5:00 PM Phoenix onward, rolls forward to tomorrow so evening planning matches the next workday.
+ */
+export function dispatchBoardWorkDate(now = new Date()): string {
+  const today = phoenixTodayYMD(now);
+  if (phoenixHour(now) >= DISPATCH_BOARD_ROLLOVER_HOUR) {
+    return addDaysYMD(today, 1);
+  }
+  return today;
+}
+
+export function isDispatchBoardShowingTomorrow(now = new Date()): boolean {
+  return dispatchBoardWorkDate(now) !== phoenixTodayYMD(now);
+}
+
+export const todayStr = phoenixTodayYMD();
 
 export const weekDates = Array.from({ length: 7 }).map((_, i) => {
-  const d = new Date(today);
-  d.setDate(today.getDate() - today.getDay() + i);
-  return d.toISOString().split('T')[0];
+  // Build week Sun–Sat around Phoenix "today" using local date parts.
+  const [y, m, day] = todayStr.split('-').map(Number);
+  const base = new Date(y, (m ?? 1) - 1, day ?? 1);
+  const sunday = new Date(base);
+  sunday.setDate(base.getDate() - base.getDay() + i);
+  const yy = sunday.getFullYear();
+  const mm = String(sunday.getMonth() + 1).padStart(2, '0');
+  const dd = String(sunday.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 });
 
 export const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -243,7 +302,7 @@ export const mockJobs: Job[] = [
     customerId: 'c2',
     customerName: 'Sarah Jenkins',
     address: '1423 W Baseline Rd',
-    type: 'maintenance',
+    type: 'installation',
     status: 'scheduled',
     technicianId: 't2',
     date: todayStr,

@@ -3,7 +3,7 @@ import { X, UserPlus, Trash2, Briefcase, Loader2, CalendarOff, Plus } from 'luci
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { TechTimeOff } from '@/lib/data';
-import { isTechOffOnDay } from '@/lib/data';
+import { isTechOffOnDay, phoenixTodayYMD, datesOverlap } from '@/lib/data';
 
 interface Technician {
   id: string;
@@ -36,8 +36,14 @@ interface Props {
 
 type TechRole = 'Plumber' | 'Apprentice';
 
-function todayYMD() {
-  return new Date().toISOString().split('T')[0];
+/** Shift a YYYY-MM-DD string by N calendar days (local parse). */
+function shiftYMD(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, (d ?? 1) + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 const TeamModal: React.FC<Props> = ({
@@ -58,13 +64,13 @@ const TeamModal: React.FC<Props> = ({
   const [saving, setSaving]               = useState(false);
   const [error, setError]                 = useState<string | null>(null);
   const [leaveForId, setLeaveForId]       = useState<string | null>(null);
-  const [leaveStart, setLeaveStart]       = useState(todayYMD());
-  const [leaveEnd, setLeaveEnd]           = useState(todayYMD());
+  const [leaveStart, setLeaveStart]       = useState(phoenixTodayYMD());
+  const [leaveEnd, setLeaveEnd]           = useState(phoenixTodayYMD());
   const [leaveNote, setLeaveNote]         = useState('');
 
   const modalRef    = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
-  const today = todayYMD();
+  const today = phoenixTodayYMD();
 
   const handleClose = () => {
     setConfirmFireId(null);
@@ -79,9 +85,10 @@ const TeamModal: React.FC<Props> = ({
     async function fetchData() {
       setLoading(true);
       setError(null);
+      const phoenixToday = phoenixTodayYMD();
       const [techRes, jobRes] = await Promise.all([
         supabase.from('technicians').select('id, name, role').order('name'),
-        supabase.from('jobs').select('id, title, customerName, phase, technician_id, date').eq('date', today),
+        supabase.from('jobs').select('id, title, customerName, phase, technician_id, date').eq('date', phoenixToday),
       ]);
       if (techRes.error) { setError(techRes.error.message); setLoading(false); return; }
       if (jobRes.error)  { setError(jobRes.error.message);  setLoading(false); return; }
@@ -90,7 +97,7 @@ const TeamModal: React.FC<Props> = ({
       setLoading(false);
     }
     void fetchData();
-  }, [isOpen, today]);
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) setTimeout(() => firstFocusRef.current?.focus(), 0);
@@ -147,9 +154,10 @@ const TeamModal: React.FC<Props> = ({
   };
 
   const openLeaveForm = (techId: string) => {
+    const d = phoenixTodayYMD();
     setLeaveForId(techId);
-    setLeaveStart(today);
-    setLeaveEnd(today);
+    setLeaveStart(d);
+    setLeaveEnd(d);
     setLeaveNote('');
     setError(null);
   };
@@ -174,6 +182,26 @@ const TeamModal: React.FC<Props> = ({
     const result = await onDeleteTimeOff(id);
     setSaving(false);
     if (result.ok === false) setError(result.message);
+  };
+
+  /** Clear every leave range that covers Phoenix today — makes them schedulable again. */
+  const handleMakeAvailableToday = async (techId: string) => {
+    if (!onDeleteTimeOff) return;
+    const covering = techTimeOff.filter(
+      r => r.technicianId === techId && datesOverlap(today, today, r.startDate, r.endDate),
+    );
+    if (!covering.length) return;
+    setSaving(true);
+    setError(null);
+    for (const row of covering) {
+      const result = await onDeleteTimeOff(row.id);
+      if (result.ok === false) {
+        setError(result.message);
+        setSaving(false);
+        return;
+      }
+    }
+    setSaving(false);
   };
 
   return (
@@ -214,8 +242,10 @@ const TeamModal: React.FC<Props> = ({
             const techJobs = todayJobs.filter(j => j.technician_id === tech.id);
             const isFiring = confirmFireId === tech.id;
             const offToday = isTechOffOnDay(tech.id, today, techTimeOff);
-            const upcoming = techTimeOff
-              .filter(r => r.technicianId === tech.id && r.endDate >= today)
+            // Keep recent past leave visible (UTC evening was hiding same-day offs).
+            const recentCutoff = shiftYMD(today, -14);
+            const leaveRows = techTimeOff
+              .filter(r => r.technicianId === tech.id && r.endDate >= recentCutoff)
               .sort((a, b) => a.startDate.localeCompare(b.startDate));
             const showLeaveForm = leaveForId === tech.id;
 
@@ -249,7 +279,18 @@ const TeamModal: React.FC<Props> = ({
                       )}
                     </div>
                   </div>
-                  <div className="shrink-0 self-start flex items-center gap-2">
+                  <div className="shrink-0 self-start flex items-center gap-2 flex-wrap justify-end">
+                    {canEdit && offToday && onDeleteTimeOff && !isFiring && (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => void handleMakeAvailableToday(tech.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs font-bold"
+                        title="Remove today's day off so they can be scheduled"
+                      >
+                        Make available
+                      </button>
+                    )}
                     {canEdit && onAddTimeOff && !isFiring && (
                       <button
                         type="button"
@@ -329,35 +370,49 @@ const TeamModal: React.FC<Props> = ({
                   </div>
                 )}
 
-                {upcoming.length > 0 && (
+                {leaveRows.length > 0 && (
                   <div className="space-y-1.5">
-                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Upcoming days off</p>
-                    {upcoming.map(row => (
-                      <div
-                        key={row.id}
-                        className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 rounded-lg px-2.5 py-1.5"
-                      >
-                        <CalendarOff className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                        <span className="font-semibold">
-                          {row.startDate === row.endDate
-                            ? row.startDate
-                            : `${row.startDate} → ${row.endDate}`}
-                        </span>
-                        {row.note && <span className="text-slate-400 truncate">· {row.note}</span>}
-                        {canEdit && onDeleteTimeOff && (
-                          <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void handleDeleteLeave(row.id)}
-                            className="ml-auto text-rose-500 hover:text-rose-700 p-1"
-                            aria-label="Remove day off"
-                            title="Remove day off"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Days off</p>
+                    {leaveRows.map(row => {
+                      const coversToday = datesOverlap(today, today, row.startDate, row.endDate);
+                      const isPast = row.endDate < today;
+                      return (
+                        <div
+                          key={row.id}
+                          className={`flex items-center gap-2 text-xs bg-white dark:bg-slate-900/60 border rounded-lg px-2.5 py-1.5 ${
+                            coversToday
+                              ? 'border-rose-300 text-rose-800 dark:border-rose-700 dark:text-rose-200'
+                              : 'border-slate-100 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <CalendarOff className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                          <span className="font-semibold">
+                            {row.startDate === row.endDate
+                              ? row.startDate
+                              : `${row.startDate} → ${row.endDate}`}
+                          </span>
+                          {coversToday && (
+                            <span className="text-[9px] font-black uppercase text-rose-600">Today</span>
+                          )}
+                          {isPast && !coversToday && (
+                            <span className="text-[9px] font-bold uppercase text-slate-400">Past</span>
+                          )}
+                          {row.note && <span className="text-slate-400 truncate">· {row.note}</span>}
+                          {canEdit && onDeleteTimeOff && (
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => void handleDeleteLeave(row.id)}
+                              className="ml-auto shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 dark:bg-teal-900/30 dark:text-teal-300 dark:hover:bg-teal-900/50"
+                              aria-label="Clear day off"
+                              title="Clear this day off so they can be scheduled"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

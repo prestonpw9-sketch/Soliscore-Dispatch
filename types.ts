@@ -1,8 +1,10 @@
+// Compatibility shim — prefer importing from src/lib/phases.
 export const PLUMBING_PHASES = [
-  "Underground",
-  "Rough-In",
-  "Top-Out",
-  "Trim/Finish",
-  "Service Call",
-  "T&M",
+  'Rough-In',
+  'Top-Out',
+  'Trim',
+  'Final',
+  'Punch',
+  'Service Call',
+  'T&M',
 ];
