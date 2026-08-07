@@ -1,9 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Camera, UploadCloud } from 'lucide-react';
+import { Camera, UploadCloud, X, ExternalLink } from 'lucide-react';
 import type { Job } from '@/lib/data';
 import { JobSelect } from '@/components/JobSelect';
-import { buildPhotoPath, getJobLabel, parsePhotoPath } from '@/lib/sitePhotos';
+import {
+  buildPhotoPath,
+  compressImageForUpload,
+  getJobLabel,
+  getPhotoFullUrl,
+  getPhotoPreviewUrl,
+  getPhotoThumbnailUrl,
+  parsePhotoPath,
+} from '@/lib/sitePhotos';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +41,7 @@ export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
   const [fetchError, setFetchError]     = useState<string | null>(null);
   const [uploadError, setUploadError]   = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState('');
+  const [viewer, setViewer]             = useState<StorageFile | null>(null);
 
   const fetchPhotos = useCallback(async () => {
     setFetchError(null);
@@ -53,6 +62,15 @@ export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
     void fetchPhotos();
   }, [fetchPhotos]);
 
+  useEffect(() => {
+    if (!viewer) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setViewer(null);
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [viewer]);
+
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -68,11 +86,12 @@ export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
     e.target.value = '';
 
     try {
-      const filePath = buildPhotoPath(selectedJobId, file.name);
+      const compressed = await compressImageForUpload(file);
+      const filePath = buildPhotoPath(selectedJobId, compressed.name);
 
       const { error } = await supabase.storage
         .from('site-photos')
-        .upload(filePath, file);
+        .upload(filePath, compressed, { cacheControl: '3600', upsert: false });
 
       if (error) throw error;
 
@@ -84,13 +103,6 @@ export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
     } finally {
       setUploading(false);
     }
-  };
-
-  const getImageUrl = (fileName: string): string =>
-    supabase.storage.from('site-photos').getPublicUrl(fileName).data.publicUrl;
-
-  const openPhoto = (fileName: string) => {
-    window.open(getImageUrl(fileName), '_blank', 'noopener,noreferrer');
   };
 
   const canUpload = Boolean(selectedJobId) && !uploading;
@@ -155,19 +167,19 @@ export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
         ) : (
           <div className="grid grid-cols-2 gap-3">
             {photos.map(file => {
-              const url = getImageUrl(file.name);
+              const thumbUrl = getPhotoThumbnailUrl(file.name);
               const { jobId } = parsePhotoPath(file.name);
               const jobLabel = getJobLabel(jobId, jobs);
               return (
                 <button
                   key={file.id}
                   type="button"
-                  onClick={() => openPhoto(file.name)}
+                  onClick={() => setViewer(file)}
                   aria-label={`View site photo for ${jobLabel}`}
                   className="relative group cursor-pointer aspect-video rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                 >
                   <img
-                    src={url}
+                    src={thumbUrl}
                     alt={`Site photo for ${jobLabel}`}
                     width={300}
                     height={169}
@@ -192,6 +204,53 @@ export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
           </div>
         )}
       </div>
+
+      {viewer && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/90 flex flex-col"
+          onClick={() => setViewer(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Photo preview"
+        >
+          <div className="flex items-center justify-between gap-3 p-4 shrink-0">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white truncate">
+                {getJobLabel(parsePhotoPath(viewer.name).jobId, jobs)}
+              </p>
+              <p className="text-xs text-slate-300 truncate">{parsePhotoPath(viewer.name).displayName}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={getPhotoFullUrl(viewer.name)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Original
+              </a>
+              <button
+                type="button"
+                onClick={() => setViewer(null)}
+                aria-label="Close preview"
+                className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0" onClick={e => e.stopPropagation()}>
+            <img
+              src={getPhotoPreviewUrl(viewer.name)}
+              alt={parsePhotoPath(viewer.name).displayName}
+              decoding="async"
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
