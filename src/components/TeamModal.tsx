@@ -9,6 +9,7 @@ interface Technician {
   id: string;
   name: string;
   role: string;
+  skills?: string[];
 }
 
 interface Job {
@@ -61,6 +62,8 @@ const TeamModal: React.FC<Props> = ({
   const [leaveStart, setLeaveStart]       = useState(todayYMD());
   const [leaveEnd, setLeaveEnd]           = useState(todayYMD());
   const [leaveNote, setLeaveNote]         = useState('');
+  const [skillsDraft, setSkillsDraft]     = useState<Record<string, string>>({});
+  const [editingSkillsId, setEditingSkillsId] = useState<string | null>(null);
 
   const modalRef    = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
@@ -79,13 +82,40 @@ const TeamModal: React.FC<Props> = ({
     async function fetchData() {
       setLoading(true);
       setError(null);
-      const [techRes, jobRes] = await Promise.all([
+      const [techRes, jobRes, memoryRes] = await Promise.all([
         supabase.from('technicians').select('id, name, role').order('name'),
         supabase.from('jobs').select('id, title, customerName, phase, technician_id, date').eq('date', today),
+        supabase.functions.invoke<{ memories?: Array<{
+          category: string;
+          technician_id: string | null;
+          content: string;
+          active?: boolean;
+        }> }>('send-outbound-sms', { body: { action: 'list-ai-memories' } }),
       ]);
       if (techRes.error) { setError(techRes.error.message); setLoading(false); return; }
       if (jobRes.error)  { setError(jobRes.error.message);  setLoading(false); return; }
-      setTechnicians(techRes.data ?? []);
+
+      const abilityByTech = new Map<string, string[]>();
+      for (const m of memoryRes.data?.memories ?? []) {
+        if (m.category !== 'crew_ability' || !m.technician_id) continue;
+        const list = abilityByTech.get(m.technician_id) ?? [];
+        // Prefer compact skill lists when content looks like "Name abilities: a, b"
+        const match = m.content.match(/abilities:\s*(.+)$/i);
+        if (match) {
+          for (const part of match[1].split(',')) {
+            const s = part.trim();
+            if (s && s !== '(none)' && !list.includes(s)) list.push(s);
+          }
+        } else if (!list.includes(m.content)) {
+          list.push(m.content);
+        }
+        abilityByTech.set(m.technician_id, list);
+      }
+
+      setTechnicians((techRes.data ?? []).map(t => ({
+        ...t,
+        skills: abilityByTech.get(t.id) ?? [],
+      })));
       setTodayJobs(jobRes.data ?? []);
       setLoading(false);
     }
@@ -176,6 +206,39 @@ const TeamModal: React.FC<Props> = ({
     if (result.ok === false) setError(result.message);
   };
 
+  const openSkillsEditor = (tech: Technician) => {
+    setEditingSkillsId(tech.id);
+    setSkillsDraft(prev => ({
+      ...prev,
+      [tech.id]: (tech.skills ?? []).join(', '),
+    }));
+    setError(null);
+  };
+
+  const handleSaveSkills = async (techId: string) => {
+    const raw = skillsDraft[techId] ?? '';
+    const skills = raw.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
+    setSaving(true);
+    setError(null);
+    const { data, error: fnError } = await supabase.functions.invoke<{
+      ok?: boolean;
+      error?: string;
+      skills?: string[];
+    }>('send-outbound-sms', {
+      body: { action: 'save-tech-skills', technician_id: techId, skills },
+    });
+    setSaving(false);
+    if (fnError || data?.error) {
+      setError(data?.error ?? fnError?.message ?? 'Could not save abilities.');
+      return;
+    }
+    setTechnicians(prev => prev.map(t =>
+      t.id === techId ? { ...t, skills: data?.skills ?? skills } : t,
+    ));
+    setEditingSkillsId(null);
+    window.dispatchEvent(new CustomEvent('solidcore:data-refresh'));
+  };
+
   return (
     <div
       className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
@@ -247,6 +310,54 @@ const TeamModal: React.FC<Props> = ({
                           </p>
                         ))
                       )}
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Abilities</p>
+                        {canEdit && editingSkillsId !== tech.id && (
+                          <button
+                            type="button"
+                            onClick={() => openSkillsEditor(tech)}
+                            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-500"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      {editingSkillsId === tech.id ? (
+                        <div className="space-y-2">
+                          <input
+                            type="text"
+                            value={skillsDraft[tech.id] ?? ''}
+                            onChange={e => setSkillsDraft(prev => ({ ...prev, [tech.id]: e.target.value }))}
+                            placeholder="Rough, Top-out, Trim, water heaters…"
+                            className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => void handleSaveSkills(tech.id)}
+                              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold"
+                            >
+                              {saving ? 'Saving…' : 'Save abilities'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => setEditingSkillsId(null)}
+                              className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (tech.skills?.length ? (
+                        <p className="text-xs text-slate-600 dark:text-slate-300">{tech.skills.join(' · ')}</p>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic">Not set — teach the AI or edit here</p>
+                      ))}
                     </div>
                   </div>
                   <div className="shrink-0 self-start flex items-center gap-2">
