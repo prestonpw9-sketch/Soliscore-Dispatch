@@ -37,6 +37,25 @@ export interface TodayJobSummary {
   serviceType?: string;
 }
 
+export interface CrewMemberSummary {
+  id:     string;
+  name:   string;
+  role:   string;
+  skills: string[];
+}
+
+export interface ScheduleJobSummary {
+  id:            string;
+  customerName:  string;
+  site:          string;
+  phase:         string;
+  status:        string;
+  serviceType?:  string;
+  startDate:     string;
+  endDate:       string;
+  crew:          string[];
+}
+
 export interface SOLIDCOREContext {
   activeJobs?:        number;
   techsOnDuty?:       string[];
@@ -47,6 +66,16 @@ export interface SOLIDCOREContext {
   totalJobsToday?:    number;
   currentDateTime?:   string;
   todayDate?:         string;
+  /** Upcoming schedule window for the AI (server still loads live DB). */
+  scheduleWindow?:    ScheduleJobSummary[];
+  /** Crew roster with known abilities. */
+  crewRoster?:        CrewMemberSummary[];
+}
+
+export interface AIChatResult {
+  reply: string;
+  didMutate?: boolean;
+  toolsUsed?: string[];
 }
 
 export interface AIProviderConfig {
@@ -80,5 +109,5 @@ export interface IAIProvider {
     messages: AIMessage[],
     context:  SOLIDCOREContext,
     options?: AIRequestOptions
-  ): Promise<string>;
+  ): Promise<AIChatResult>;
 }

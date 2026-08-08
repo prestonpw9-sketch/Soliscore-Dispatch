@@ -110,7 +110,21 @@ export const useDispatchData = () => {
     try {
       const { data, error: sbError } = await supabase.from('technicians').select('*');
       if (sbError) throw sbError;
-      setTechnicians(data ?? []);
+      setTechnicians((data ?? []).map((t: Record<string, unknown>) => {
+        const rawSkills = t.skills;
+        const skills = Array.isArray(rawSkills)
+          ? rawSkills.map(s => String(s).trim()).filter(Boolean)
+          : typeof rawSkills === 'string' && rawSkills.trim()
+            ? rawSkills.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
+            : [];
+        return {
+          id: String(t.id ?? ''),
+          name: String(t.name ?? ''),
+          role: String(t.role ?? ''),
+          color: t.color ? String(t.color) : undefined,
+          skills,
+        };
+      }));
     } catch (err) {
       console.error('Error fetching team:', err);
     }
@@ -314,6 +328,12 @@ export const useDispatchData = () => {
     fetchSubmittals, fetchBlueprints, fetchSitePhotos,
   ]);
 
+  // AI assistant mutates schedule/memories via edge tools — refresh live boards.
+  useEffect(() => {
+    const onRefresh = () => { void refresh(); };
+    window.addEventListener('solidcore:data-refresh', onRefresh);
+    return () => window.removeEventListener('solidcore:data-refresh', onRefresh);
+  }, [refresh]);
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   // FIX: accepts typed `Omit<Job, 'id'>` instead of `any`

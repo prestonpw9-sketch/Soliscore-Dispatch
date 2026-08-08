@@ -128,6 +128,32 @@ const AppLayout: React.FC = () => {
       ))
       .map(t => t.name);
 
+    const scheduleWindow = jobs
+      .filter(j => j.status !== 'completed')
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0, 60)
+      .map(j => ({
+        id:           j.id,
+        customerName: j.customerName,
+        site:         j.address,
+        phase:        j.phase,
+        status:       j.status,
+        serviceType:  j.serviceType,
+        startDate:    j.date,
+        endDate:      j.endDate ?? j.date,
+        crew:         (j.technicianIds?.length
+          ? j.technicianIds.map(id => techName(id)).filter(Boolean)
+          : [techName(j.technicianId)].filter(Boolean)) as string[],
+      }));
+
+    const crewRoster = technicians.map(t => ({
+      id:     t.id,
+      name:   t.name,
+      role:   t.role,
+      skills: t.skills ?? [],
+    }));
+
     updateContext({
       currentPage:       titles[view].title,
       currentDateTime:   new Date().toLocaleString('en-US', {
@@ -151,6 +177,8 @@ const AppLayout: React.FC = () => {
       techsOnDuty,
       openJobsToday,
       totalJobsToday:    todayOpen.length,
+      scheduleWindow,
+      crewRoster,
       selectedJob: selectedJob
         ? {
             id:           selectedJob.id,
