@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  X, Upload, Trash2, Camera, Loader2, ChevronDown, ChevronRight,
+  X, Upload, Trash2, Camera, Loader2, ChevronDown, ChevronRight, ExternalLink,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { Job } from '@/lib/data';
 import { JobSelect } from '@/components/JobSelect';
 import {
   buildPhotoPath,
+  compressImageForUpload,
   getJobLabel,
+  getPhotoFullUrl,
+  getPhotoPreviewUrl,
+  getPhotoThumbnailUrl,
   groupPhotosByJob,
   parsePhotoPath,
 } from '@/lib/sitePhotos';
@@ -15,7 +19,9 @@ import {
 interface SitePhoto {
   id: string;
   name: string;
-  url: string;
+  thumbUrl: string;
+  previewUrl: string;
+  fullUrl: string;
   created_at: string;
   jobId: string | null;
   jobLabel: string;
@@ -37,6 +43,7 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [viewer, setViewer]               = useState<SitePhoto | null>(null);
   const fileInputRef  = useRef<HTMLInputElement>(null);
   const modalRef      = useRef<HTMLDivElement>(null);
 
@@ -46,13 +53,19 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
   }, [isOpen, jobs]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setViewer(null);
+      return;
+    }
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (viewer) setViewer(null);
+        else onClose();
+      }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, viewer]);
 
   const fetchPhotos = async () => {
     setLoading(true);
@@ -72,7 +85,9 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
         return {
           id: f.id ?? f.name,
           name: f.name,
-          url: supabase.storage.from('site-photos').getPublicUrl(f.name).data.publicUrl,
+          thumbUrl: getPhotoThumbnailUrl(f.name),
+          previewUrl: getPhotoPreviewUrl(f.name),
+          fullUrl: getPhotoFullUrl(f.name),
           created_at: f.created_at ?? '',
           jobId,
           jobLabel: getJobLabel(jobId, jobs),
@@ -96,8 +111,9 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
       prev.forEach(label => {
         if (labels.has(label)) next.add(label);
       });
+      // Only auto-expand the first group so we don't fetch every thumbnail at once.
       if (next.size === 0 && groups.length > 0) {
-        groups.forEach(g => next.add(g.label));
+        next.add(groups[0].label);
       }
       return next;
     });
@@ -124,16 +140,21 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
 
     setUploading(true);
     setError(null);
-    const fileName = buildPhotoPath(selectedJobId, file.name);
-    const { error: uploadError } = await supabase.storage
-      .from('site-photos')
-      .upload(fileName, file, { cacheControl: '3600', upsert: false });
-    if (uploadError) {
-      setError(uploadError.message);
-    } else {
-      const jobLabel = getJobLabel(selectedJobId, jobs);
-      setExpandedGroups(prev => new Set(prev).add(jobLabel));
-      await fetchPhotos();
+    try {
+      const compressed = await compressImageForUpload(file);
+      const fileName = buildPhotoPath(selectedJobId, compressed.name);
+      const { error: uploadError } = await supabase.storage
+        .from('site-photos')
+        .upload(fileName, compressed, { cacheControl: '3600', upsert: false });
+      if (uploadError) {
+        setError(uploadError.message);
+      } else {
+        const jobLabel = getJobLabel(selectedJobId, jobs);
+        setExpandedGroups(prev => new Set(prev).add(jobLabel));
+        await fetchPhotos();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed.');
     }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -153,6 +174,7 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
         return next;
       });
       setConfirmDeleteId(null);
+      if (viewer?.name === name) setViewer(null);
       await onRefresh?.();
     }
   };
@@ -251,25 +273,41 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
                           const { displayName } = parsePhotoPath(photo.name);
                           return (
                             <div key={photo.id} className="relative group rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 aspect-square">
-                              <img
-                                src={photo.url}
-                                alt={`${photo.jobLabel}: ${displayName}`}
-                                className="w-full h-full object-cover"
-                                onError={e => {
-                                  (e.target as HTMLImageElement).style.display = 'none';
-                                }}
-                              />
-                              <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/40 transition-all flex items-center justify-center">
+                              <button
+                                type="button"
+                                onClick={() => { if (!isDeleting) setViewer(photo); }}
+                                className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                                aria-label={`Open ${displayName}`}
+                              >
+                                <img
+                                  src={photo.thumbUrl}
+                                  alt={`${photo.jobLabel}: ${displayName}`}
+                                  loading="lazy"
+                                  decoding="async"
+                                  width={480}
+                                  height={480}
+                                  className="w-full h-full object-cover"
+                                  onError={e => {
+                                    (e.target as HTMLImageElement).style.display = 'none';
+                                  }}
+                                />
+                              </button>
+                              <div className={`absolute inset-0 transition-all flex items-center justify-center ${
+                                isDeleting
+                                  ? 'pointer-events-auto bg-slate-900/50'
+                                  : 'pointer-events-none bg-slate-900/0 group-hover:bg-slate-900/40'
+                              }`}>
                                 {!isDeleting ? (
                                   <button
                                     type="button"
-                                    onClick={() => setConfirmDeleteId(photo.id)}
-                                    className="opacity-0 group-hover:opacity-100 p-2 bg-red-600 text-white rounded-lg transition-all"
+                                    onClick={e => { e.stopPropagation(); setConfirmDeleteId(photo.id); }}
+                                    className="pointer-events-auto opacity-0 group-hover:opacity-100 p-2 bg-red-600 text-white rounded-lg transition-all"
+                                    aria-label={`Delete ${displayName}`}
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </button>
                                 ) : (
-                                  <div className="flex flex-col items-center gap-2 opacity-100 bg-slate-900/80 p-3 rounded-xl">
+                                  <div className="flex flex-col items-center gap-2 bg-slate-900/80 p-3 rounded-xl">
                                     <span className="text-xs text-white font-semibold">Delete photo?</span>
                                     <div className="flex gap-2">
                                       <button type="button" onClick={() => handleDelete(photo.name)}
@@ -280,7 +318,7 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
                                   </div>
                                 )}
                               </div>
-                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900/80 to-transparent p-2">
+                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900/80 to-transparent p-2 pointer-events-none">
                                 <p className="text-[10px] text-white truncate">{displayName}</p>
                               </div>
                             </div>
@@ -295,6 +333,51 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
           )}
         </div>
       </div>
+
+      {viewer && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/90 flex flex-col"
+          onClick={() => setViewer(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Photo preview"
+        >
+          <div className="flex items-center justify-between gap-3 p-4 shrink-0">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white truncate">{viewer.jobLabel}</p>
+              <p className="text-xs text-slate-300 truncate">{parsePhotoPath(viewer.name).displayName}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={viewer.fullUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Original
+              </a>
+              <button
+                type="button"
+                onClick={() => setViewer(null)}
+                aria-label="Close preview"
+                className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0" onClick={e => e.stopPropagation()}>
+            <img
+              src={viewer.previewUrl}
+              alt={parsePhotoPath(viewer.name).displayName}
+              decoding="async"
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
