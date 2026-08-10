@@ -52,6 +52,8 @@ export interface SummaryInputs {
   salesTaxPct: number;
   taxBaseOverride: number | null; // null => use TOTAL MATERIAL as tax base
   bidFactor: number; // defaults to 1 (no-op divisor)
+  /** Free-form takeoff notes (Page 4). */
+  notes?: string;
 }
 
 export interface BidDocument {

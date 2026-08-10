@@ -1055,6 +1055,21 @@ function SummaryTab({ doc, updateSummary, updateLaborHour, updateSub }: SummaryP
               onChange={e => updateSummary({ bidFactor: num(e.target.value) })} />
           </label>
         </div>
+
+        <div className={`${cardCls} p-4`}>
+          <h3 className="font-semibold mb-2">Notes</h3>
+          <p className="text-xs text-slate-500 mb-2">
+            Job assumptions, exclusions to remember, site conditions — saved with this takeoff.
+          </p>
+          <textarea
+            aria-label="Takeoff notes"
+            rows={8}
+            className={`${inputCls} min-h-[10rem] resize-y leading-relaxed`}
+            placeholder="Add notes for this bid…"
+            value={s.notes ?? ''}
+            onChange={e => updateSummary({ notes: e.target.value })}
+          />
+        </div>
       </div>
 
       {/* Waterfall column */}
