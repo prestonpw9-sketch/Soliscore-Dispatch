@@ -12,6 +12,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   doc: BidDocument;
+  ensureSaved?: () => Promise<BidDocument>;
 }
 
 const REPS = ['Preston Watson', 'Greg Williamson'];
@@ -20,7 +21,7 @@ const labelCls = 'block text-xs font-semibold text-slate-600 dark:text-slate-400
 const fieldCls =
   'w-full border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg p-2 text-sm focus:bg-white dark:focus:bg-slate-700 focus:border-teal-500 focus:ring-2 focus:ring-teal-500 outline-none transition-colors';
 
-const ChangeOrderModal: React.FC<Props> = ({ open, onClose, doc }) => {
+const ChangeOrderModal: React.FC<Props> = ({ open, onClose, doc, ensureSaved }) => {
   const [company, setCompany] = useState('');
   const [project, setProject] = useState('');
   const [changeOrderNumber, setChangeOrderNumber] = useState('');
@@ -36,7 +37,7 @@ const ChangeOrderModal: React.FC<Props> = ({ open, onClose, doc }) => {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Prefill from the bid when the modal opens.
+  // Prefill from the bid only when the modal opens (not on every doc save).
   useEffect(() => {
     if (!open) return;
     setCompany(doc.gcOwner ?? '');
@@ -57,7 +58,8 @@ const ChangeOrderModal: React.FC<Props> = ({ open, onClose, doc }) => {
     setRep(REPS[0]);
     setNote(null);
     setError(null);
-  }, [open, doc]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only seed when opened
+  }, [open]);
 
   if (!open) return null;
 
@@ -69,6 +71,11 @@ const ChangeOrderModal: React.FC<Props> = ({ open, onClose, doc }) => {
       setError(null);
       setNote(null);
       try {
+        let bidId = doc.id;
+        if (ensureSaved) {
+          const saved = await ensureSaved();
+          bidId = saved.id ?? bidId;
+        }
         const data: ChangeOrderData = {
           company,
           project,
@@ -84,8 +91,11 @@ const ChangeOrderModal: React.FC<Props> = ({ open, onClose, doc }) => {
         const pdf = await buildChangeOrderPdf(data);
         const safeProject = (project || 'change-order').replace(/[^a-zA-Z0-9.\-_ ]/g, '').trim();
         const coNum = changeOrderNumber ? ` ${changeOrderNumber}` : '';
-        const result = await savePdf(pdf, `Change Order${coNum} - ${safeProject}.pdf`, doc.id);
-        setNote(result.storageNote);
+        const result = await savePdf(pdf, `Change Order${coNum} - ${safeProject}.pdf`, bidId);
+        setNote(
+          (result.storageNote ? `${result.storageNote} ` : '')
+          + 'Your takeoff stays saved under Open Saved.',
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to generate PDF.');
       } finally {
