@@ -17,6 +17,8 @@ interface Props {
   open: boolean;
   onClose: () => void;
   doc: BidDocument;
+  /** Persist the takeoff before/while generating so the estimate is not lost. */
+  ensureSaved?: () => Promise<BidDocument>;
 }
 
 const SIGNERS = ['Greg Williamson', 'Preston Watson'];
@@ -29,7 +31,7 @@ function firstName(full: string): string {
   return full.trim().split(/\s+/)[0] || 'Sir or Madam';
 }
 
-const ProposalModal: React.FC<Props> = ({ open, onClose, doc }) => {
+const ProposalModal: React.FC<Props> = ({ open, onClose, doc, ensureSaved }) => {
   const finalBid = useMemo(() => calcSummary(doc).finalBid, [doc]);
 
   const [date, setDate] = useState('');
@@ -60,7 +62,7 @@ const ProposalModal: React.FC<Props> = ({ open, onClose, doc }) => {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Prefill from the bid when the modal opens.
+  // Prefill from the bid only when the modal opens (not on every doc save).
   useEffect(() => {
     if (!open) return;
     setDate(
@@ -97,7 +99,8 @@ const ProposalModal: React.FC<Props> = ({ open, onClose, doc }) => {
     setSigner(SIGNERS[0]);
     setNote(null);
     setError(null);
-  }, [open, doc, finalBid]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only seed when opened
+  }, [open]);
 
   if (!open) return null;
 
@@ -115,6 +118,11 @@ const ProposalModal: React.FC<Props> = ({ open, onClose, doc }) => {
       setError(null);
       setNote(null);
       try {
+        let bidId = doc.id;
+        if (ensureSaved) {
+          const saved = await ensureSaved();
+          bidId = saved.id ?? bidId;
+        }
         const data: ProposalData = {
           date,
           recipientName,
@@ -146,8 +154,11 @@ const ProposalModal: React.FC<Props> = ({ open, onClose, doc }) => {
         };
         const pdf = await buildProposalPdf(data);
         const safeProject = (projectName || 'proposal').replace(/[^a-zA-Z0-9.\-_ ]/g, '').trim();
-        const result = await savePdf(pdf, `Proposal - ${safeProject}.pdf`, doc.id);
-        setNote(result.storageNote);
+        const result = await savePdf(pdf, `Proposal - ${safeProject}.pdf`, bidId);
+        setNote(
+          (result.storageNote ? `${result.storageNote} ` : '')
+          + 'Your takeoff stays saved under Open Saved.',
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to generate PDF.');
       } finally {
