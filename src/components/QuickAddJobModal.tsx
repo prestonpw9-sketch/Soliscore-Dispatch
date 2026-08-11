@@ -235,11 +235,13 @@ const QuickAddJobModal: React.FC<Props> = ({
 
     const customer = customers.find(
       c => c.name.toLowerCase() === customerName.toLowerCase()
-    );
-
+    )
+      ?? (defaults?.customerId
+        ? customers.find(c => c.id === defaults.customerId)
+        : undefined);
 
     const job: Omit<Job, 'id'> = {
-      customerId: customer?.id ?? `new-${Date.now()}`,
+      customerId: customer?.id ?? defaults?.customerId ?? `new-${Date.now()}`,
       customerName,
       address,
       type,
@@ -255,6 +257,7 @@ const QuickAddJobModal: React.FC<Props> = ({
       description,
       phase: 'Rough-In',
       estimatedDuration: 480,
+      projectId: defaults?.projectId,
     };
 
 

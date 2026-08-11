@@ -20,6 +20,8 @@ export interface Job {
   id: string;
   customerId: string;
   customerName: string;
+  /** Optional link to public.projects for per-site billing. */
+  projectId?: string;
   address: string;
   type: JobType;
   status: JobStatus;
