@@ -1,21 +1,26 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Search, Phone, Mail, MapPin, Building2, Home,
-  Calendar, Plus, HardHat, FileText, X, Loader2,
+  Calendar, Plus, HardHat, X, Loader2, DollarSign, AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Customer, Job } from '@/lib/data';
+import {
+  BILLING_MILESTONES,
+  type BillingMilestoneKey,
+  type ProjectBilling,
+  billedPercent,
+  buildBillingLookahead,
+  formatMoney,
+  jobMatchesCustomer,
+  milestoneAmount,
+  phaseCompletePercent,
+  phaseToMilestone,
+  suggestedBillBy,
+} from '@/lib/billing';
 
 // ── Types ──────────────────────────────────────────────────────────────────
-
-interface Project {
-  id: string;
-  builder_id: string;
-  name: string;
-  address: string | null;
-  status: string | null;
-}
 
 interface Props {
   customers: Customer[];
@@ -38,10 +43,42 @@ const EMPTY_FORM: NewBuilderForm = {
   name: '', phone: '', email: '', address: '', city: '',
 };
 
+function mapProjectRow(row: Record<string, unknown>): ProjectBilling {
+  return {
+    id: String(row.id ?? ''),
+    builderId: String(row.builder_id ?? ''),
+    name: String(row.name ?? ''),
+    address: row.address != null ? String(row.address) : null,
+    status: row.status != null ? String(row.status) : null,
+    contractAmount: row.contract_amount != null ? Number(row.contract_amount) : null,
+    roughBilled: Boolean(row.rough_billed),
+    topoutBilled: Boolean(row.topout_billed),
+    trimBilled: Boolean(row.trim_billed),
+    roughBillBy: row.rough_bill_by != null ? String(row.rough_bill_by).slice(0, 10) : null,
+    topoutBillBy: row.topout_bill_by != null ? String(row.topout_bill_by).slice(0, 10) : null,
+    trimBillBy: row.trim_bill_by != null ? String(row.trim_bill_by).slice(0, 10) : null,
+  };
+}
+
+const PROJECT_SELECT =
+  'id, builder_id, name, address, status, contract_amount, rough_billed, topout_billed, trim_billed, rough_bill_by, topout_bill_by, trim_bill_by';
+
+function ProgressBar({ value, tone = 'teal' }: { value: number; tone?: 'teal' | 'amber' | 'purple' }) {
+  const pct = Math.max(0, Math.min(100, value));
+  const fill =
+    tone === 'amber' ? 'bg-amber-500' : tone === 'purple' ? 'bg-purple-500' : 'bg-teal-600';
+  return (
+    <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" aria-hidden="true">
+      <div className={`h-full ${fill} transition-all`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 const CustomersView: React.FC<Props> = ({
   customers,
+  jobs = [],
   onCall,
   onSchedule,
   onCreateCustomer,
@@ -56,35 +93,64 @@ const CustomersView: React.FC<Props> = ({
   const [saveError, setSaveError]     = useState<string | null>(null);
   const [saving, setSaving]           = useState(false);
 
-  // Builder projects (projects table, keyed by builder_id = selected customer id).
-  const [projects, setProjects]       = useState<Project[]>([]);
+  // All projects (for counts, look-ahead, and detail).
+  const [allProjects, setAllProjects] = useState<ProjectBilling[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [newProject, setNewProject]   = useState({ name: '', address: '' });
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [billingBusy, setBillingBusy] = useState<string | null>(null);
 
-  const fetchProjects = useCallback(async (builderId: string) => {
+  const fetchAllProjects = useCallback(async () => {
     setProjectsLoading(true);
     setProjectError(null);
     const { data, error } = await supabase
       .from('projects')
-      .select('id, builder_id, name, address, status')
-      .eq('builder_id', builderId)
+      .select(PROJECT_SELECT)
       .order('name', { ascending: true });
     if (error) setProjectError(error.message);
-    else setProjects((data ?? []) as Project[]);
+    else setAllProjects((data ?? []).map(r => mapProjectRow(r as Record<string, unknown>)));
     setProjectsLoading(false);
   }, []);
 
   useEffect(() => {
-    if (selected && selected.propertyType === 'Commercial') {
-      void fetchProjects(selected.id);
-    } else {
-      setProjects([]);
-    }
+    void fetchAllProjects();
+  }, [fetchAllProjects]);
+
+  useEffect(() => {
     setShowProjectForm(false);
     setNewProject({ name: '', address: '' });
-  }, [selected, fetchProjects]);
+  }, [selected?.id]);
+
+  const customerNameById = useMemo(
+    () => new Map(customers.map(c => [c.id, c.name])),
+    [customers],
+  );
+
+  const projectsByBuilder = useMemo(() => {
+    const map = new Map<string, ProjectBilling[]>();
+    for (const p of allProjects) {
+      const list = map.get(p.builderId) ?? [];
+      list.push(p);
+      map.set(p.builderId, list);
+    }
+    return map;
+  }, [allProjects]);
+
+  const selectedProjects = selected ? (projectsByBuilder.get(selected.id) ?? []) : [];
+
+  const selectedJobs = useMemo(() => {
+    if (!selected) return [];
+    const names = selectedProjects.map(p => p.name);
+    return jobs
+      .filter(j => jobMatchesCustomer(j, selected, names))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [selected, selectedProjects, jobs]);
+
+  const lookahead = useMemo(
+    () => buildBillingLookahead(allProjects, jobs, customerNameById),
+    [allProjects, jobs, customerNameById],
+  );
 
   const handleAddProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,8 +165,84 @@ const CustomersView: React.FC<Props> = ({
     if (error) { setProjectError(error.message); return; }
     setNewProject({ name: '', address: '' });
     setShowProjectForm(false);
-    await fetchProjects(selected.id);
+    await fetchAllProjects();
     await onRefresh?.();
+  };
+
+  const patchProjectBilling = async (
+    projectId: string,
+    patch: Record<string, unknown>,
+  ) => {
+    setBillingBusy(projectId);
+    setProjectError(null);
+    const { error } = await supabase.from('projects').update(patch).eq('id', projectId);
+    setBillingBusy(null);
+    if (error) {
+      setProjectError(error.message);
+      return;
+    }
+    setAllProjects(prev => prev.map(p => {
+      if (p.id !== projectId) return p;
+      return {
+        ...p,
+        contractAmount: patch.contract_amount !== undefined
+          ? (patch.contract_amount == null ? null : Number(patch.contract_amount))
+          : p.contractAmount,
+        roughBilled: patch.rough_billed !== undefined ? Boolean(patch.rough_billed) : p.roughBilled,
+        topoutBilled: patch.topout_billed !== undefined ? Boolean(patch.topout_billed) : p.topoutBilled,
+        trimBilled: patch.trim_billed !== undefined ? Boolean(patch.trim_billed) : p.trimBilled,
+        roughBillBy: patch.rough_bill_by !== undefined
+          ? (patch.rough_bill_by == null ? null : String(patch.rough_bill_by))
+          : p.roughBillBy,
+        topoutBillBy: patch.topout_bill_by !== undefined
+          ? (patch.topout_bill_by == null ? null : String(patch.topout_bill_by))
+          : p.topoutBillBy,
+        trimBillBy: patch.trim_bill_by !== undefined
+          ? (patch.trim_bill_by == null ? null : String(patch.trim_bill_by))
+          : p.trimBillBy,
+      };
+    }));
+  };
+
+  const toggleMilestone = async (project: ProjectBilling, key: BillingMilestoneKey) => {
+    if (!canEdit) return;
+    const col = key === 'rough' ? 'rough_billed' : key === 'topout' ? 'topout_billed' : 'trim_billed';
+    const current = key === 'rough' ? project.roughBilled : key === 'topout' ? project.topoutBilled : project.trimBilled;
+    await patchProjectBilling(project.id, { [col]: !current });
+  };
+
+  const setBillBy = async (project: ProjectBilling, key: BillingMilestoneKey, value: string) => {
+    if (!canEdit) return;
+    const col = key === 'rough' ? 'rough_bill_by' : key === 'topout' ? 'topout_bill_by' : 'trim_bill_by';
+    await patchProjectBilling(project.id, { [col]: value || null });
+  };
+
+  const setContractAmount = async (project: ProjectBilling, raw: string) => {
+    if (!canEdit) return;
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      await patchProjectBilling(project.id, { contract_amount: null });
+      return;
+    }
+    const n = Number(trimmed.replace(/[$,]/g, ''));
+    if (Number.isNaN(n)) return;
+    await patchProjectBilling(project.id, { contract_amount: n });
+  };
+
+  const suggestBillDatesFromJobs = async (project: ProjectBilling) => {
+    if (!canEdit) return;
+    const related = jobs.filter(j => j.projectId === project.id || (
+      selected && jobMatchesCustomer(j, selected, [project.name])
+    ));
+    const patch: Record<string, unknown> = {};
+    for (const m of BILLING_MILESTONES) {
+      const job = related.find(j => phaseToMilestone(j.phase, j.serviceType) === m.key);
+      if (!job?.date) continue;
+      const col = m.key === 'rough' ? 'rough_bill_by' : m.key === 'topout' ? 'topout_bill_by' : 'trim_bill_by';
+      const existing = m.key === 'rough' ? project.roughBillBy : m.key === 'topout' ? project.topoutBillBy : project.trimBillBy;
+      if (!existing) patch[col] = suggestedBillBy(job.date);
+    }
+    if (Object.keys(patch).length) await patchProjectBilling(project.id, patch);
   };
 
   const modalRef      = useRef<HTMLDivElement>(null);
@@ -149,6 +291,16 @@ const CustomersView: React.FC<Props> = ({
     return matchSearch && matchType;
   });
 
+  const displayCount = (c: Customer) => {
+    if (c.propertyType === 'Commercial') {
+      const n = projectsByBuilder.get(c.id)?.length ?? c.totalJobs;
+      return `${n} ${n === 1 ? 'Project' : 'Projects'}`;
+    }
+    const names = (projectsByBuilder.get(c.id) ?? []).map(p => p.name);
+    const n = jobs.filter(j => jobMatchesCustomer(j, c, names)).length || c.totalJobs;
+    return `${n} ${n === 1 ? 'Job' : 'Jobs'}`;
+  };
+
   const handleSaveBuilder = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaveError(null);
@@ -179,244 +331,478 @@ const CustomersView: React.FC<Props> = ({
       setNewBuilder(prev => ({ ...prev, [id]: e.target.value })),
   });
 
+  const selectCustomerFromLookahead = (customerId: string) => {
+    const c = customers.find(x => x.id === customerId);
+    if (c) setSelected(c);
+  };
+
+  const workCompleteForProject = (project: ProjectBilling) => {
+    const related = jobs.filter(j =>
+      j.projectId === project.id
+      || (selected && jobMatchesCustomer(j, selected, [project.name])),
+    );
+    if (!related.length) return 0;
+    return Math.max(...related.map(j => phaseCompletePercent(j.phase)));
+  };
+
   return (
-    <div className="grid lg:grid-cols-3 gap-4 w-full relative">
+    <div className="space-y-4 w-full relative">
 
-      {/* ── Left: Customer list ── */}
-      <div className="lg:col-span-2 space-y-4">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-          <div className="relative flex-1 w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search customers by name, address, or phone..."
-              aria-label="Search customers"
-              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-            />
+      {/* ── Billing look-ahead (15–30 days) ── */}
+      {lookahead.length > 0 && (
+        <section
+          aria-label="Billing look-ahead"
+          className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/50 rounded-xl p-4 shadow-sm"
+        >
+          <div className="flex items-start gap-3 mb-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0">
+              <DollarSign className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Billing look-ahead (15–30 days)
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Invoice Rough 40% / Top-out 40% / Trim 20% ahead of scheduled phase work.
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-            {(['all', 'Residential', 'Commercial'] as const).map(t => (
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+            {lookahead.slice(0, 9).map(item => (
               <button
-                key={t}
+                key={`${item.projectId}-${item.milestone}-${item.workDate}-${item.jobId ?? ''}`}
                 type="button"
-                onClick={() => setTypeFilter(t)}
-                className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
-                  typeFilter === t
-                    ? t === 'Commercial' ? 'bg-purple-600 text-white' : 'bg-teal-600 text-white'
-                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                onClick={() => selectCustomerFromLookahead(item.customerId)}
+                className={`text-left rounded-lg border p-3 transition-colors hover:border-amber-400 dark:hover:border-amber-600 ${
+                  item.urgency === 'overdue'
+                    ? 'border-red-200 bg-red-50/70 dark:border-red-900/40 dark:bg-red-950/20'
+                    : item.urgency === 'due_soon'
+                      ? 'border-amber-200 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40'
                 }`}
               >
-                {t === 'all' ? 'All' : t === 'Commercial' ? 'Builders / Commercial' : t}
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
+                    {item.customerName}
+                  </span>
+                  <span className={`text-[10px] font-bold uppercase tracking-wide ${
+                    item.urgency === 'overdue' ? 'text-red-600 dark:text-red-400'
+                      : item.urgency === 'due_soon' ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-slate-500'
+                  }`}>
+                    {item.urgency === 'overdue' ? 'Bill now' : item.urgency === 'due_soon' ? 'Due soon' : 'Upcoming'}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-600 dark:text-slate-300 truncate">
+                  {item.projectName} · {item.milestoneLabel} {item.percent}%
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex justify-between gap-2">
+                  <span>Bill by {item.billBy}</span>
+                  <span>Work {item.workDate}</span>
+                </div>
+                {item.amount != null && (
+                  <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 mt-1">
+                    {formatMoney(item.amount)}
+                  </div>
+                )}
               </button>
             ))}
-            <div className="h-6 w-px bg-slate-300 dark:bg-slate-700 mx-1" aria-hidden="true" />
-            {canEdit && (
-              <button
-                type="button"
-                onClick={() => setShowBuilderModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap shadow-sm transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> New Builder
-              </button>
-            )}
           </div>
-        </div>
+          {lookahead.length > 9 && (
+            <p className="text-xs text-slate-500 mt-2">+{lookahead.length - 9} more — open a builder to manage billing.</p>
+          )}
+        </section>
+      )}
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {filtered.map(c => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setSelected(c)}
-                className={`w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-3 ${
-                  selected?.id === c.id ? 'bg-teal-50 dark:bg-teal-900/20' : ''
-                }`}
-              >
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                  c.propertyType === 'Commercial'
-                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300'
-                    : 'bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300'
-                }`}>
-                  {c.propertyType === 'Commercial' ? <Building2 className="w-5 h-5" /> : <Home className="w-5 h-5" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-slate-900 dark:text-slate-100 truncate">{c.name}</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{c.address}, {c.city}</div>
-                </div>
-                <div className="text-right hidden sm:block">
-                  <div className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                    {c.totalJobs} {c.propertyType === 'Commercial' ? 'Projects' : 'Jobs'}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">Last: {c.lastService}</div>
-                </div>
-              </button>
-            ))}
-            {filtered.length === 0 && (
-              <div className="p-8 text-center text-sm text-slate-500">No customers found.</div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Right: Detail panel ── */}
-      <div className="lg:sticky lg:top-4 h-fit">
-        {selected ? (
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col max-h-[85vh]">
-            <div className={`p-6 text-white shrink-0 ${
-              selected.propertyType === 'Commercial'
-                ? 'bg-gradient-to-br from-purple-700 to-slate-900'
-                : 'bg-gradient-to-br from-teal-600 to-teal-700'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
-                  {selected.propertyType === 'Commercial' ? <Building2 className="w-6 h-6" /> : <Home className="w-6 h-6" />}
-                </div>
-                <div>
-                  <div className="font-bold text-lg">{selected.name}</div>
-                  <div className="text-sm text-white/80">
-                    {selected.propertyType === 'Commercial' ? 'General Contractor / Builder' : 'Residential Customer'}
-                  </div>
-                </div>
-              </div>
+      <div className="grid lg:grid-cols-3 gap-4">
+        {/* ── Left: Customer list ── */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search customers by name, address, or phone..."
+                aria-label="Search customers"
+                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              />
             </div>
-
-            <div className="p-5 space-y-4 text-sm overflow-y-auto flex-1">
-              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 space-y-3 border border-slate-100 dark:border-slate-700/50">
-                <div className="flex items-start gap-3">
-                  <Phone className="w-4 h-4 text-slate-400 mt-0.5" aria-hidden="true" />
-                  <a href={`tel:${selected.phone}`} className="text-teal-600 dark:text-teal-400 hover:underline font-medium">{selected.phone}</a>
-                </div>
-                <div className="flex items-start gap-3">
-                  <Mail className="w-4 h-4 text-slate-400 mt-0.5" aria-hidden="true" />
-                  <a href={`mailto:${selected.email}`} className="text-teal-600 dark:text-teal-400 hover:underline break-all">{selected.email}</a>
-                </div>
-                <div className="flex items-start gap-3">
-                  <MapPin className="w-4 h-4 text-slate-400 mt-0.5" aria-hidden="true" />
-                  <span className="text-slate-700 dark:text-slate-300">{selected.address}<br />{selected.city}</span>
-                </div>
-              </div>
-
-              {selected.propertyType === 'Commercial' && (
-                <div className="pt-2">
-                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2 mb-3">
-                    <HardHat className="w-4 h-4 text-purple-600" aria-hidden="true" /> Active Projects
-                  </div>
-                  <div className="space-y-2">
-                    {projectsLoading ? (
-                      <div className="flex items-center justify-center py-4">
-                        <Loader2 className="w-5 h-5 text-purple-500 animate-spin" />
-                      </div>
-                    ) : (
-                      <>
-                        {projects.length === 0 && !showProjectForm && (
-                          <p className="text-xs text-slate-400">No projects for this builder yet.</p>
-                        )}
-                        {projects.map(proj => (
-                          <div key={proj.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 hover:border-purple-400 dark:hover:border-purple-500 transition-colors bg-white dark:bg-slate-800">
-                            <div className="flex justify-between items-start mb-1">
-                              <span className="font-semibold text-slate-900 dark:text-slate-100">{proj.name}</span>
-                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">{proj.status ?? 'active'}</span>
-                            </div>
-                            {proj.address && (
-                              <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                                <MapPin className="w-3 h-3" aria-hidden="true" />
-                                {proj.address}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        {projectError && (
-                          <p className="text-xs text-red-600 dark:text-red-400 font-medium">{projectError}</p>
-                        )}
-                        {showProjectForm ? (
-                          <form onSubmit={e => void handleAddProject(e)} className="border border-purple-200 dark:border-purple-800 rounded-lg p-3 bg-purple-50/40 dark:bg-purple-900/10 space-y-2">
-                            <input
-                              autoFocus
-                              required
-                              type="text"
-                              value={newProject.name}
-                              onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))}
-                              placeholder="Project name (e.g. Phase 2 — Building C)"
-                              className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                            />
-                            <input
-                              type="text"
-                              value={newProject.address}
-                              onChange={e => setNewProject(p => ({ ...p, address: e.target.value }))}
-                              placeholder="Project address (optional)"
-                              className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                            />
-                            <div className="flex gap-2">
-                              <button type="button" onClick={() => { setShowProjectForm(false); setNewProject({ name: '', address: '' }); }}
-                                className="flex-1 px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
-                                Cancel
-                              </button>
-                              <button type="submit" disabled={!newProject.name.trim()}
-                                className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold">
-                                Save Project
-                              </button>
-                            </div>
-                          </form>
-                        ) : canEdit ? (
-                          <button
-                            type="button"
-                            onClick={() => setShowProjectForm(true)}
-                            className="w-full py-2.5 mt-2 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 hover:text-purple-600 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-xs font-bold flex items-center justify-center gap-2"
-                          >
-                            <Plus className="w-4 h-4" /> Add New Project
-                          </button>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {selected.propertyType !== 'Commercial' && (
-                <div className="pt-2">
-                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Service Notes</div>
-                  <p className="text-sm text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50">
-                    {selected.notes || 'No service notes available for this residential property.'}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0">
-              <div className="flex gap-2">
+            <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
+              {(['all', 'Residential', 'Commercial'] as const).map(t => (
                 <button
+                  key={t}
                   type="button"
-                  onClick={() => onCall(selected)}
-                  className="flex-1 inline-flex items-center justify-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium px-3 py-2 rounded-lg transition-colors"
-                >
-                  <Phone className="w-4 h-4" /> Call
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSchedule(selected)}
-                  className={`flex-1 inline-flex items-center justify-center gap-2 text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors shadow-sm ${
-                    selected.propertyType === 'Commercial' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-teal-600 hover:bg-teal-700'
+                  onClick={() => setTypeFilter(t)}
+                  className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+                    typeFilter === t
+                      ? t === 'Commercial' ? 'bg-purple-600 text-white' : 'bg-teal-600 text-white'
+                      : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
                   }`}
                 >
-                  {selected.propertyType === 'Commercial'
-                    ? <><HardHat className="w-4 h-4" /> New Phase</>
-                    : <><Calendar className="w-4 h-4" /> Schedule Job</>}
+                  {t === 'all' ? 'All' : t === 'Commercial' ? 'Builders / Commercial' : t}
                 </button>
+              ))}
+              <div className="h-6 w-px bg-slate-300 dark:bg-slate-700 mx-1" aria-hidden="true" />
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => setShowBuilderModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap shadow-sm transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" /> New Builder
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filtered.map(c => {
+                const builderProjects = projectsByBuilder.get(c.id) ?? [];
+                const avgBilled = builderProjects.length
+                  ? Math.round(
+                    builderProjects.reduce((sum, p) => sum + billedPercent(p), 0) / builderProjects.length,
+                  )
+                  : null;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setSelected(c)}
+                    className={`w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-3 ${
+                      selected?.id === c.id ? 'bg-teal-50 dark:bg-teal-900/20' : ''
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                      c.propertyType === 'Commercial'
+                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300'
+                        : 'bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300'
+                    }`}>
+                      {c.propertyType === 'Commercial' ? <Building2 className="w-5 h-5" /> : <Home className="w-5 h-5" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-900 dark:text-slate-100 truncate">{c.name}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{c.address}, {c.city}</div>
+                      {avgBilled != null && (
+                        <div className="mt-1.5 max-w-[12rem]">
+                          <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
+                            <span>Billable</span>
+                            <span>{avgBilled}%</span>
+                          </div>
+                          <ProgressBar value={avgBilled} tone="purple" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right hidden sm:block">
+                      <div className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        {displayCount(c)}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Last: {c.lastService || '—'}</div>
+                    </div>
+                  </button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="p-8 text-center text-sm text-slate-500">No customers found.</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Right: Detail panel ── */}
+        <div className="lg:sticky lg:top-4 h-fit">
+          {selected ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col max-h-[85vh]">
+              <div className={`p-6 text-white shrink-0 ${
+                selected.propertyType === 'Commercial'
+                  ? 'bg-gradient-to-br from-purple-700 to-slate-900'
+                  : 'bg-gradient-to-br from-teal-600 to-teal-700'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+                    {selected.propertyType === 'Commercial' ? <Building2 className="w-6 h-6" /> : <Home className="w-6 h-6" />}
+                  </div>
+                  <div>
+                    <div className="font-bold text-lg">{selected.name}</div>
+                    <div className="text-sm text-white/80">
+                      {selected.propertyType === 'Commercial' ? 'General Contractor / Builder' : 'Residential Customer'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4 text-sm overflow-y-auto flex-1">
+                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 space-y-3 border border-slate-100 dark:border-slate-700/50">
+                  <div className="flex items-start gap-3">
+                    <Phone className="w-4 h-4 text-slate-400 mt-0.5" aria-hidden="true" />
+                    <a href={`tel:${selected.phone}`} className="text-teal-600 dark:text-teal-400 hover:underline font-medium">{selected.phone || '—'}</a>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <Mail className="w-4 h-4 text-slate-400 mt-0.5" aria-hidden="true" />
+                    <a href={`mailto:${selected.email}`} className="text-teal-600 dark:text-teal-400 hover:underline break-all">{selected.email || '—'}</a>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <MapPin className="w-4 h-4 text-slate-400 mt-0.5" aria-hidden="true" />
+                    <span className="text-slate-700 dark:text-slate-300">{selected.address || '—'}<br />{selected.city}</span>
+                  </div>
+                </div>
+
+                {/* Jobs with this customer */}
+                <div>
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2 mb-3">
+                    <Calendar className="w-4 h-4 text-teal-600" aria-hidden="true" />
+                    Jobs ({selectedJobs.length})
+                  </div>
+                  {selectedJobs.length === 0 ? (
+                    <p className="text-xs text-slate-400">No linked jobs yet. Schedule a phase to connect work to this customer.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedJobs.slice(0, 12).map(job => {
+                        const milestone = phaseToMilestone(job.phase, job.serviceType);
+                        return (
+                          <div
+                            key={job.id}
+                            className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800"
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <span className="font-semibold text-slate-900 dark:text-slate-100 text-sm leading-snug">
+                                {job.customerName}
+                              </span>
+                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 shrink-0">
+                                {job.phase || '—'}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                              <span>{job.date}{job.endDate && job.endDate !== job.date ? ` → ${job.endDate}` : ''}</span>
+                              <span className="capitalize">{job.status}</span>
+                              {milestone && <span>Billable: {milestone === 'trim' ? '20%' : '40%'} {milestone}</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {selectedJobs.length > 12 && (
+                        <p className="text-xs text-slate-400">+{selectedJobs.length - 12} more jobs</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Commercial projects + billing */}
+                {selected.propertyType === 'Commercial' && (
+                  <div className="pt-1">
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2 mb-3">
+                      <HardHat className="w-4 h-4 text-purple-600" aria-hidden="true" />
+                      Projects &amp; billing
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
+                      Mark each milestone when invoiced. Aim to bill 15–30 days before that phase starts.
+                    </p>
+                    <div className="space-y-3">
+                      {projectsLoading ? (
+                        <div className="flex items-center justify-center py-4">
+                          <Loader2 className="w-5 h-5 text-purple-500 animate-spin" />
+                        </div>
+                      ) : (
+                        <>
+                          {selectedProjects.length === 0 && !showProjectForm && (
+                            <p className="text-xs text-slate-400">No projects for this builder yet.</p>
+                          )}
+                          {selectedProjects.map(proj => {
+                            const billed = billedPercent(proj);
+                            const complete = workCompleteForProject(proj);
+                            const busy = billingBusy === proj.id;
+                            return (
+                              <div
+                                key={proj.id}
+                                className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800 space-y-3"
+                              >
+                                <div className="flex justify-between items-start gap-2">
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-slate-900 dark:text-slate-100 truncate">{proj.name}</div>
+                                    {proj.address && (
+                                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
+                                        <MapPin className="w-3 h-3" aria-hidden="true" />
+                                        {proj.address}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 shrink-0">
+                                    {proj.status ?? 'active'}
+                                  </span>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <div className="flex justify-between text-[11px] text-slate-600 dark:text-slate-300">
+                                    <span>Billable {billed}%</span>
+                                    <span>Phase complete ~{complete}%</span>
+                                  </div>
+                                  <ProgressBar value={billed} tone="amber" />
+                                  <ProgressBar value={complete} tone="teal" />
+                                </div>
+
+                                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                                  Contract amount
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    disabled={!canEdit || busy}
+                                    defaultValue={proj.contractAmount != null ? String(proj.contractAmount) : ''}
+                                    key={`amt-${proj.id}-${proj.contractAmount ?? 'x'}`}
+                                    onBlur={e => void setContractAmount(proj, e.target.value)}
+                                    placeholder="e.g. 48000"
+                                    className="mt-1 w-full px-2.5 py-1.5 border border-slate-200 dark:border-slate-600 rounded-md text-sm bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                                  />
+                                </label>
+
+                                <div className="space-y-2">
+                                  {BILLING_MILESTONES.map(m => {
+                                    const checked = m.key === 'rough' ? proj.roughBilled
+                                      : m.key === 'topout' ? proj.topoutBilled : proj.trimBilled;
+                                    const billBy = m.key === 'rough' ? proj.roughBillBy
+                                      : m.key === 'topout' ? proj.topoutBillBy : proj.trimBillBy;
+                                    const amt = milestoneAmount(proj.contractAmount, m.key);
+                                    return (
+                                      <div
+                                        key={m.key}
+                                        className="flex flex-wrap items-center gap-2 text-xs border border-slate-100 dark:border-slate-700/80 rounded-md px-2 py-1.5"
+                                      >
+                                        <label className="inline-flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200 cursor-pointer min-w-[7.5rem]">
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            disabled={!canEdit || busy}
+                                            onChange={() => void toggleMilestone(proj, m.key)}
+                                            className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                                          />
+                                          {m.label} {m.percent}%
+                                        </label>
+                                        <span className="text-slate-500 dark:text-slate-400 tabular-nums">
+                                          {formatMoney(amt)}
+                                        </span>
+                                        <label className="ml-auto inline-flex items-center gap-1 text-slate-500">
+                                          Bill by
+                                          <input
+                                            type="date"
+                                            value={billBy ?? ''}
+                                            disabled={!canEdit || busy}
+                                            onChange={e => void setBillBy(proj, m.key, e.target.value)}
+                                            className="px-1.5 py-0.5 border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-[11px] disabled:opacity-60"
+                                          />
+                                        </label>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                {canEdit && (
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void suggestBillDatesFromJobs(proj)}
+                                    className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 hover:underline disabled:opacity-50"
+                                  >
+                                    Fill bill-by dates from scheduled jobs (−20 days)
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {projectError && (
+                            <p className="text-xs text-red-600 dark:text-red-400 font-medium flex items-center gap-1">
+                              <AlertTriangle className="w-3.5 h-3.5" /> {projectError}
+                            </p>
+                          )}
+
+                          {showProjectForm ? (
+                            <form onSubmit={e => void handleAddProject(e)} className="border border-purple-200 dark:border-purple-800 rounded-lg p-3 bg-purple-50/40 dark:bg-purple-900/10 space-y-2">
+                              <input
+                                autoFocus
+                                required
+                                type="text"
+                                value={newProject.name}
+                                onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))}
+                                placeholder="Project name (e.g. Phase 2 — Building C)"
+                                className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                              />
+                              <input
+                                type="text"
+                                value={newProject.address}
+                                onChange={e => setNewProject(p => ({ ...p, address: e.target.value }))}
+                                placeholder="Project address (optional)"
+                                className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                              />
+                              <div className="flex gap-2">
+                                <button type="button" onClick={() => { setShowProjectForm(false); setNewProject({ name: '', address: '' }); }}
+                                  className="flex-1 px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
+                                  Cancel
+                                </button>
+                                <button type="submit" disabled={!newProject.name.trim()}
+                                  className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold">
+                                  Save Project
+                                </button>
+                              </div>
+                            </form>
+                          ) : canEdit ? (
+                            <button
+                              type="button"
+                              onClick={() => setShowProjectForm(true)}
+                              className="w-full py-2.5 mt-1 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 hover:text-purple-600 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-xs font-bold flex items-center justify-center gap-2"
+                            >
+                              <Plus className="w-4 h-4" /> Add New Project
+                            </button>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {selected.propertyType !== 'Commercial' && (
+                  <div className="pt-2">
+                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Service Notes</div>
+                    <p className="text-sm text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50">
+                      {selected.notes || 'No service notes available for this residential property.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onCall(selected)}
+                    className="flex-1 inline-flex items-center justify-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+                  >
+                    <Phone className="w-4 h-4" /> Call
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSchedule(selected)}
+                    className={`flex-1 inline-flex items-center justify-center gap-2 text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors shadow-sm ${
+                      selected.propertyType === 'Commercial' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-teal-600 hover:bg-teal-700'
+                    }`}
+                  >
+                    {selected.propertyType === 'Commercial'
+                      ? <><HardHat className="w-4 h-4" /> New Phase</>
+                      : <><Calendar className="w-4 h-4" /> Schedule Job</>}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ) : (
-          <div className="bg-transparent border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-12 text-center flex flex-col items-center justify-center">
-            <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
-              <Building2 className="w-8 h-8 text-slate-400" />
+          ) : (
+            <div className="bg-transparent border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-12 text-center flex flex-col items-center justify-center">
+              <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                <Building2 className="w-8 h-8 text-slate-400" />
+              </div>
+              <p className="text-slate-500 dark:text-slate-400 font-medium">
+                Select a customer or builder to view jobs, projects, and billable progress.
+              </p>
             </div>
-            <p className="text-slate-500 dark:text-slate-400 font-medium">
-              Select a customer or builder from the list to view their details and active projects.
-            </p>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* ── Add Builder modal ── */}
@@ -445,7 +831,7 @@ const CustomersView: React.FC<Props> = ({
             <form onSubmit={e => void handleSaveBuilder(e)} className="p-6 space-y-4">
               <div>
                 <label htmlFor="builder-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Company / Builder Name *</label>
-                <input ref={firstInputRef}  required type="text" placeholder="e.g. Summit Construction"
+                <input ref={firstInputRef} id="builder-name" required type="text" placeholder="e.g. Summit Construction"
                   className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
                   {...field('name')} />
               </div>
@@ -458,20 +844,20 @@ const CustomersView: React.FC<Props> = ({
                 </div>
                 <div>
                   <label htmlFor="builder-email" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email</label>
-                  <input  type="email" placeholder="contact@summit.com"
+                  <input id="builder-email" type="email" placeholder="contact@summit.com"
                     className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
                     {...field('email')} />
                 </div>
               </div>
               <div>
                 <label htmlFor="builder-address" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Main Office Address</label>
-                <input  type="text" placeholder="123 Builder Way"
+                <input id="builder-address" type="text" placeholder="123 Builder Way"
                   className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
                   {...field('address')} />
               </div>
               <div>
                 <label htmlFor="builder-city" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">City</label>
-                <input  type="text" placeholder="Tucson"
+                <input id="builder-city" type="text" placeholder="Tucson"
                   className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
                   {...field('city')} />
               </div>

@@ -17,8 +17,17 @@ function normalizeJobStatus(raw: unknown): JobStatus {
   return 'scheduled';
 }
 
-function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
+function mapCustomerRow(
+  c: Record<string, unknown>,
+  builderIds: Set<string>,
+  projectCounts: Map<string, number>,
+  jobStats: Map<string, { count: number; lastDate: string }>,
+): Customer {
   const id = String(c.id ?? '');
+  const isBuilder = builderIds.has(id);
+  const stats = jobStats.get(id);
+  const projectCount = projectCounts.get(id) ?? 0;
+  const created = String(c.created_at ?? '').split('T')[0] || '';
   return {
     id,
     name:         String(c.name ?? ''),
@@ -26,9 +35,10 @@ function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Cu
     email:        String(c.email ?? ''),
     address:      String(c.address ?? ''),
     city:         String(c.city ?? ''),
-    propertyType: builderIds.has(id) ? 'Commercial' : 'Residential',
-    totalJobs:    0,
-    lastService:  String(c.created_at ?? '').split('T')[0] || '',
+    propertyType: isBuilder ? 'Commercial' : 'Residential',
+    // Commercial list shows project count; residential shows linked job count.
+    totalJobs:    isBuilder ? projectCount : (stats?.count ?? 0),
+    lastService:  stats?.lastDate || created,
     notes:        String(c.notes ?? ''),
   };
 }
@@ -80,6 +90,8 @@ export const useDispatchData = () => {
       const liveJobs: Job[] = (data ?? []).map(j => ({
         ...j,
         id:                j.id?.toString() ?? '',
+        customerId:        j.customer_id ? String(j.customer_id) : '',
+        projectId:         j.project_id ? String(j.project_id) : undefined,
         customerName:      j.title ?? j.customerName ?? 'New Field Job',
         address:           j.location ?? j.address ?? 'Tucson, AZ',
         description:       j.description ?? '',
@@ -133,13 +145,48 @@ export const useDispatchData = () => {
   // FIX: customers were fetched nowhere — the state was always [].
   const fetchCustomers = useCallback(async () => {
     try {
-      const [{ data, error: sbError }, { data: builders }] = await Promise.all([
+      const [
+        { data, error: sbError },
+        { data: builders },
+        { data: projects },
+        { data: jobRows },
+      ] = await Promise.all([
         supabase.from('customers').select('*'),
         supabase.from('builders').select('id'),
+        supabase.from('projects').select('id, builder_id'),
+        supabase.from('jobs').select('id, customer_id, date, end_date, title, customerName'),
       ]);
       if (sbError) throw sbError;
       const builderIds = new Set((builders ?? []).map(b => String(b.id)));
-      setCustomers((data ?? []).map(row => mapCustomerRow(row as Record<string, unknown>, builderIds)));
+
+      const projectCounts = new Map<string, number>();
+      for (const p of projects ?? []) {
+        const bid = p.builder_id ? String(p.builder_id) : '';
+        if (!bid) continue;
+        projectCounts.set(bid, (projectCounts.get(bid) ?? 0) + 1);
+      }
+
+      const jobStats = new Map<string, { count: number; lastDate: string }>();
+      for (const j of jobRows ?? []) {
+        const cid = j.customer_id ? String(j.customer_id) : '';
+        if (!cid) continue;
+        const date = String(j.end_date || j.date || '');
+        const prev = jobStats.get(cid);
+        if (!prev) {
+          jobStats.set(cid, { count: 1, lastDate: date });
+        } else {
+          jobStats.set(cid, {
+            count: prev.count + 1,
+            lastDate: date > prev.lastDate ? date : prev.lastDate,
+          });
+        }
+      }
+
+      setCustomers(
+        (data ?? []).map(row =>
+          mapCustomerRow(row as Record<string, unknown>, builderIds, projectCounts, jobStats),
+        ),
+      );
     } catch (err) {
       console.error('Error fetching customers:', err);
     }
@@ -361,6 +408,13 @@ export const useDispatchData = () => {
       }
     }
 
+    // Persist real customer/project FKs when present (ignore ephemeral `new-…` ids).
+    const customerId =
+      jobData.customerId && !jobData.customerId.startsWith('new-')
+        ? jobData.customerId
+        : null;
+    const projectId = jobData.projectId || null;
+
     const { data: inserted, error: sbError } = await supabase.from('jobs').insert([{
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
@@ -374,6 +428,8 @@ export const useDispatchData = () => {
       endTime:      jobData.endTime,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
+      customer_id:  customerId,
+      project_id:   projectId,
       // NOTE: the `jobs` table has no `type` column; including it makes the whole
       // insert fail (PGRST204) and silently drop the job. Type is derived on read.
     }]).select('id').single();
@@ -419,6 +475,12 @@ export const useDispatchData = () => {
       }
     }
 
+    const customerId =
+      jobData.customerId && !jobData.customerId.startsWith('new-')
+        ? jobData.customerId
+        : null;
+    const projectId = jobData.projectId || null;
+
     const { error: sbError } = await supabase.from('jobs').update({
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
@@ -429,6 +491,8 @@ export const useDispatchData = () => {
       service_type: jobData.serviceType ?? null,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
+      customer_id:  customerId,
+      project_id:   projectId,
       // NOTE: `jobs` has no `type` column — see createJob. Omitted so the update
       // doesn't fail (PGRST204) and silently no-op.
     }).eq('id', jobId);

@@ -204,6 +204,7 @@ const AppLayout: React.FC = () => {
 
   const handleScheduleFromCustomer = (c: Customer) => {
     setModalDefaults({
+      customerId: c.id,
       customerName: c.name,
       address: `${c.address}, ${c.city}`,
     });
