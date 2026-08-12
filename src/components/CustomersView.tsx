@@ -14,6 +14,8 @@ import {
   formatMoney,
   jobMatchesCustomer,
   milestoneAmount,
+  milestoneBilledAmount,
+  milestonePctFor,
   phaseCompletePercent,
   phaseToMilestone,
 } from '@/lib/billing';
@@ -41,6 +43,11 @@ const EMPTY_FORM: NewBuilderForm = {
   name: '', phone: '', email: '', address: '', city: '',
 };
 
+function clampPct(n: number): number {
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
 function mapProjectRow(row: Record<string, unknown>): ProjectBilling {
   return {
     id: String(row.id ?? ''),
@@ -49,14 +56,14 @@ function mapProjectRow(row: Record<string, unknown>): ProjectBilling {
     address: row.address != null ? String(row.address) : null,
     status: row.status != null ? String(row.status) : null,
     contractAmount: row.contract_amount != null ? Number(row.contract_amount) : null,
-    roughBilled: Boolean(row.rough_billed),
-    topoutBilled: Boolean(row.topout_billed),
-    trimBilled: Boolean(row.trim_billed),
+    roughBilledPct: clampPct(Number(row.rough_billed_pct ?? 0)),
+    topoutBilledPct: clampPct(Number(row.topout_billed_pct ?? 0)),
+    trimBilledPct: clampPct(Number(row.trim_billed_pct ?? 0)),
   };
 }
 
 const PROJECT_SELECT =
-  'id, builder_id, name, address, status, contract_amount, rough_billed, topout_billed, trim_billed';
+  'id, builder_id, name, address, status, contract_amount, rough_billed_pct, topout_billed_pct, trim_billed_pct';
 
 function ProgressBar({ value, tone = 'teal' }: { value: number; tone?: 'teal' | 'amber' | 'purple' }) {
   const pct = Math.max(0, Math.min(100, value));
@@ -173,18 +180,19 @@ const CustomersView: React.FC<Props> = ({
         contractAmount: patch.contract_amount !== undefined
           ? (patch.contract_amount == null ? null : Number(patch.contract_amount))
           : p.contractAmount,
-        roughBilled: patch.rough_billed !== undefined ? Boolean(patch.rough_billed) : p.roughBilled,
-        topoutBilled: patch.topout_billed !== undefined ? Boolean(patch.topout_billed) : p.topoutBilled,
-        trimBilled: patch.trim_billed !== undefined ? Boolean(patch.trim_billed) : p.trimBilled,
+        roughBilledPct: patch.rough_billed_pct !== undefined ? clampPct(Number(patch.rough_billed_pct)) : p.roughBilledPct,
+        topoutBilledPct: patch.topout_billed_pct !== undefined ? clampPct(Number(patch.topout_billed_pct)) : p.topoutBilledPct,
+        trimBilledPct: patch.trim_billed_pct !== undefined ? clampPct(Number(patch.trim_billed_pct)) : p.trimBilledPct,
       };
     }));
   };
 
-  const toggleMilestone = async (project: ProjectBilling, key: BillingMilestoneKey) => {
+  const setMilestonePct = async (project: ProjectBilling, key: BillingMilestoneKey, pct: number) => {
     if (!canEdit) return;
-    const col = key === 'rough' ? 'rough_billed' : key === 'topout' ? 'topout_billed' : 'trim_billed';
-    const current = key === 'rough' ? project.roughBilled : key === 'topout' ? project.topoutBilled : project.trimBilled;
-    await patchProjectBilling(project.id, { [col]: !current });
+    const col = key === 'rough' ? 'rough_billed_pct' : key === 'topout' ? 'topout_billed_pct' : 'trim_billed_pct';
+    const clamped = clampPct(pct);
+    if (clamped === milestonePctFor(project, key)) return;
+    await patchProjectBilling(project.id, { [col]: clamped });
   };
 
   const setContractAmount = async (project: ProjectBilling, raw: string) => {
@@ -477,7 +485,7 @@ const CustomersView: React.FC<Props> = ({
                       Projects &amp; billing
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
-                      Mark each milestone when the invoice has been sent (Rough 40% / Top-out 40% / Trim 20%).
+                      Log what % of each milestone has been invoiced (Rough 40% / Top-out 40% / Trim 20%) — partial billing supported.
                     </p>
                     <div className="space-y-3">
                       {projectsLoading ? (
@@ -536,29 +544,62 @@ const CustomersView: React.FC<Props> = ({
                                   />
                                 </label>
 
-                                <div className="space-y-2">
+                                <div className="space-y-2.5">
                                   {BILLING_MILESTONES.map(m => {
-                                    const checked = m.key === 'rough' ? proj.roughBilled
-                                      : m.key === 'topout' ? proj.topoutBilled : proj.trimBilled;
-                                    const amt = milestoneAmount(proj.contractAmount, m.key);
+                                    const pct = milestonePctFor(proj, m.key);
+                                    const fullAmt = milestoneAmount(proj.contractAmount, m.key);
+                                    const billedAmt = milestoneBilledAmount(proj.contractAmount, m.key, pct);
                                     return (
                                       <div
                                         key={m.key}
-                                        className="flex flex-wrap items-center gap-2 text-xs border border-slate-100 dark:border-slate-700/80 rounded-md px-2 py-1.5"
+                                        className="border border-slate-100 dark:border-slate-700/80 rounded-md px-2.5 py-2 space-y-1.5"
                                       >
-                                        <label className="inline-flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200 cursor-pointer min-w-[7.5rem]">
-                                          <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            disabled={!canEdit || busy}
-                                            onChange={() => void toggleMilestone(proj, m.key)}
-                                            className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
-                                          />
-                                          {m.label} {m.percent}%
-                                        </label>
-                                        <span className="text-slate-500 dark:text-slate-400 tabular-nums ml-auto">
-                                          {formatMoney(amt)}
-                                        </span>
+                                        <div className="flex items-center justify-between gap-2 text-xs">
+                                          <span className="font-medium text-slate-700 dark:text-slate-200">
+                                            {m.label} <span className="text-slate-400 dark:text-slate-500">({m.percent}% of contract)</span>
+                                          </span>
+                                          <span className="text-slate-500 dark:text-slate-400 tabular-nums">
+                                            {formatMoney(billedAmt)} / {formatMoney(fullAmt)}
+                                          </span>
+                                        </div>
+                                        <ProgressBar value={pct} tone="purple" />
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                          {[0, 25, 50, 75, 100].map(preset => (
+                                            <button
+                                              key={preset}
+                                              type="button"
+                                              disabled={!canEdit || busy}
+                                              onClick={() => void setMilestonePct(proj, m.key, preset)}
+                                              className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors disabled:opacity-50 ${
+                                                pct === preset
+                                                  ? 'bg-purple-600 border-purple-600 text-white'
+                                                  : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                              }`}
+                                            >
+                                              {preset}%
+                                            </button>
+                                          ))}
+                                          <div className="ml-auto inline-flex items-center gap-1">
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              max={100}
+                                              step={5}
+                                              inputMode="numeric"
+                                              disabled={!canEdit || busy}
+                                              defaultValue={pct}
+                                              key={`pct-${proj.id}-${m.key}-${pct}`}
+                                              onBlur={e => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === '') return;
+                                                void setMilestonePct(proj, m.key, Number(raw));
+                                              }}
+                                              aria-label={`${m.label} percent billed`}
+                                              className="w-14 px-1.5 py-0.5 border border-slate-200 dark:border-slate-600 rounded text-[11px] text-right bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                                            />
+                                            <span className="text-[11px] text-slate-400">%</span>
+                                          </div>
+                                        </div>
                                       </div>
                                     );
                                   })}

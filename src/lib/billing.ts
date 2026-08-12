@@ -15,10 +15,20 @@ export type ProjectBilling = {
   address: string | null;
   status: string | null;
   contractAmount: number | null;
-  roughBilled: boolean;
-  topoutBilled: boolean;
-  trimBilled: boolean;
+  /** Percent (0-100) of each milestone invoiced so far — supports partial billing. */
+  roughBilledPct: number;
+  topoutBilledPct: number;
+  trimBilledPct: number;
 };
+
+export function milestonePctFor(
+  project: Pick<ProjectBilling, 'roughBilledPct' | 'topoutBilledPct' | 'trimBilledPct'>,
+  key: BillingMilestoneKey,
+): number {
+  if (key === 'rough') return project.roughBilledPct;
+  if (key === 'topout') return project.topoutBilledPct;
+  return project.trimBilledPct;
+}
 
 /** Map a job phase / service type onto a billable milestone (or null). */
 export function phaseToMilestone(
@@ -42,18 +52,33 @@ export function phaseCompletePercent(phase: string | null | undefined): number {
   return 0;
 }
 
-export function billedPercent(project: Pick<ProjectBilling, 'roughBilled' | 'topoutBilled' | 'trimBilled'>): number {
-  let pct = 0;
-  if (project.roughBilled) pct += 40;
-  if (project.topoutBilled) pct += 40;
-  if (project.trimBilled) pct += 20;
-  return pct;
+/** Overall % of the contract billed so far, weighted by each milestone's share (40/40/20). */
+export function billedPercent(
+  project: Pick<ProjectBilling, 'roughBilledPct' | 'topoutBilledPct' | 'trimBilledPct'>,
+): number {
+  const weighted = BILLING_MILESTONES.reduce(
+    (sum, m) => sum + (milestonePctFor(project, m.key) / 100) * m.percent,
+    0,
+  );
+  return Math.round(weighted);
 }
 
+/** Full dollar value of a milestone (its share of the contract), regardless of what's billed. */
 export function milestoneAmount(contractAmount: number | null | undefined, key: BillingMilestoneKey): number | null {
   if (contractAmount == null || Number.isNaN(contractAmount)) return null;
-  const pct = key === 'trim' ? 0.2 : 0.4;
-  return Math.round(contractAmount * pct * 100) / 100;
+  const meta = BILLING_MILESTONES.find(m => m.key === key)!;
+  return Math.round(contractAmount * (meta.percent / 100) * 100) / 100;
+}
+
+/** Dollar amount actually billed for a milestone so far (full value × logged %). */
+export function milestoneBilledAmount(
+  contractAmount: number | null | undefined,
+  key: BillingMilestoneKey,
+  pct: number,
+): number | null {
+  const full = milestoneAmount(contractAmount, key);
+  if (full == null) return null;
+  return Math.round(full * (Math.max(0, Math.min(100, pct)) / 100) * 100) / 100;
 }
 
 export function formatMoney(n: number | null | undefined): string {
