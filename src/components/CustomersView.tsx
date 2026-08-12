@@ -16,7 +16,6 @@ import {
   milestoneAmount,
   phaseCompletePercent,
   phaseToMilestone,
-  suggestedBillBy,
 } from '@/lib/billing';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -53,14 +52,11 @@ function mapProjectRow(row: Record<string, unknown>): ProjectBilling {
     roughBilled: Boolean(row.rough_billed),
     topoutBilled: Boolean(row.topout_billed),
     trimBilled: Boolean(row.trim_billed),
-    roughBillBy: row.rough_bill_by != null ? String(row.rough_bill_by).slice(0, 10) : null,
-    topoutBillBy: row.topout_bill_by != null ? String(row.topout_bill_by).slice(0, 10) : null,
-    trimBillBy: row.trim_bill_by != null ? String(row.trim_bill_by).slice(0, 10) : null,
   };
 }
 
 const PROJECT_SELECT =
-  'id, builder_id, name, address, status, contract_amount, rough_billed, topout_billed, trim_billed, rough_bill_by, topout_bill_by, trim_bill_by';
+  'id, builder_id, name, address, status, contract_amount, rough_billed, topout_billed, trim_billed';
 
 function ProgressBar({ value, tone = 'teal' }: { value: number; tone?: 'teal' | 'amber' | 'purple' }) {
   const pct = Math.max(0, Math.min(100, value));
@@ -70,41 +66,6 @@ function ProgressBar({ value, tone = 'teal' }: { value: number; tone?: 'teal' | 
     <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" aria-hidden="true">
       <div className={`h-full ${fill} transition-all`} style={{ width: `${pct}%` }} />
     </div>
-  );
-}
-
-/** Local draft so the native date picker is not remounted/disabled mid-pick. */
-function StableDateInput({
-  value,
-  disabled,
-  onCommit,
-  'aria-label': ariaLabel,
-  className,
-}: {
-  value: string | null;
-  disabled?: boolean;
-  onCommit: (next: string) => void;
-  'aria-label'?: string;
-  className?: string;
-}) {
-  const [draft, setDraft] = useState(value ?? '');
-  useEffect(() => {
-    setDraft(value ?? '');
-  }, [value]);
-
-  return (
-    <input
-      type="date"
-      aria-label={ariaLabel}
-      value={draft}
-      disabled={disabled}
-      onChange={e => setDraft(e.target.value)}
-      onBlur={() => {
-        const next = draft || '';
-        if (next !== (value ?? '')) onCommit(next);
-      }}
-      className={className}
-    />
   );
 }
 
@@ -215,15 +176,6 @@ const CustomersView: React.FC<Props> = ({
         roughBilled: patch.rough_billed !== undefined ? Boolean(patch.rough_billed) : p.roughBilled,
         topoutBilled: patch.topout_billed !== undefined ? Boolean(patch.topout_billed) : p.topoutBilled,
         trimBilled: patch.trim_billed !== undefined ? Boolean(patch.trim_billed) : p.trimBilled,
-        roughBillBy: patch.rough_bill_by !== undefined
-          ? (patch.rough_bill_by == null ? null : String(patch.rough_bill_by))
-          : p.roughBillBy,
-        topoutBillBy: patch.topout_bill_by !== undefined
-          ? (patch.topout_bill_by == null ? null : String(patch.topout_bill_by))
-          : p.topoutBillBy,
-        trimBillBy: patch.trim_bill_by !== undefined
-          ? (patch.trim_bill_by == null ? null : String(patch.trim_bill_by))
-          : p.trimBillBy,
       };
     }));
   };
@@ -233,12 +185,6 @@ const CustomersView: React.FC<Props> = ({
     const col = key === 'rough' ? 'rough_billed' : key === 'topout' ? 'topout_billed' : 'trim_billed';
     const current = key === 'rough' ? project.roughBilled : key === 'topout' ? project.topoutBilled : project.trimBilled;
     await patchProjectBilling(project.id, { [col]: !current });
-  };
-
-  const setBillBy = async (project: ProjectBilling, key: BillingMilestoneKey, value: string) => {
-    if (!canEdit) return;
-    const col = key === 'rough' ? 'rough_bill_by' : key === 'topout' ? 'topout_bill_by' : 'trim_bill_by';
-    await patchProjectBilling(project.id, { [col]: value || null });
   };
 
   const setContractAmount = async (project: ProjectBilling, raw: string) => {
@@ -251,22 +197,6 @@ const CustomersView: React.FC<Props> = ({
     const n = Number(trimmed.replace(/[$,]/g, ''));
     if (Number.isNaN(n)) return;
     await patchProjectBilling(project.id, { contract_amount: n });
-  };
-
-  const suggestBillDatesFromJobs = async (project: ProjectBilling) => {
-    if (!canEdit) return;
-    const related = jobs.filter(j => j.projectId === project.id || (
-      selected && jobMatchesCustomer(j, selected, [project.name])
-    ));
-    const patch: Record<string, unknown> = {};
-    for (const m of BILLING_MILESTONES) {
-      const job = related.find(j => phaseToMilestone(j.phase, j.serviceType) === m.key);
-      if (!job?.date) continue;
-      const col = m.key === 'rough' ? 'rough_bill_by' : m.key === 'topout' ? 'topout_bill_by' : 'trim_bill_by';
-      const existing = m.key === 'rough' ? project.roughBillBy : m.key === 'topout' ? project.topoutBillBy : project.trimBillBy;
-      if (!existing) patch[col] = suggestedBillBy(job.date);
-    }
-    if (Object.keys(patch).length) await patchProjectBilling(project.id, patch);
   };
 
   const modalRef      = useRef<HTMLDivElement>(null);
@@ -547,7 +477,7 @@ const CustomersView: React.FC<Props> = ({
                       Projects &amp; billing
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
-                      Mark each milestone when invoiced. Aim to bill 15–30 days before that phase starts.
+                      Mark each milestone when the invoice has been sent (Rough 40% / Top-out 40% / Trim 20%).
                     </p>
                     <div className="space-y-3">
                       {projectsLoading ? (
@@ -610,8 +540,6 @@ const CustomersView: React.FC<Props> = ({
                                   {BILLING_MILESTONES.map(m => {
                                     const checked = m.key === 'rough' ? proj.roughBilled
                                       : m.key === 'topout' ? proj.topoutBilled : proj.trimBilled;
-                                    const billBy = m.key === 'rough' ? proj.roughBillBy
-                                      : m.key === 'topout' ? proj.topoutBillBy : proj.trimBillBy;
                                     const amt = milestoneAmount(proj.contractAmount, m.key);
                                     return (
                                       <div
@@ -628,34 +556,13 @@ const CustomersView: React.FC<Props> = ({
                                           />
                                           {m.label} {m.percent}%
                                         </label>
-                                        <span className="text-slate-500 dark:text-slate-400 tabular-nums">
+                                        <span className="text-slate-500 dark:text-slate-400 tabular-nums ml-auto">
                                           {formatMoney(amt)}
                                         </span>
-                                        <label className="ml-auto inline-flex items-center gap-1 text-slate-500">
-                                          Bill by
-                                          <StableDateInput
-                                            aria-label={`${m.label} bill-by date`}
-                                            value={billBy}
-                                            disabled={!canEdit}
-                                            onCommit={next => void setBillBy(proj, m.key, next)}
-                                            className="px-1.5 py-0.5 border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-[11px] disabled:opacity-60"
-                                          />
-                                        </label>
                                       </div>
                                     );
                                   })}
                                 </div>
-
-                                {canEdit && (
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => void suggestBillDatesFromJobs(proj)}
-                                    className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 hover:underline disabled:opacity-50"
-                                  >
-                                    Fill bill-by dates from scheduled jobs (−20 days)
-                                  </button>
-                                )}
                               </div>
                             );
                           })}

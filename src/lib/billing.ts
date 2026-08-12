@@ -18,9 +18,6 @@ export type ProjectBilling = {
   roughBilled: boolean;
   topoutBilled: boolean;
   trimBilled: boolean;
-  roughBillBy: string | null;
-  topoutBillBy: string | null;
-  trimBillBy: string | null;
 };
 
 /** Map a job phase / service type onto a billable milestone (or null). */
@@ -57,18 +54,6 @@ export function milestoneAmount(contractAmount: number | null | undefined, key: 
   if (contractAmount == null || Number.isNaN(contractAmount)) return null;
   const pct = key === 'trim' ? 0.2 : 0.4;
   return Math.round(contractAmount * pct * 100) / 100;
-}
-
-/** YYYY-MM-DD offset from a base date string. */
-export function addDays(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-/** Suggested invoice-by date: 20 days before work starts. */
-export function suggestedBillBy(workStartDate: string): string {
-  return addDays(workStartDate, -20);
 }
 
 export function formatMoney(n: number | null | undefined): string {
