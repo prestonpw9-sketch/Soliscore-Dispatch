@@ -138,13 +138,26 @@ export function jobMatchesCustomer(
   return false;
 }
 
+function trailingDigits(s: string): string | null {
+  const m = s.match(/(\d+)$/);
+  return m ? m[1] : null;
+}
+
 /** Match job title to project name (exact-ish, contains, or short prefix like DCS → DCS Mesa). */
 export function jobMatchesProjectName(jobTitle: string, projectName: string): boolean {
   const jobKey = normalizeMatchKey(jobTitle);
   const pKey = normalizeMatchKey(projectName);
   if (!jobKey || !pKey) return false;
+  // Different lot/unit numbers are different jobs (Canyon Pass #152 ≠ Canyon Pass #2).
+  const jobNum = trailingDigits(jobKey);
+  const projNum = trailingDigits(pKey);
+  if (jobNum && projNum && jobNum !== projNum) return false;
+  if (jobKey === pKey) return true;
   if (pKey.length >= 3 && jobKey.includes(pKey)) return true;
-  if (jobKey.length >= 3 && pKey.startsWith(jobKey)) return true;
+  // Short job title is a prefix of the project (DCS → DCS Mesa).
+  if (jobKey.length >= 3 && pKey.startsWith(jobKey) && !/^\d/.test(pKey.slice(jobKey.length))) {
+    return true;
+  }
   // SC#571 ↔ Stone Canyon …571…
   const sc = projectName.match(/^sc#?\s*(\d+)/i);
   if (sc && jobKey.includes(sc[1]) && (jobKey.includes('stonecanyon') || jobKey.includes('sc'))) {
@@ -222,6 +235,15 @@ export function buildBillingLookahead(
     const customerId = job.customerId || project?.builderId || '';
     if (!customerId && !project) continue;
     const resolvedCustomerId = customerId || project!.builderId;
+    const customerName = customerNameById.get(resolvedCustomerId) ?? job.customerName;
+
+    // Skip builder-only rows (job titled as the GC with no job-site/project).
+    const jobKey = normalizeMatchKey(job.customerName);
+    const builderKey = normalizeMatchKey(customerName);
+    const projectKey = project ? normalizeMatchKey(project.name) : '';
+    const isBuilderNamedJob = Boolean(jobKey && builderKey && jobKey === builderKey);
+    const hasDistinctSite = Boolean(projectKey && projectKey !== builderKey);
+    if (isBuilderNamedJob && !hasDistinctSite) continue;
 
     const key = `${project?.id ?? job.id}:${milestone}:${workDate}`;
     if (seen.has(key)) continue;
@@ -234,7 +256,7 @@ export function buildBillingLookahead(
       projectId: project?.id ?? '',
       projectName: project?.name ?? job.customerName,
       customerId: resolvedCustomerId,
-      customerName: customerNameById.get(resolvedCustomerId) ?? job.customerName,
+      customerName,
       milestone,
       milestoneLabel: meta.label,
       percent: meta.percent,
@@ -244,31 +266,6 @@ export function buildBillingLookahead(
       jobId: job.id,
       jobTitle: job.customerName,
     });
-  }
-
-  // Explicit bill_by dates on projects (even without a matching future job).
-  for (const project of projects) {
-    for (const m of BILLING_MILESTONES) {
-      if (milestonePctFor(project, m.key) >= 100) continue;
-      const billBy = milestoneBillBy(project, m.key);
-      if (!billBy || billBy < today) continue;
-      if (billBy > addDays(today, maxLead)) continue;
-      if ([...seen].some(s => s.startsWith(`${project.id}:${m.key}:`))) continue;
-      seen.add(`${project.id}:${m.key}:billby`);
-
-      items.push({
-        projectId: project.id,
-        projectName: project.name,
-        customerId: project.builderId,
-        customerName: customerNameById.get(project.builderId) ?? 'Builder',
-        milestone: m.key,
-        milestoneLabel: m.label,
-        percent: m.percent,
-        amount: milestoneAmount(project.contractAmount, m.key),
-        workDate: billBy,
-        billBy,
-      });
-    }
   }
 
   return items.sort((a, b) => a.billBy.localeCompare(b.billBy) || a.workDate.localeCompare(b.workDate));

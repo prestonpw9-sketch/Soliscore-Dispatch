@@ -80,6 +80,43 @@ function ProgressBar({ value, tone = 'teal' }: { value: number; tone?: 'teal' | 
   );
 }
 
+function formatWorkDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
+}
+
+/** Local draft so the date picker isn't remounted/saved on every keystroke. */
+function LookaheadDateInput({
+  value,
+  disabled,
+  onCommit,
+}: {
+  value: string;
+  disabled?: boolean;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+
+  const commit = () => {
+    if (!draft || draft === value) return;
+    onCommit(draft);
+  };
+
+  return (
+    <input
+      type="date"
+      value={draft}
+      disabled={disabled}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+      className="px-1.5 py-0.5 border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-[11px] disabled:opacity-60"
+    />
+  );
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 const CustomersView: React.FC<Props> = ({
@@ -378,20 +415,13 @@ const CustomersView: React.FC<Props> = ({
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                   <label className="inline-flex items-center gap-1">
                     Bill by
-                    <input
-                      type="date"
+                    <LookaheadDateInput
                       value={item.billBy}
                       disabled={!canEdit || !item.projectId}
-                      onChange={e => {
-                        const next = e.target.value;
-                        if (!next || !item.projectId) return;
-                        // Optimistic local update via patch
-                        void setBillBy(item.projectId, item.milestone, next);
-                      }}
-                      className="px-1.5 py-0.5 border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-[11px] disabled:opacity-60"
+                      onCommit={next => void setBillBy(item.projectId, item.milestone, next)}
                     />
                   </label>
-                  <span className="ml-auto">Work {item.workDate}</span>
+                  <span className="ml-auto">Work {formatWorkDate(item.workDate)}</span>
                 </div>
                 {item.amount != null && (
                   <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 mt-1">
