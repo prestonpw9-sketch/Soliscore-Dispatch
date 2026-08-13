@@ -43,7 +43,7 @@ const AppLayout: React.FC = () => {
   const viewAccess: Record<string, string[]> = {
     dashboard: ['owner', 'office', 'crew'],
     schedule:  ['owner', 'office', 'crew'],
-    customers: ['owner', 'office'],
+    customers: ['owner'],
     estimator: ['owner', 'crew'],
     takeoff:   ['owner'],
     settings:  ['owner', 'office', 'crew'],

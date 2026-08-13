@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Search, Phone, Mail, MapPin, Building2, Home,
-  Calendar, Plus, HardHat, X, Loader2, AlertTriangle,
+  Calendar, Plus, HardHat, X, Loader2, AlertTriangle, DollarSign,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -11,6 +11,7 @@ import {
   type BillingMilestoneKey,
   type ProjectBilling,
   billedPercent,
+  buildBillingLookahead,
   formatMoney,
   jobMatchesCustomer,
   milestoneAmount,
@@ -59,11 +60,14 @@ function mapProjectRow(row: Record<string, unknown>): ProjectBilling {
     roughBilledPct: clampPct(Number(row.rough_billed_pct ?? 0)),
     topoutBilledPct: clampPct(Number(row.topout_billed_pct ?? 0)),
     trimBilledPct: clampPct(Number(row.trim_billed_pct ?? 0)),
+    roughBillBy: row.rough_bill_by != null ? String(row.rough_bill_by).slice(0, 10) : null,
+    topoutBillBy: row.topout_bill_by != null ? String(row.topout_bill_by).slice(0, 10) : null,
+    trimBillBy: row.trim_bill_by != null ? String(row.trim_bill_by).slice(0, 10) : null,
   };
 }
 
 const PROJECT_SELECT =
-  'id, builder_id, name, address, status, contract_amount, rough_billed_pct, topout_billed_pct, trim_billed_pct';
+  'id, builder_id, name, address, status, contract_amount, rough_billed_pct, topout_billed_pct, trim_billed_pct, rough_bill_by, topout_bill_by, trim_bill_by';
 
 function ProgressBar({ value, tone = 'teal' }: { value: number; tone?: 'teal' | 'amber' | 'purple' }) {
   const pct = Math.max(0, Math.min(100, value));
@@ -144,6 +148,16 @@ const CustomersView: React.FC<Props> = ({
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [selected, selectedProjects, jobs]);
 
+  const customerNameById = useMemo(
+    () => new Map(customers.map(c => [c.id, c.name])),
+    [customers],
+  );
+
+  const lookahead = useMemo(
+    () => buildBillingLookahead(allProjects, jobs, customerNameById),
+    [allProjects, jobs, customerNameById],
+  );
+
   const handleAddProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selected || !newProject.name.trim()) return;
@@ -183,6 +197,15 @@ const CustomersView: React.FC<Props> = ({
         roughBilledPct: patch.rough_billed_pct !== undefined ? clampPct(Number(patch.rough_billed_pct)) : p.roughBilledPct,
         topoutBilledPct: patch.topout_billed_pct !== undefined ? clampPct(Number(patch.topout_billed_pct)) : p.topoutBilledPct,
         trimBilledPct: patch.trim_billed_pct !== undefined ? clampPct(Number(patch.trim_billed_pct)) : p.trimBilledPct,
+        roughBillBy: patch.rough_bill_by !== undefined
+          ? (patch.rough_bill_by == null ? null : String(patch.rough_bill_by))
+          : p.roughBillBy,
+        topoutBillBy: patch.topout_bill_by !== undefined
+          ? (patch.topout_bill_by == null ? null : String(patch.topout_bill_by))
+          : p.topoutBillBy,
+        trimBillBy: patch.trim_bill_by !== undefined
+          ? (patch.trim_bill_by == null ? null : String(patch.trim_bill_by))
+          : p.trimBillBy,
       };
     }));
   };
@@ -193,6 +216,12 @@ const CustomersView: React.FC<Props> = ({
     const clamped = clampPct(pct);
     if (clamped === milestonePctFor(project, key)) return;
     await patchProjectBilling(project.id, { [col]: clamped });
+  };
+
+  const setBillBy = async (projectId: string, key: BillingMilestoneKey, value: string) => {
+    if (!canEdit || !projectId) return;
+    const col = key === 'rough' ? 'rough_bill_by' : key === 'topout' ? 'topout_bill_by' : 'trim_bill_by';
+    await patchProjectBilling(projectId, { [col]: value || null });
   };
 
   const setContractAmount = async (project: ProjectBilling, raw: string) => {
@@ -302,8 +331,83 @@ const CustomersView: React.FC<Props> = ({
     return Math.max(...related.map(j => phaseCompletePercent(j.phase)));
   };
 
+  const selectCustomerFromLookahead = (customerId: string) => {
+    const c = customers.find(x => x.id === customerId);
+    if (c) setSelected(c);
+  };
+
   return (
-    <div className="grid lg:grid-cols-3 gap-4 w-full relative">
+    <div className="space-y-4 w-full relative">
+      {/* ── Billing look-ahead (neutral, no Bill now) ── */}
+      {lookahead.length > 0 && (
+        <section
+          aria-label="Billing look-ahead"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-sm"
+        >
+          <div className="flex items-start gap-3 mb-3">
+            <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
+              <DollarSign className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Billing look-ahead
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Scheduled phase work with estimated bill-by dates (Rough 40% / Top-out 40% / Trim 20%). Adjust dates as needed.
+              </p>
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+            {lookahead.slice(0, 12).map(item => (
+              <div
+                key={`${item.projectId}-${item.milestone}-${item.workDate}-${item.jobId ?? ''}`}
+                className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40 p-3"
+              >
+                <button
+                  type="button"
+                  onClick={() => selectCustomerFromLookahead(item.customerId)}
+                  className="w-full text-left"
+                >
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
+                    {item.customerName}
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300 truncate mt-0.5">
+                    {item.projectName} · {item.milestoneLabel} {item.percent}%
+                  </div>
+                </button>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                  <label className="inline-flex items-center gap-1">
+                    Bill by
+                    <input
+                      type="date"
+                      value={item.billBy}
+                      disabled={!canEdit || !item.projectId}
+                      onChange={e => {
+                        const next = e.target.value;
+                        if (!next || !item.projectId) return;
+                        // Optimistic local update via patch
+                        void setBillBy(item.projectId, item.milestone, next);
+                      }}
+                      className="px-1.5 py-0.5 border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-[11px] disabled:opacity-60"
+                    />
+                  </label>
+                  <span className="ml-auto">Work {item.workDate}</span>
+                </div>
+                {item.amount != null && (
+                  <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 mt-1">
+                    {formatMoney(item.amount)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {lookahead.length > 12 && (
+            <p className="text-xs text-slate-500 mt-2">+{lookahead.length - 12} more scheduled — open a builder for details.</p>
+          )}
+        </section>
+      )}
+
+      <div className="grid lg:grid-cols-3 gap-4">
         {/* ── Left: Customer list ── */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
@@ -466,7 +570,18 @@ const CustomersView: React.FC<Props> = ({
                               <span>{job.date}{job.endDate && job.endDate !== job.date ? ` → ${job.endDate}` : ''}</span>
                               <span className="capitalize">{job.status}</span>
                               {milestone && <span>Billable: {milestone === 'trim' ? '20%' : '40%'} {milestone}</span>}
+                              {(job.tmEnabled || job.phase === 'T&M') && (
+                                <span className="font-semibold text-slate-700 dark:text-slate-200">
+                                  T&amp;M{job.tmHours != null ? ` · ${job.tmHours}h` : ''}
+                                  {job.tmApprovedBy ? ` · approved by ${job.tmApprovedBy}` : ''}
+                                </span>
+                              )}
                             </div>
+                            {(job.tmEnabled || job.phase === 'T&M') && job.tmWorkDescription && (
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 line-clamp-2">
+                                {job.tmWorkDescription}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
@@ -702,6 +817,7 @@ const CustomersView: React.FC<Props> = ({
             </div>
           )}
         </div>
+      </div>
 
       {/* ── Add Builder modal ── */}
       {showBuilderModal && (

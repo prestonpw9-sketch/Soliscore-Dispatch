@@ -81,6 +81,10 @@ const QuickAddJobModal: React.FC<Props> = ({
   const [date, setDate]               = useState('');
   const [endDate, setEndDate]         = useState('');
   const [description, setDescription] = useState('');
+  const [tmEnabled, setTmEnabled]     = useState(false);
+  const [tmApprovedBy, setTmApprovedBy] = useState('');
+  const [tmWorkDescription, setTmWorkDescription] = useState('');
+  const [tmHours, setTmHours]         = useState('');
 
   // Jobs are full-day; times are kept only to satisfy the existing data model.
   const startTime = '08:00';
@@ -102,6 +106,10 @@ const QuickAddJobModal: React.FC<Props> = ({
     setTechnicianIds([]);
     setDate(weekDates[0] ?? '');
     setEndDate(weekDates[0] ?? '');
+    setTmEnabled(false);
+    setTmApprovedBy('');
+    setTmWorkDescription('');
+    setTmHours('');
     setRecommendation(null);
     setRecError(null);
     setRecApplied(false);
@@ -130,6 +138,11 @@ const QuickAddJobModal: React.FC<Props> = ({
       );
       setDate(defaults.date ?? weekDates[0] ?? '');
       setEndDate(defaults.endDate ?? defaults.date ?? weekDates[0] ?? '');
+      const tmOn = Boolean(defaults.tmEnabled) || defaults.phase === 'T&M';
+      setTmEnabled(tmOn);
+      setTmApprovedBy(defaults.tmApprovedBy ?? '');
+      setTmWorkDescription(defaults.tmWorkDescription ?? '');
+      setTmHours(defaults.tmHours != null ? String(defaults.tmHours) : '');
     } else {
       resetState();
     }
@@ -255,9 +268,13 @@ const QuickAddJobModal: React.FC<Props> = ({
       startTime,
       endTime: '17:00',
       description,
-      phase: 'Rough-In',
+      phase: tmEnabled ? 'T&M' : 'Rough-In',
       estimatedDuration: 480,
       projectId: defaults?.projectId,
+      tmEnabled,
+      tmApprovedBy: tmEnabled ? tmApprovedBy.trim() : '',
+      tmWorkDescription: tmEnabled ? tmWorkDescription.trim() : '',
+      tmHours: tmEnabled && tmHours.trim() !== '' ? Number(tmHours) : null,
     };
 
 
@@ -432,6 +449,72 @@ const QuickAddJobModal: React.FC<Props> = ({
               placeholder="Describe the work to be done..."
               className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none resize-none"
             />
+          </div>
+
+          {/* T&M toggle + log */}
+          <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 space-y-3">
+            <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={tmEnabled}
+                onChange={e => setTmEnabled(e.target.checked)}
+                className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+              />
+              T&amp;M (Time &amp; Materials)
+            </label>
+            {tmEnabled && (
+              <div className="space-y-3 pt-1 border-t border-slate-100 dark:border-slate-700">
+                <div>
+                  <label htmlFor="tmApprovedBy" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Approved by
+                  </label>
+                  <input
+                    id="tmApprovedBy"
+                    list="tm-approver-suggestions"
+                    required={tmEnabled}
+                    value={tmApprovedBy}
+                    onChange={e => setTmApprovedBy(e.target.value)}
+                    placeholder="Who approved this T&M?"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                  <datalist id="tm-approver-suggestions">
+                    {customers.slice(0, 20).map(c => (
+                      <option key={c.id} value={c.name} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label htmlFor="tmWorkDescription" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Work performed
+                  </label>
+                  <textarea
+                    id="tmWorkDescription"
+                    required={tmEnabled}
+                    value={tmWorkDescription}
+                    onChange={e => setTmWorkDescription(e.target.value)}
+                    rows={3}
+                    placeholder="Describe the T&M work performed..."
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none resize-none"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="tmHours" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Hours committed
+                  </label>
+                  <input
+                    id="tmHours"
+                    type="number"
+                    min={0}
+                    step={0.25}
+                    required={tmEnabled}
+                    value={tmHours}
+                    onChange={e => setTmHours(e.target.value)}
+                    placeholder="e.g. 4.5"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
 

@@ -108,6 +108,10 @@ export const useDispatchData = () => {
                              : (j.technician_id ? [j.technician_id] : []),
         type:              j.type ?? 'maintenance',
         estimatedDuration: j.estimatedDuration ?? 120,
+        tmEnabled:         Boolean(j.tm_enabled) || String(j.phase ?? '').toLowerCase() === 't&m',
+        tmApprovedBy:      j.tm_approved_by != null ? String(j.tm_approved_by) : '',
+        tmWorkDescription: j.tm_work_description != null ? String(j.tm_work_description) : '',
+        tmHours:           j.tm_hours != null && j.tm_hours !== '' ? Number(j.tm_hours) : null,
       }));
       setJobs(liveJobs);
     } catch (err) {
@@ -414,12 +418,13 @@ export const useDispatchData = () => {
         ? jobData.customerId
         : null;
     const projectId = jobData.projectId || null;
+    const tmEnabled = Boolean(jobData.tmEnabled) || jobData.phase === 'T&M';
 
     const { data: inserted, error: sbError } = await supabase.from('jobs').insert([{
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
       description:  jobData.description ?? '',
-      phase:        jobData.phase ?? 'Rough-In',
+      phase:        tmEnabled ? 'T&M' : (jobData.phase ?? 'Rough-In'),
       status:       'scheduled',
       date:         startDate,
       end_date:     endDate,
@@ -430,6 +435,12 @@ export const useDispatchData = () => {
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
       customer_id:  customerId,
       project_id:   projectId,
+      tm_enabled:   tmEnabled,
+      tm_approved_by: tmEnabled ? (jobData.tmApprovedBy?.trim() || null) : null,
+      tm_work_description: tmEnabled ? (jobData.tmWorkDescription?.trim() || null) : null,
+      tm_hours: tmEnabled && jobData.tmHours != null && !Number.isNaN(Number(jobData.tmHours))
+        ? Number(jobData.tmHours)
+        : null,
       // NOTE: the `jobs` table has no `type` column; including it makes the whole
       // insert fail (PGRST204) and silently drop the job. Type is derived on read.
     }]).select('id').single();
@@ -480,12 +491,13 @@ export const useDispatchData = () => {
         ? jobData.customerId
         : null;
     const projectId = jobData.projectId || null;
+    const tmEnabled = Boolean(jobData.tmEnabled) || jobData.phase === 'T&M';
 
     const { error: sbError } = await supabase.from('jobs').update({
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
       description:  jobData.description ?? '',
-      phase:        jobData.phase ?? 'Rough-In',
+      phase:        tmEnabled ? 'T&M' : (jobData.phase ?? 'Rough-In'),
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
@@ -493,6 +505,12 @@ export const useDispatchData = () => {
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
       customer_id:  customerId,
       project_id:   projectId,
+      tm_enabled:   tmEnabled,
+      tm_approved_by: tmEnabled ? (jobData.tmApprovedBy?.trim() || null) : null,
+      tm_work_description: tmEnabled ? (jobData.tmWorkDescription?.trim() || null) : null,
+      tm_hours: tmEnabled && jobData.tmHours != null && !Number.isNaN(Number(jobData.tmHours))
+        ? Number(jobData.tmHours)
+        : null,
       // NOTE: `jobs` has no `type` column — see createJob. Omitted so the update
       // doesn't fail (PGRST204) and silently no-op.
     }).eq('id', jobId);
