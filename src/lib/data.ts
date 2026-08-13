@@ -36,6 +36,11 @@ export interface Job {
   phase: string;
   serviceType?: string;
   estimatedDuration: number;
+  /** T&M log — only used when tmEnabled is true / phase is T&M. */
+  tmEnabled?: boolean;
+  tmApprovedBy?: string;
+  tmWorkDescription?: string;
+  tmHours?: number | null;
 }
 
 // Full-day service categories selected on a job (jobs.service_type).

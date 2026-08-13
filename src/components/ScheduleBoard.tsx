@@ -303,14 +303,31 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     await onRefresh();
   }, [jobs, fetchTasks, onRefresh, techTimeOff, technicians]);
 
-  const saveJobDates = useCallback(async (job: Job, start: string, end: string, phase: string) => {
+  const saveJobDates = useCallback(async (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    tm?: { enabled: boolean; approvedBy: string; workDescription: string; hours: number | null },
+  ) => {
     const safeEnd = end < start ? start : end;
     const oldStart = job.date;
     const shiftDays = daysBetween(oldStart, start);
+    const tmEnabled = tm?.enabled ?? (phase === 'T&M' || Boolean(job.tmEnabled));
 
     const { error: err } = await supabase
       .from('jobs')
-      .update({ date: start, end_date: safeEnd, phase })
+      .update({
+        date: start,
+        end_date: safeEnd,
+        phase: tmEnabled ? 'T&M' : phase,
+        tm_enabled: tmEnabled,
+        tm_approved_by: tmEnabled ? (tm?.approvedBy?.trim() || job.tmApprovedBy || null) : null,
+        tm_work_description: tmEnabled ? (tm?.workDescription?.trim() || job.tmWorkDescription || null) : null,
+        tm_hours: tmEnabled
+          ? (tm?.hours != null ? tm.hours : (job.tmHours ?? null))
+          : null,
+      })
       .eq('id', job.id);
     if (err) { setError(err.message); return; }
 
@@ -352,7 +369,11 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode]);
 
   const saveJobPhase = useCallback(async (job: Job, phase: string) => {
-    const { error: err } = await supabase.from('jobs').update({ phase }).eq('id', job.id);
+    const tmEnabled = phase === 'T&M';
+    const { error: err } = await supabase.from('jobs').update({
+      phase,
+      tm_enabled: tmEnabled,
+    }).eq('id', job.id);
     if (err) { setError(err.message); return; }
     await onRefresh();
   }, [onRefresh]);
@@ -862,17 +883,45 @@ const AddCrewInline: React.FC<{
 const EditJobDatesModal: React.FC<{
   job: Job;
   onClose: () => void;
-  onSave: (job: Job, start: string, end: string, phase: string) => Promise<void> | void;
+  onSave: (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    tm?: { enabled: boolean; approvedBy: string; workDescription: string; hours: number | null },
+  ) => Promise<void> | void;
 }> = ({ job, onClose, onSave }) => {
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
   const [phase, setPhase] = useState(job.phase || 'Rough-In');
+  const [tmEnabled, setTmEnabled] = useState(Boolean(job.tmEnabled) || job.phase === 'T&M');
+  const [tmApprovedBy, setTmApprovedBy] = useState(job.tmApprovedBy ?? '');
+  const [tmWorkDescription, setTmWorkDescription] = useState(job.tmWorkDescription ?? '');
+  const [tmHours, setTmHours] = useState(job.tmHours != null ? String(job.tmHours) : '');
   const [saving, setSaving] = useState(false);
+
+  const handlePhaseChange = (next: string) => {
+    setPhase(next);
+    if (next === 'T&M') setTmEnabled(true);
+    else if (tmEnabled && next !== 'T&M') setTmEnabled(false);
+  };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await onSave(job, start, end < start ? start : end, phase);
+      const enabled = tmEnabled || phase === 'T&M';
+      await onSave(
+        job,
+        start,
+        end < start ? start : end,
+        enabled ? 'T&M' : phase,
+        {
+          enabled,
+          approvedBy: tmApprovedBy,
+          workDescription: tmWorkDescription,
+          hours: tmHours.trim() === '' ? null : Number(tmHours),
+        },
+      );
     } finally {
       setSaving(false);
     }
@@ -904,7 +953,7 @@ const EditJobDatesModal: React.FC<{
         Plumbing phase
         <select
           value={phase}
-          onChange={e => setPhase(e.target.value)}
+          onChange={e => handlePhaseChange(e.target.value)}
           className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
         >
           {PLUMBING_PHASES.map(p => (
@@ -915,6 +964,59 @@ const EditJobDatesModal: React.FC<{
           )}
         </select>
       </label>
+
+      <label className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={tmEnabled || phase === 'T&M'}
+          onChange={e => {
+            const on = e.target.checked;
+            setTmEnabled(on);
+            if (on) setPhase('T&M');
+          }}
+          className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+        />
+        T&amp;M (Time &amp; Materials)
+      </label>
+
+      {(tmEnabled || phase === 'T&M') && (
+        <div className="mt-3 space-y-2 border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Approved by
+            <input
+              list="tm-approver-edit"
+              value={tmApprovedBy}
+              onChange={e => setTmApprovedBy(e.target.value)}
+              placeholder="Who approved this T&M?"
+              className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+            <datalist id="tm-approver-edit" />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Work performed
+            <textarea
+              value={tmWorkDescription}
+              onChange={e => setTmWorkDescription(e.target.value)}
+              rows={3}
+              placeholder="Describe the T&M work performed..."
+              className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+            />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Hours committed
+            <input
+              type="number"
+              min={0}
+              step={0.25}
+              value={tmHours}
+              onChange={e => setTmHours(e.target.value)}
+              placeholder="e.g. 4.5"
+              className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+          </label>
+        </div>
+      )}
+
       <div className="flex gap-2 mt-5">
         <button type="button" onClick={onClose} disabled={saving}
           className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">

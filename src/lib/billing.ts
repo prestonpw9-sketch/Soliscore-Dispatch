@@ -19,6 +19,9 @@ export type ProjectBilling = {
   roughBilledPct: number;
   topoutBilledPct: number;
   trimBilledPct: number;
+  roughBillBy: string | null;
+  topoutBillBy: string | null;
+  trimBillBy: string | null;
 };
 
 export function milestonePctFor(
@@ -28,6 +31,15 @@ export function milestonePctFor(
   if (key === 'rough') return project.roughBilledPct;
   if (key === 'topout') return project.topoutBilledPct;
   return project.trimBilledPct;
+}
+
+export function milestoneBillBy(
+  project: Pick<ProjectBilling, 'roughBillBy' | 'topoutBillBy' | 'trimBillBy'>,
+  key: BillingMilestoneKey,
+): string | null {
+  if (key === 'rough') return project.roughBillBy;
+  if (key === 'topout') return project.topoutBillBy;
+  return project.trimBillBy;
 }
 
 /** Map a job phase / service type onto a billable milestone (or null). */
@@ -86,6 +98,22 @@ export function formatMoney(n: number | null | undefined): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
+/** YYYY-MM-DD offset from a base date string. */
+export function addDays(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Suggested invoice-by date: 20 days before work starts. */
+export function suggestedBillBy(workStartDate: string): string {
+  return addDays(workStartDate, -20);
+}
+
 /** Normalize free-text for fuzzy customer/project matching. */
 export function normalizeMatchKey(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -93,7 +121,7 @@ export function normalizeMatchKey(s: string): string {
 
 /**
  * Soft-match a job to a customer when customer_id is missing:
- * builder name contained in job title, or project name match.
+ * builder name contained in job title, or project name match / prefix (DCS ↔ DCS Mesa).
  */
 export function jobMatchesCustomer(
   job: { customerId?: string; customerName: string; address?: string },
@@ -105,13 +133,143 @@ export function jobMatchesCustomer(
   const nameKey = normalizeMatchKey(customer.name);
   if (nameKey.length >= 3 && jobKey.includes(nameKey)) return true;
   for (const pn of projectNames) {
-    const pKey = normalizeMatchKey(pn);
-    if (pKey.length >= 3 && jobKey.includes(pKey)) return true;
-    // SC#571 ↔ Stone Canyon …571…
-    const sc = pn.match(/^sc#?\s*(\d+)/i);
-    if (sc && jobKey.includes(sc[1]) && (jobKey.includes('stonecanyon') || jobKey.includes('sc'))) {
-      return true;
-    }
+    if (jobMatchesProjectName(job.customerName, pn)) return true;
   }
   return false;
+}
+
+/** Match job title to project name (exact-ish, contains, or short prefix like DCS → DCS Mesa). */
+export function jobMatchesProjectName(jobTitle: string, projectName: string): boolean {
+  const jobKey = normalizeMatchKey(jobTitle);
+  const pKey = normalizeMatchKey(projectName);
+  if (!jobKey || !pKey) return false;
+  if (pKey.length >= 3 && jobKey.includes(pKey)) return true;
+  if (jobKey.length >= 3 && pKey.startsWith(jobKey)) return true;
+  // SC#571 ↔ Stone Canyon …571…
+  const sc = projectName.match(/^sc#?\s*(\d+)/i);
+  if (sc && jobKey.includes(sc[1]) && (jobKey.includes('stonecanyon') || jobKey.includes('sc'))) {
+    return true;
+  }
+  return false;
+}
+
+export type BillingLookaheadItem = {
+  projectId: string;
+  projectName: string;
+  customerId: string;
+  customerName: string;
+  milestone: BillingMilestoneKey;
+  milestoneLabel: string;
+  percent: number;
+  amount: number | null;
+  workDate: string;
+  billBy: string;
+  jobId?: string;
+  jobTitle?: string;
+};
+
+type JobLike = {
+  id: string;
+  customerId?: string;
+  customerName: string;
+  projectId?: string;
+  date: string;
+  endDate?: string;
+  phase: string;
+  serviceType?: string;
+  status?: string;
+};
+
+/**
+ * Upcoming scheduled phase work with an estimated bill-by date.
+ * No urgency / "Bill now" labels — owners decide timing from the adjustable dates.
+ * Includes work up to ~90 days out so longer lead schedules (e.g. DCS Mesa) still appear.
+ */
+export function buildBillingLookahead(
+  projects: ProjectBilling[],
+  jobs: JobLike[],
+  customerNameById: Map<string, string>,
+  opts?: { today?: string; maxLeadDays?: number },
+): BillingLookaheadItem[] {
+  const today = opts?.today ?? todayIso();
+  const maxLead = opts?.maxLeadDays ?? 90;
+  const items: BillingLookaheadItem[] = [];
+  const seen = new Set<string>();
+  const projectById = new Map(projects.map(p => [p.id, p]));
+
+  const resolveProject = (job: JobLike): ProjectBilling | undefined => {
+    if (job.projectId && projectById.has(job.projectId)) return projectById.get(job.projectId);
+    return projects.find(p => jobMatchesProjectName(job.customerName, p.name));
+  };
+
+  for (const job of jobs) {
+    if ((job.status ?? '').toLowerCase() === 'completed') continue;
+    const milestone = phaseToMilestone(job.phase, job.serviceType);
+    if (!milestone) continue;
+    const workDate = job.date;
+    if (!workDate || workDate < today) continue;
+
+    const daysOut = Math.round(
+      (new Date(`${workDate}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime())
+      / 86_400_000,
+    );
+    if (daysOut > maxLead) continue;
+
+    const project = resolveProject(job);
+    // Skip milestones already fully invoiced on the project.
+    if (project && milestonePctFor(project, milestone) >= 100) continue;
+
+    const customerId = job.customerId || project?.builderId || '';
+    if (!customerId && !project) continue;
+    const resolvedCustomerId = customerId || project!.builderId;
+
+    const key = `${project?.id ?? job.id}:${milestone}:${workDate}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const meta = BILLING_MILESTONES.find(m => m.key === milestone)!;
+    const billBy = (project && milestoneBillBy(project, milestone)) || suggestedBillBy(workDate);
+
+    items.push({
+      projectId: project?.id ?? '',
+      projectName: project?.name ?? job.customerName,
+      customerId: resolvedCustomerId,
+      customerName: customerNameById.get(resolvedCustomerId) ?? job.customerName,
+      milestone,
+      milestoneLabel: meta.label,
+      percent: meta.percent,
+      amount: milestoneAmount(project?.contractAmount ?? null, milestone),
+      workDate,
+      billBy,
+      jobId: job.id,
+      jobTitle: job.customerName,
+    });
+  }
+
+  // Explicit bill_by dates on projects (even without a matching future job).
+  for (const project of projects) {
+    for (const m of BILLING_MILESTONES) {
+      if (milestonePctFor(project, m.key) >= 100) continue;
+      const billBy = milestoneBillBy(project, m.key);
+      if (!billBy || billBy < today) continue;
+      if (billBy > addDays(today, maxLead)) continue;
+      if ([...seen].some(s => s.startsWith(`${project.id}:${m.key}:`))) continue;
+      seen.add(`${project.id}:${m.key}:billby`);
+
+      items.push({
+        projectId: project.id,
+        projectName: project.name,
+        customerId: project.builderId,
+        customerName: customerNameById.get(project.builderId) ?? 'Builder',
+        milestone: m.key,
+        milestoneLabel: m.label,
+        percent: m.percent,
+        amount: milestoneAmount(project.contractAmount, m.key),
+        workDate: billBy,
+        billBy,
+      });
+    }
+  }
+
+  return items.sort((a, b) => a.billBy.localeCompare(b.billBy) || a.workDate.localeCompare(b.workDate));
 }
