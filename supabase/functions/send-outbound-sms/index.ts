@@ -1,228 +1,25 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-// ── CORS ───────────────────────────────────────────────────────────────────
-
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-} as const;
-
-const SYSTEM_PROMPT = `You are an AI assistant embedded in ITDG Plumbing Dispatch (Arizona).
-Help dispatchers manage jobs, schedule technicians, and draft customer SMS updates.
-Use the current date/time from context — never guess dates.
-Job status 'scheduled' means not yet marked active on the board.
-
-CUSTOMER UPDATE RULES (when drafting texts):
-- Jobs in "Today's open jobs" are ON THE SCHEDULE FOR TODAY (see todayDate in context).
-- Write short, professional SMS (under 300 characters) confirming today's service.
-- Mention crew name and phase when available. Example tone: crew is scheduled/on site today.
-- Do NOT say work will finish tomorrow or apologize for delays unless the user explicitly asks for a delay notice.
-- Use customer name and site address only — never put internal database job IDs in customer-facing text.
-- Header format: **Customer Name (Site)** then the SMS on the next line.
-- Sign messages: "— ITDG Plumbing"`;
-
-const DEFAULT_MODEL = 'gemini-2.5-flash';
-
-function resolveGeminiModel(requested?: unknown): string {
-  const fromEnv = Deno.env.get('GEMINI_MODEL');
-  const raw =
-    typeof requested === 'string' && requested.trim()
-      ? requested.trim()
-      : (fromEnv ?? DEFAULT_MODEL);
-
-  // Google retired 2.0 — always upgrade stale model names.
-  if (raw.includes('2.0-flash') || raw === 'gemini-1.5-flash' || raw === 'gemini-1.5-pro') {
-    return DEFAULT_MODEL;
-  }
-  return raw;
-}
-
-// ── Types ──────────────────────────────────────────────────────────────────
-
-interface ChatMessage {
-  role:    'user' | 'assistant' | 'system';
-  content: string;
-}
-
-interface SelectedJob {
-  id:           string | number;
-  customerName: string;
-  address:      string;
-  description:  string;
-  tech:         string;
-  phase:        string;
-}
-
-interface TodayJobSummary {
-  id:           string;
-  customerName: string;
-  site:         string;
-  phase:        string;
-  status:       string;
-  tech?:        string;
-  startTime?:   string;
-  serviceType?: string;
-}
-
-interface SOLIDCOREContext {
-  activeJobs?:        number;
-  techsOnDuty?:       string[];
-  pendingDispatches?: number;
-  currentPage?:       string;
-  selectedJob?:       SelectedJob | null;
-  openJobsToday?:     TodayJobSummary[];
-  totalJobsToday?:    number;
-  currentDateTime?:   string;
-  todayDate?:         string;
-}
-
-interface AIRequestOptions {
-  temperature?:  number;
-  maxTokens?:    number;
-  systemPrompt?: string;
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function jsonResponse(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-  });
-}
+import {
+  CORS_HEADERS,
+  createServiceClient,
+  createUserClient,
+  handleDispatchAiChat,
+  jsonResponse,
+  loadAllMemories,
+  resolveUserRole,
+  saveTechnicianSkillsDirect,
+} from '../_shared/dispatchAi.ts';
 
 function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-function buildSystemPrompt(ctx: SOLIDCOREContext, override?: string): string {
-  if (override) return override;
-
-  const lines = [SYSTEM_PROMPT];
-  if (ctx.todayDate)                       lines.push(`Today's date (Arizona): ${ctx.todayDate}.`);
-  if (ctx.currentDateTime)                 lines.push(`Current date/time (Arizona): ${ctx.currentDateTime}.`);
-  if (ctx.currentPage)                     lines.push(`Current view: ${ctx.currentPage}.`);
-  if (ctx.activeJobs !== undefined)        lines.push(`Active jobs: ${ctx.activeJobs}.`);
-  if (ctx.pendingDispatches !== undefined) lines.push(`Pending dispatches: ${ctx.pendingDispatches}.`);
-  if (ctx.techsOnDuty?.length)             lines.push(`Techs on duty today: ${ctx.techsOnDuty.join(', ')}.`);
-  if (ctx.openJobsToday?.length) {
-    lines.push(`Today's open jobs (${ctx.openJobsToday.length}):`);
-    for (const j of ctx.openJobsToday) {
-      const tech = j.tech ? `, crew: ${j.tech}` : ', crew: unassigned';
-      const time = j.startTime ? `, start: ${j.startTime}` : '';
-      const svc  = j.serviceType ? `, service: ${j.serviceType}` : '';
-      lines.push(`- Customer: ${j.customerName} | Site: ${j.site} | Phase: ${j.phase}${svc}${tech}${time} | Status: ${j.status}`);
-    }
-  } else if (ctx.totalJobsToday === 0) {
-    lines.push('Today\'s open jobs: none on the schedule.');
-  } else {
-    lines.push('No job is currently selected/focused on screen.');
+function normalizeSkills(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map(s => String(s).trim()).filter(Boolean);
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
   }
-  if (ctx.selectedJob) {
-    const j = ctx.selectedJob;
-    lines.push(`Focused job: #${j.id} — ${j.customerName}, Phase: ${j.phase}, Tech: ${j.tech}.`);
-  }
-  return lines.join('\n');
-}
-
-async function handleAiChat(req: Request, body: Record<string, unknown>): Promise<Response> {
-  const authHeader = req.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return jsonResponse({ error: 'Missing authorization header.' }, 401);
-  }
-
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return jsonResponse({ error: 'Server misconfiguration.' }, 500);
-  }
-
-  const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
-
-  const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-  if (authError || !user) {
-    return jsonResponse({ error: 'Unauthorized — sign out and sign back in.' }, 401);
-  }
-
-  const apiKey =
-    Deno.env.get('GEMINI_API_KEY') ??
-    Deno.env.get('VITE_GEMINI_API_KEY');
-
-  if (!apiKey) {
-    return jsonResponse({
-      error: 'Gemini API key is not configured. Add VITE_GEMINI_API_KEY in Supabase Edge Function secrets.',
-    }, 500);
-  }
-
-  const messages = Array.isArray(body.messages) ? body.messages as ChatMessage[] : [];
-  const context  = (body.context  ?? {}) as SOLIDCOREContext;
-  const options  = (body.options  ?? {}) as AIRequestOptions;
-
-  if (messages.length === 0) {
-    return jsonResponse({ error: 'Missing required field: messages.' }, 400);
-  }
-
-  const model = resolveGeminiModel(body.model);
-  const systemInstruction = buildSystemPrompt(context, options.systemPrompt);
-
-  const contents = messages
-    .filter(m => m.role !== 'system' && typeof m.content === 'string' && m.content.trim())
-    .map(m => ({
-      role:  m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
-
-  if (contents.length === 0) {
-    return jsonResponse({ error: 'No valid messages to send.' }, 400);
-  }
-
-  const geminiUrl =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-  const geminiRes = await fetch(geminiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: systemInstruction }] },
-      contents,
-      generationConfig: {
-        temperature:     options.temperature ?? 0.7,
-          maxOutputTokens: options.maxTokens   ?? 2048,
-      },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-      ],
-    }),
-  });
-
-  const geminiData = await geminiRes.json();
-
-  if (!geminiRes.ok) {
-    const message =
-      geminiData?.error?.message ??
-      geminiData?.message ??
-      'Gemini request failed.';
-    return jsonResponse({ error: message, detail: geminiData }, geminiRes.status);
-  }
-
-  const reply =
-    geminiData?.candidates?.[0]?.content?.parts
-      ?.map((p: { text?: string }) => p.text ?? '')
-      .join('')
-      .trim() ?? '';
-
-  if (!reply) {
-    const blockReason = geminiData?.candidates?.[0]?.finishReason ?? 'unknown';
-    return jsonResponse({ error: `No response from Gemini (${blockReason}).` }, 502);
-  }
-
-  return jsonResponse({ reply }, 200);
+  return [];
 }
 
 async function handleOutboundSms(body: Record<string, unknown>): Promise<Response> {
@@ -264,8 +61,6 @@ async function handleOutboundSms(body: Record<string, unknown>): Promise<Respons
   return jsonResponse({ sid: data.sid, status: data.status }, 200);
 }
 
-// ── Handler ────────────────────────────────────────────────────────────────
-
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS });
@@ -284,7 +79,50 @@ serve(async (req: Request) => {
     }
 
     if (body.action === 'ai-chat' || Array.isArray(body.messages)) {
-      return await handleAiChat(req, body);
+      return await handleDispatchAiChat(req, body);
+    }
+
+    if (body.action === 'list-ai-memories') {
+      const userClient = createUserClient(req);
+      if (!userClient) return jsonResponse({ error: 'Missing authorization header.' }, 401);
+      const { data: { user }, error: authError } = await userClient.auth.getUser();
+      if (authError || !user) return jsonResponse({ error: 'Unauthorized.' }, 401);
+      const admin = createServiceClient();
+      if (!admin) return jsonResponse({ error: 'Server misconfiguration.' }, 500);
+      const memories = await loadAllMemories(admin);
+      return jsonResponse({ memories });
+    }
+
+    if (body.action === 'save-tech-skills') {
+      const technicianId = String(body.technician_id ?? '');
+      const skills = normalizeSkills(body.skills);
+      if (!technicianId) return jsonResponse({ error: 'Missing technician_id.' }, 400);
+
+      const userClient = createUserClient(req);
+      if (!userClient) return jsonResponse({ error: 'Missing authorization header.' }, 401);
+      const { data: { user }, error: authError } = await userClient.auth.getUser();
+      if (authError || !user) return jsonResponse({ error: 'Unauthorized.' }, 401);
+      const role = await resolveUserRole(userClient, user.id);
+      if (role !== 'owner' && role !== 'crew') {
+        return jsonResponse({ error: 'Read-only role cannot edit crew abilities.' }, 403);
+      }
+
+      const admin = createServiceClient();
+      if (!admin) return jsonResponse({ error: 'Server misconfiguration.' }, 500);
+
+      const saved = await saveTechnicianSkillsDirect(admin, {
+        technicianId,
+        skills,
+        userId: user.id,
+      });
+      if (!saved.ok) return jsonResponse({ error: saved.error }, 400);
+      return jsonResponse({
+        ok: true,
+        skills: saved.skills,
+        name: saved.name,
+        skills_column_updated: saved.skillsColumnUpdated,
+        didMutate: true,
+      });
     }
 
     return await handleOutboundSms(body);

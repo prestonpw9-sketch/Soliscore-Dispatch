@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Briefcase, Map, Camera, Users, FolderOpen,
 } from 'lucide-react';
 import type { Job } from '@/lib/data';
+import { useAuth } from '@/lib/AuthContext';
+import { fetchSubmittalsCount } from '@/lib/submittals';
+import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
 import ActiveJobsModal  from './ActiveJobsModal';
 import BlueprintsModal  from './BlueprintsModal';
 import SitePhotosModal  from './SitePhotosModal';
@@ -14,6 +17,14 @@ interface Props {
   activeBlueprints: number;
   sitePhotos: number;
   activePlumbers: number;
+  submittalsCount: number;
+  refreshSubmittals: () => Promise<number | void>;
+  refreshBlueprints: () => Promise<number | void>;
+  refreshSitePhotos: () => Promise<number | void>;
+  reportSubmittalsCount: (count: number) => void;
+  reportBlueprintsCount: (count: number) => void;
+  reportSitePhotosCount: (count: number) => void;
+  onJobsChanged?: () => void | Promise<unknown>;
   onOpenTeam: () => void;
 }
 
@@ -23,14 +34,43 @@ const StatsCards: React.FC<Props> = ({
   activeBlueprints,
   sitePhotos,
   activePlumbers,
+  submittalsCount,
+  refreshSubmittals,
+  refreshBlueprints,
+  refreshSitePhotos,
+  reportSubmittalsCount,
+  reportBlueprintsCount,
+  reportSitePhotosCount,
+  onJobsChanged,
   onOpenTeam,
 }) => {
+  const { session, loading: authLoading } = useAuth();
   const [jobsModalOpen, setJobsModalOpen]     = useState(false);
   const [blueprintsModalOpen, setBlueprintsModalOpen] = useState(false);
   const [photosModalOpen, setPhotosModalOpen] = useState(false);
   const [submittalsModalOpen, setSubmittalsModalOpen] = useState(false);
 
-  const submittals = jobs.filter(j => j.status === 'pending');
+  // Belt-and-suspenders: also count directly when the dashboard cards mount.
+  useEffect(() => {
+    if (authLoading || !session) return;
+    let cancelled = false;
+    void (async () => {
+      const [subs, prints, photos] = await Promise.all([
+        fetchSubmittalsCount(),
+        fetchBlueprintsCount(),
+        fetchSitePhotosCount(),
+      ]);
+      if (cancelled) return;
+      if (subs > 0) reportSubmittalsCount(subs);
+      if (prints > 0) reportBlueprintsCount(prints);
+      if (photos > 0) reportSitePhotosCount(photos);
+    })();
+    return () => { cancelled = true; };
+  }, [
+    authLoading, session,
+    reportSubmittalsCount, reportBlueprintsCount, reportSitePhotosCount,
+    submittalsModalOpen, blueprintsModalOpen, photosModalOpen,
+  ]);
 
   return (
     <>
@@ -122,7 +162,7 @@ const StatsCards: React.FC<Props> = ({
           </div>
           <div>
             <h4 className="text-3xl font-black text-white tracking-tight leading-none">
-              {submittals.length}
+              {submittalsCount}
             </h4>
             <p className="text-sm font-bold text-white/90 mt-2">Submittals</p>
           </div>
@@ -130,10 +170,31 @@ const StatsCards: React.FC<Props> = ({
       </div>
 
       {/* Modals */}
-      <ActiveJobsModal  isOpen={jobsModalOpen}       onClose={() => setJobsModalOpen(false)} />
-      <BlueprintsModal  isOpen={blueprintsModalOpen} onClose={() => setBlueprintsModalOpen(false)} />
-      <SitePhotosModal  isOpen={photosModalOpen}     onClose={() => setPhotosModalOpen(false)} jobs={jobs} />
-      <SubmittalsModal  isOpen={submittalsModalOpen} onClose={() => setSubmittalsModalOpen(false)} jobs={jobs} />
+      <ActiveJobsModal
+        isOpen={jobsModalOpen}
+        onClose={() => setJobsModalOpen(false)}
+        onJobsChanged={onJobsChanged}
+      />
+      <BlueprintsModal
+        isOpen={blueprintsModalOpen}
+        onClose={() => setBlueprintsModalOpen(false)}
+        onCountChange={reportBlueprintsCount}
+        onRefresh={refreshBlueprints}
+      />
+      <SitePhotosModal
+        isOpen={photosModalOpen}
+        onClose={() => setPhotosModalOpen(false)}
+        jobs={jobs}
+        onCountChange={reportSitePhotosCount}
+        onRefresh={refreshSitePhotos}
+      />
+      <SubmittalsModal
+        isOpen={submittalsModalOpen}
+        onClose={() => setSubmittalsModalOpen(false)}
+        jobs={jobs}
+        onCountChange={reportSubmittalsCount}
+        onRefresh={refreshSubmittals}
+      />
     </>
   );
 };

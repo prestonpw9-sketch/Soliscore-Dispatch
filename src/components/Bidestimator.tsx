@@ -1,5 +1,8 @@
-import { useState } from 'react';
-import { Plus, Trash2, Save, FolderOpen, FileText, FilePlus } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Plus, Trash2, Save, FolderOpen, FileText, FilePlus,
+  BookOpen, Loader2, X,
+} from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import ProposalModal from './proposal/ProposalModal';
@@ -25,12 +28,30 @@ import { makeBlankDocument, makeLineId } from './bid/seed';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+const DRAFT_KEY = 'solidcore:full-takeoff-draft';
+
 function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
 function num(raw: string): number {
   return Number(raw) || 0;
+}
+
+function isFullTakeoff(data: unknown): data is BidDocument {
+  if (!data || typeof data !== 'object') return false;
+  const d = data as BidDocument;
+  return Array.isArray(d.page1) && Array.isArray(d.page2) && Array.isArray(d.page3);
+}
+
+interface SavedBidRow {
+  id: string;
+  project_name: string;
+  client_name: string | null;
+  total_cost: number | null;
+  created_at: string | null;
+  is_master: boolean | null;
+  takeoff_data: unknown;
 }
 
 type TabType = 'page1' | 'page2' | 'page3' | 'summary';
@@ -59,17 +80,70 @@ export default function BidEstimator() {
   const { isOwner } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('page1');
   const [doc, setDoc] = useState<BidDocument>(() => makeBlankDocument());
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [statusNote, setStatusNote] = useState<string | null>(null);
   const [proposalOpen, setProposalOpen] = useState(false);
   const [changeOrderOpen, setChangeOrderOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [savedBids, setSavedBids] = useState<SavedBidRow[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const skipDirtyRef = useRef(true); // ignore initial blank document as "dirty"
+  const hydratedRef = useRef(false);
+
+  // Restore local draft once on mount so a refresh / nav-away doesn't wipe work.
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { doc?: unknown; savedAt?: number };
+      if (isFullTakeoff(parsed.doc)) {
+        skipDirtyRef.current = true;
+        setDoc(parsed.doc);
+        setDirty(true);
+        setStatusNote('Restored unsaved draft from this browser.');
+      }
+    } catch {
+      // ignore corrupt drafts
+    }
+  }, []);
+
+  // Autosave a local draft while editing (DB save is still explicit / on proposal).
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ doc, savedAt: Date.now() }));
+      } catch {
+        // quota / private mode
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [doc]);
 
   // ── Mutators ───────────────────────────────────────────────────────────────
+  function markDoc(next: BidDocument | ((prev: BidDocument) => BidDocument), clean = false) {
+    skipDirtyRef.current = clean;
+    setDoc(next);
+    setDirty(!clean);
+  }
+
   function patchDoc(patch: Partial<BidDocument>) {
     setDoc(prev => ({ ...prev, ...patch }));
   }
+
+  useEffect(() => {
+    if (skipDirtyRef.current) {
+      skipDirtyRef.current = false;
+      return;
+    }
+    setDirty(true);
+  }, [doc]);
 
   function updateLine(page: 'page1' | 'page1a', id: string, patch: Partial<LineItem>) {
     setDoc(prev => ({
@@ -175,24 +249,61 @@ export default function BidEstimator() {
   }
 
   // ── Persistence ─────────────────────────────────────────────────────────────
-  const summary = calcSummary(doc);
+  function rowToDoc(row: SavedBidRow): BidDocument | null {
+    if (!isFullTakeoff(row.takeoff_data)) return null;
+    return {
+      ...row.takeoff_data,
+      id: row.id,
+      project: row.project_name || row.takeoff_data.project || 'Untitled Bid',
+      gcOwner: row.client_name ?? row.takeoff_data.gcOwner ?? '',
+    };
+  }
+
+  async function persistBid(current: BidDocument = doc): Promise<BidDocument> {
+    const projectName = (current.project || '').trim() || 'Untitled Bid';
+    const totals = calcSummary(current);
+    const payloadDoc: BidDocument = { ...current, project: projectName };
+    // Don't embed a stale id inside JSON that disagrees with the row id.
+    const { id: existingId, ...takeoffBody } = payloadDoc;
+    const record = {
+      project_name: projectName,
+      client_name: payloadDoc.gcOwner || null,
+      is_master: false,
+      takeoff_data: { ...takeoffBody, id: existingId },
+      total_cost: totals.finalBid,
+    };
+
+    if (existingId) {
+      const { data, error } = await supabase
+        .from('project_bids')
+        .update(record)
+        .eq('id', existingId)
+        .select('id')
+        .single();
+      if (error) throw error;
+      return { ...payloadDoc, id: String(data.id) };
+    }
+
+    const { data, error } = await supabase
+      .from('project_bids')
+      .insert([record])
+      .select('id')
+      .single();
+    if (error) throw error;
+    return { ...payloadDoc, id: String(data.id) };
+  }
 
   function handleSave() {
     void (async () => {
       setSaving(true);
       setSaveError(null);
       setSaveSuccess(false);
+      setStatusNote(null);
       try {
-        const { error } = await supabase.from('project_bids').insert([
-          {
-            project_name: doc.project,
-            is_master: false,
-            takeoff_data: doc,
-            total_cost: summary.finalBid,
-          },
-        ]);
-        if (error) throw error;
+        const saved = await persistBid();
+        markDoc(saved, true);
         setSaveSuccess(true);
+        setStatusNote(`Saved “${saved.project}” — you can reopen it anytime.`);
         setTimeout(() => setSaveSuccess(false), 4000);
       } catch (err) {
         setSaveError(getErrorMessage(err, 'Failed to save bid.'));
@@ -202,30 +313,126 @@ export default function BidEstimator() {
     })();
   }
 
-  function handleLoad() {
+  async function ensureSavedForDocuments(): Promise<BidDocument> {
+    if (!doc.project.trim()) {
+      throw new Error('Give this bid a project name before generating a proposal.');
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const saved = await persistBid();
+      markDoc(saved, true);
+      setStatusNote(`Estimate saved as “${saved.project}”.`);
+      return saved;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openSavedBidsPicker() {
+    setPickerOpen(true);
+    setPickerLoading(true);
+    setSaveError(null);
+    try {
+      const { data, error } = await supabase
+        .from('project_bids')
+        .select('id, project_name, client_name, total_cost, created_at, is_master, takeoff_data')
+        .or('is_master.is.null,is_master.eq.false')
+        .order('created_at', { ascending: false })
+        .limit(40);
+      if (error) throw error;
+      // Only show full 4-page takeoffs (Quick Bid uses a different shape).
+      setSavedBids(
+        (data ?? []).filter(row => isFullTakeoff(row.takeoff_data)) as SavedBidRow[],
+      );
+    } catch (err) {
+      setSaveError(getErrorMessage(err, 'Failed to list saved bids.'));
+    } finally {
+      setPickerLoading(false);
+    }
+  }
+
+  function handleOpenSaved(row: SavedBidRow) {
+    if (dirty && !window.confirm('Replace the current unsaved estimate with this saved bid?')) {
+      return;
+    }
+    const loaded = rowToDoc(row);
+    if (!loaded) {
+      setSaveError('That saved bid is not a full 4-page takeoff.');
+      return;
+    }
+    markDoc(loaded, true);
+    setPickerOpen(false);
+    setStatusNote(`Opened “${loaded.project}”.`);
+    setSaveError(null);
+  }
+
+  function handleLoadPriceBook() {
     void (async () => {
+      if (dirty && !window.confirm('Load the master price book? Unsaved changes will be replaced.')) {
+        return;
+      }
       setLoading(true);
       setSaveError(null);
       try {
-        const { data, error } = await supabase
+        const { data: master, error } = await supabase
           .from('project_bids')
           .select('*')
+          .eq('is_master', true)
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
         if (error) throw error;
-        const loaded = data?.takeoff_data as BidDocument | undefined;
-        if (loaded && Array.isArray(loaded.page1)) {
-          setDoc(loaded);
-        } else {
-          setSaveError('Most recent bid is not a 4-page takeoff document.');
+        if (!isFullTakeoff(master?.takeoff_data)) {
+          setSaveError('No master price book found.');
+          return;
         }
+        // Price book is a template — open as a NEW editable bid (no id).
+        const template = master.takeoff_data as BidDocument;
+        markDoc({
+          ...template,
+          id: undefined,
+          project: doc.project?.startsWith('New ') ? doc.project : 'New Plumbing Bid',
+          gcOwner: '',
+          date: new Date().toISOString().slice(0, 10),
+        }, true);
+        setDirty(true);
+        setStatusNote('Loaded master price book into a new bid. Save to keep your takeoff.');
       } catch (err) {
-        setSaveError(getErrorMessage(err, 'Failed to load bid.'));
+        setSaveError(getErrorMessage(err, 'Failed to load price book.'));
       } finally {
         setLoading(false);
       }
     })();
+  }
+
+  function handleNewBid() {
+    if (dirty && !window.confirm('Start a new blank takeoff? Unsaved changes will be lost.')) {
+      return;
+    }
+    markDoc(makeBlankDocument(), true);
+    setStatusNote('Started a new takeoff.');
+    setSaveError(null);
+  }
+
+  async function handleOpenProposal() {
+    setSaveError(null);
+    try {
+      await ensureSavedForDocuments();
+      setProposalOpen(true);
+    } catch (err) {
+      setSaveError(getErrorMessage(err, 'Could not save estimate before proposal.'));
+    }
+  }
+
+  async function handleOpenChangeOrder() {
+    setSaveError(null);
+    try {
+      await ensureSavedForDocuments();
+      setChangeOrderOpen(true);
+    } catch (err) {
+      setSaveError(getErrorMessage(err, 'Could not save estimate before change order.'));
+    }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -235,13 +442,24 @@ export default function BidEstimator() {
       <div className={`${cardCls} p-5 mb-4`}>
         <div className="flex flex-wrap justify-between items-center gap-4">
           <div className="flex-1 min-w-[240px] space-y-2">
-            <input
-              type="text"
-              aria-label="Project name"
-              className="text-2xl font-bold bg-transparent border-none focus:ring-0 outline-none w-full"
-              value={doc.project}
-              onChange={e => patchDoc({ project: e.target.value })}
-            />
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="text"
+                aria-label="Project name"
+                className="text-2xl font-bold bg-transparent border-none focus:ring-0 outline-none w-full min-w-[200px]"
+                value={doc.project}
+                onChange={e => patchDoc({ project: e.target.value })}
+              />
+              <span
+                className={`text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                  dirty
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
+                    : 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200'
+                }`}
+              >
+                {dirty ? 'Unsaved' : doc.id ? 'Saved' : 'New'}
+              </span>
+            </div>
             <div className="flex flex-wrap gap-3 text-sm">
               <input
                 type="text"
@@ -258,25 +476,38 @@ export default function BidEstimator() {
                 value={doc.date}
                 onChange={e => patchDoc({ date: e.target.value })}
               />
+              {doc.id && (
+                <span className="text-xs text-slate-500 self-center">
+                  Bid ID {doc.id.slice(0, 8)}…
+                </span>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={handleLoad} disabled={loading}
-              className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
-              <FolderOpen className="w-4 h-4" /> {loading ? 'Loading…' : 'Load'}
+            <button type="button" onClick={handleNewBid}
+              className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors">
+              <Plus className="w-4 h-4" /> New
+            </button>
+            <button type="button" onClick={() => void openSavedBidsPicker()}
+              className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors">
+              <FolderOpen className="w-4 h-4" /> Open Saved
+            </button>
+            <button type="button" onClick={handleLoadPriceBook} disabled={loading}
+              className="inline-flex items-center gap-1.5 bg-indigo-500/90 hover:bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
+              <BookOpen className="w-4 h-4" /> {loading ? 'Loading…' : 'Price Book'}
             </button>
             <button type="button" onClick={handleSave} disabled={saving}
               className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
-              <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save Bid'}
+              <Save className="w-4 h-4" /> {saving ? 'Saving…' : dirty ? 'Save Bid' : 'Saved'}
             </button>
             {isOwner && (
               <>
-                <button type="button" onClick={() => setProposalOpen(true)}
-                  className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors">
+                <button type="button" onClick={() => void handleOpenProposal()} disabled={saving}
+                  className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
                   <FileText className="w-4 h-4" /> Generate Proposal
                 </button>
-                <button type="button" onClick={() => setChangeOrderOpen(true)}
-                  className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors">
+                <button type="button" onClick={() => void handleOpenChangeOrder()} disabled={saving}
+                  className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
                   <FilePlus className="w-4 h-4" /> Change Order
                 </button>
               </>
@@ -286,7 +517,12 @@ export default function BidEstimator() {
 
         {saveSuccess && (
           <p role="status" className="text-sm text-teal-600 dark:text-teal-400 font-semibold mt-3">
-            ✓ Bid saved successfully.
+            ✓ Bid saved — reopen anytime with Open Saved.
+          </p>
+        )}
+        {statusNote && !saveSuccess && (
+          <p role="status" className="text-sm text-indigo-600 dark:text-indigo-300 font-medium mt-3">
+            {statusNote}
           </p>
         )}
         {saveError && (
@@ -327,9 +563,92 @@ export default function BidEstimator() {
 
       {isOwner && (
         <>
-          <ProposalModal open={proposalOpen} onClose={() => setProposalOpen(false)} doc={doc} />
-          <ChangeOrderModal open={changeOrderOpen} onClose={() => setChangeOrderOpen(false)} doc={doc} />
+          <ProposalModal
+            open={proposalOpen}
+            onClose={() => setProposalOpen(false)}
+            doc={doc}
+            ensureSaved={ensureSavedForDocuments}
+          />
+          <ChangeOrderModal
+            open={changeOrderOpen}
+            onClose={() => setChangeOrderOpen(false)}
+            doc={doc}
+            ensureSaved={ensureSavedForDocuments}
+          />
         </>
+      )}
+
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4"
+          onClick={() => setPickerOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden shadow-2xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="open-saved-bids-title"
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+              <div>
+                <h3 id="open-saved-bids-title" className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                  Open Saved Takeoff
+                </h3>
+                <p className="text-xs text-slate-500">Full 4-page estimates saved for later</p>
+              </div>
+              <button type="button" onClick={() => setPickerOpen(false)} aria-label="Close"
+                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-3 flex-1">
+              {pickerLoading && (
+                <div className="flex items-center justify-center gap-2 py-12 text-slate-500 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading saved bids…
+                </div>
+              )}
+              {!pickerLoading && savedBids.length === 0 && (
+                <p className="text-sm text-slate-500 text-center py-12">
+                  No saved takeoffs yet. Save Bid (or Generate Proposal) to keep one.
+                </p>
+              )}
+              {!pickerLoading && savedBids.map(row => {
+                const when = row.created_at
+                  ? new Date(row.created_at).toLocaleString('en-US', {
+                      month: 'short', day: 'numeric', year: 'numeric',
+                      hour: 'numeric', minute: '2-digit',
+                    })
+                  : '';
+                const total = row.total_cost != null
+                  ? `$${Number(row.total_cost).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+                  : '—';
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => handleOpenSaved(row)}
+                    className="w-full text-left px-4 py-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 border border-transparent hover:border-slate-200 dark:hover:border-slate-700 mb-1.5 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900 dark:text-white truncate">
+                          {row.project_name || 'Untitled'}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5 truncate">
+                          {row.client_name ? `${row.client_name} · ` : ''}{when}
+                        </p>
+                      </div>
+                      <span className="text-sm font-semibold text-teal-700 dark:text-teal-300 tabular-nums shrink-0">
+                        {total}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -762,6 +1081,22 @@ function SummaryTab({ doc, updateSummary, updateLaborHour, updateSub }: SummaryP
           <span>FINAL BID</span>
           <span className="tabular-nums">${money(r.finalBid)}</span>
         </div>
+      </div>
+
+      {/* Full-width notes under both columns — Page 4 Excel notes area */}
+      <div className={`${cardCls} p-4 md:col-span-2`}>
+        <h3 className="font-semibold mb-1 text-base">Notes</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Job assumptions, exclusions, site conditions — saved with this takeoff.
+        </p>
+        <textarea
+          aria-label="Takeoff notes"
+          rows={6}
+          className={`${inputCls} min-h-[8rem] resize-y leading-relaxed`}
+          placeholder="Add notes for this bid…"
+          value={s.notes ?? ''}
+          onChange={e => updateSummary({ notes: e.target.value })}
+        />
       </div>
     </div>
   );

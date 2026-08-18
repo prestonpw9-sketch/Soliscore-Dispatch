@@ -8,8 +8,9 @@ import { AIMessage }                   from './AIMessage';
 
 const BASE_QUICK_PROMPTS = [
   "Summarise today's open jobs",
-  "Which techs are available right now?",
-  "What jobs are overdue?",
+  'Who is free this week and what are they good at?',
+  'Remember: ask me about each tech\'s strengths',
+  'Suggest crew placement for unassigned jobs',
 ] as const;
 
 interface Props { onClose: () => void; }
@@ -78,7 +79,9 @@ export function AIAssistantPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <p className="text-sm font-semibold text-white mb-1">{config.label} ready</p>
-              <p className="text-xs text-slate-400 leading-relaxed">Ask anything about your jobs,<br />techs, or customers.</p>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Reads your schedule, learns crew abilities,<br />and can place guys on jobs.
+              </p>
             </div>
             <div className="w-full space-y-1.5 mt-2">
               {quickPrompts.map(p => (

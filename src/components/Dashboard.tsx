@@ -1,6 +1,7 @@
 import React from 'react';
-import { ArrowRight, Calculator, CalendarDays, Star } from 'lucide-react';
-import type { Job, Technician, TechDailyPriority } from '@/lib/data';
+import { ArrowRight, Calculator, CalendarDays, Star, CalendarOff } from 'lucide-react';
+import type { Job, Technician, TechDailyPriority, TechTimeOff } from '@/lib/data';
+import { isTechOffOnDay } from '@/lib/data';
 import StatsCards from './StatsCards';
 import JobCard from './JobCard';
 import { BlueprintCard } from './BlueprintCard';
@@ -11,6 +12,17 @@ interface Props {
   jobs: Job[];
   technicians: Technician[];
   techPriorities: TechDailyPriority[];
+  techTimeOff: TechTimeOff[];
+  submittalsCount: number;
+  blueprintsCount: number;
+  sitePhotosCount: number;
+  refreshSubmittals: () => Promise<number | void>;
+  refreshBlueprints: () => Promise<number | void>;
+  refreshSitePhotos: () => Promise<number | void>;
+  reportSubmittalsCount: (count: number) => void;
+  reportBlueprintsCount: (count: number) => void;
+  reportSitePhotosCount: (count: number) => void;
+  onJobsChanged?: () => void | Promise<unknown>;
   todayStr: string;
   canEdit: boolean;
   onViewCalendar: () => void;
@@ -19,7 +31,19 @@ interface Props {
   onHire: (name: string, role: string) => void;
   onFire: (id: string) => void;
   onJobClick?: (job: Job) => void;
-  onSetFirstPriority?: (technicianId: string, workDate: string, jobId: string) => Promise<void>;
+  onSetStopPriority?: (
+    technicianId: string,
+    workDate: string,
+    jobId: string,
+    rank: 1 | 2 | null,
+  ) => Promise<void>;
+  onAddTimeOff?: (
+    technicianId: string,
+    startDate: string,
+    endDate: string,
+    note?: string | null,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>;
+  onDeleteTimeOff?: (id: string) => Promise<{ ok: true } | { ok: false; message: string }>;
 }
 
 function jobHasTech(job: Job, techId: string) {
@@ -31,15 +55,18 @@ function jobActiveOnDay(job: Job, day: string) {
   return job.date <= day && end >= day;
 }
 
-function sortTechJobs(
-  techJobs: Job[],
-  firstJobId: string | undefined,
-): Job[] {
+type RankMap = { first?: string; second?: string };
+
+function sortTechJobs(techJobs: Job[], ranks: RankMap): Job[] {
+  const rankOf = (id: string) => {
+    if (ranks.first === id) return 1;
+    if (ranks.second === id) return 2;
+    return 99;
+  };
   return [...techJobs].sort((a, b) => {
-    if (firstJobId) {
-      if (a.id === firstJobId) return -1;
-      if (b.id === firstJobId) return 1;
-    }
+    const ra = rankOf(a.id);
+    const rb = rankOf(b.id);
+    if (ra !== rb) return ra - rb;
     return (a.startTime || '').localeCompare(b.startTime || '');
   });
 }
@@ -48,6 +75,17 @@ const Dashboard: React.FC<Props> = ({
   jobs,
   technicians,
   techPriorities,
+  techTimeOff,
+  submittalsCount,
+  blueprintsCount,
+  sitePhotosCount,
+  refreshSubmittals,
+  refreshBlueprints,
+  refreshSitePhotos,
+  reportSubmittalsCount,
+  reportBlueprintsCount,
+  reportSitePhotosCount,
+  onJobsChanged,
   todayStr,
   canEdit,
   onViewCalendar,
@@ -56,7 +94,9 @@ const Dashboard: React.FC<Props> = ({
   onHire,
   onFire,
   onJobClick,
-  onSetFirstPriority,
+  onSetStopPriority,
+  onAddTimeOff,
+  onDeleteTimeOff,
 }) => {
   const [isTeamModalOpen, setIsTeamModalOpen] = React.useState(false);
   const [pinning, setPinning] = React.useState<string | null>(null);
@@ -66,10 +106,15 @@ const Dashboard: React.FC<Props> = ({
   const activePlumbers = technicians.filter(t => t.role === 'Plumber').length;
 
   const priorityByTech = React.useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, RankMap>();
     techPriorities
       .filter(p => p.workDate === todayStr)
-      .forEach(p => map.set(p.technicianId, p.jobId));
+      .forEach(p => {
+        const entry = map.get(p.technicianId) ?? {};
+        if (p.stopRank === 2) entry.second = p.jobId;
+        else entry.first = p.jobId;
+        map.set(p.technicianId, entry);
+      });
     return map;
   }, [techPriorities, todayStr]);
 
@@ -77,17 +122,36 @@ const Dashboard: React.FC<Props> = ({
     .map(t => {
       const techJobs = sortTechJobs(
         todayJobs.filter(j => jobHasTech(j, t.id) && j.status !== 'completed'),
-        priorityByTech.get(t.id),
+        priorityByTech.get(t.id) ?? {},
       );
       return { tech: t, jobs: techJobs };
     })
     .filter(route => route.jobs.length > 0);
 
-  const handlePin = async (technicianId: string, jobId: string) => {
-    if (!onSetFirstPriority) return;
+  const offToday = technicians.filter(t => isTechOffOnDay(t.id, todayStr, techTimeOff));
+
+  const handlePin = async (technicianId: string, jobId: string, stopCount: number) => {
+    if (!onSetStopPriority) return;
+    const ranks = priorityByTech.get(technicianId) ?? {};
+    const isFirst = ranks.first === jobId;
+    const isSecond = ranks.second === jobId;
+
+    let next: 1 | 2 | null;
+    if (isFirst || isSecond) {
+      // Toggle off
+      next = null;
+    } else if (!ranks.first) {
+      next = 1;
+    } else if (stopCount >= 3 && !ranks.second) {
+      next = 2;
+    } else {
+      // Already have 1st (and 2nd if 3+); clicking another job replaces 1st.
+      next = 1;
+    }
+
     setPinning(`${technicianId}:${jobId}`);
     try {
-      await onSetFirstPriority(technicianId, todayStr, jobId);
+      await onSetStopPriority(technicianId, todayStr, jobId, next);
     } finally {
       setPinning(null);
     }
@@ -113,9 +177,17 @@ const Dashboard: React.FC<Props> = ({
       <StatsCards
         jobs={jobs}
         activeJobCount={activeJobCount}
-        activeBlueprints={4}
-        sitePhotos={12}
+        activeBlueprints={blueprintsCount}
+        sitePhotos={sitePhotosCount}
         activePlumbers={activePlumbers}
+        submittalsCount={submittalsCount}
+        refreshSubmittals={refreshSubmittals}
+        refreshBlueprints={refreshBlueprints}
+        refreshSitePhotos={refreshSitePhotos}
+        reportSubmittalsCount={reportSubmittalsCount}
+        reportBlueprintsCount={reportBlueprintsCount}
+        reportSitePhotosCount={reportSitePhotosCount}
+        onJobsChanged={onJobsChanged}
         onOpenTeam={() => setIsTeamModalOpen(true)}
       />
 
@@ -129,8 +201,8 @@ const Dashboard: React.FC<Props> = ({
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {canEdit
-                  ? 'Pin the star on a job when a crew member has multiple stops today'
-                  : 'Jobs grouped by crew — first stop shown at the top'}
+                  ? 'Star 1st stop — and 2nd when a crew has 3+ stops today'
+                  : 'Jobs grouped by crew — starred stops shown at the top'}
               </p>
             </div>
             <button
@@ -143,14 +215,32 @@ const Dashboard: React.FC<Props> = ({
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {offToday.length > 0 && (
+              <div className="p-4 bg-rose-50/80 dark:bg-rose-950/20">
+                <p className="text-[10px] font-black uppercase tracking-wide text-rose-600 dark:text-rose-300 mb-2 flex items-center gap-1">
+                  <CalendarOff className="w-3.5 h-3.5" /> Off today — do not schedule
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {offToday.map(t => (
+                    <span
+                      key={t.id}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 text-sm font-bold text-rose-700 dark:text-rose-300"
+                    >
+                      {t.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {techRoutes.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-400 font-medium">
                 No remaining jobs on the schedule for today.
               </div>
             ) : (
               techRoutes.map(({ tech, jobs: techJobs }) => {
-                const firstJobId = priorityByTech.get(tech.id);
+                const ranks = priorityByTech.get(tech.id) ?? {};
                 const showPins = canEdit && techJobs.length > 1;
+                const allowSecond = techJobs.length >= 3;
 
                 return (
                   <div key={tech.id} className="p-4">
@@ -166,25 +256,33 @@ const Dashboard: React.FC<Props> = ({
 
                     <div className="space-y-3">
                       {techJobs.map((job, index) => {
-                        const isPinnedFirst = firstJobId === job.id;
+                        const isPinnedFirst = ranks.first === job.id;
+                        const isPinnedSecond = ranks.second === job.id;
+                        const isPinned = isPinnedFirst || isPinnedSecond;
                         const pinKey = `${tech.id}:${job.id}`;
+                        let pinTitle = 'Make 1st stop';
+                        if (isPinnedFirst) pinTitle = 'Clear 1st stop';
+                        else if (isPinnedSecond) pinTitle = 'Clear 2nd stop';
+                        else if (ranks.first && allowSecond && !ranks.second) pinTitle = 'Make 2nd stop';
 
                         return (
                           <div key={job.id} className="flex items-start gap-2">
                             {showPins && (
                               <button
                                 type="button"
-                                title={isPinnedFirst ? 'First stop' : 'Make first stop'}
-                                aria-label={isPinnedFirst ? 'First stop' : 'Make first stop'}
+                                title={pinTitle}
+                                aria-label={pinTitle}
                                 disabled={pinning === pinKey}
-                                onClick={() => void handlePin(tech.id, job.id)}
+                                onClick={() => void handlePin(tech.id, job.id, techJobs.length)}
                                 className={`mt-4 p-2 rounded-lg border transition-colors shrink-0 ${
                                   isPinnedFirst
                                     ? 'bg-amber-100 border-amber-300 text-amber-600 dark:bg-amber-900/30 dark:border-amber-700 dark:text-amber-400'
-                                    : 'bg-white border-slate-200 text-slate-400 hover:text-amber-500 hover:border-amber-300 dark:bg-slate-800 dark:border-slate-700'
+                                    : isPinnedSecond
+                                      ? 'bg-sky-100 border-sky-300 text-sky-600 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-400'
+                                      : 'bg-white border-slate-200 text-slate-400 hover:text-amber-500 hover:border-amber-300 dark:bg-slate-800 dark:border-slate-700'
                                 }`}
                               >
-                                <Star className={`w-4 h-4 ${isPinnedFirst ? 'fill-current' : ''}`} />
+                                <Star className={`w-4 h-4 ${isPinned ? 'fill-current' : ''}`} />
                               </button>
                             )}
                             <div className="flex-1 min-w-0">
@@ -193,7 +291,12 @@ const Dashboard: React.FC<Props> = ({
                                   <Star className="w-3 h-3 fill-current" /> 1st Stop
                                 </span>
                               )}
-                              {!isPinnedFirst && techJobs.length > 1 && (
+                              {isPinnedSecond && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-sky-600 dark:text-sky-400 mb-1">
+                                  <Star className="w-3 h-3 fill-current" /> 2nd Stop
+                                </span>
+                              )}
+                              {!isPinned && techJobs.length > 1 && (
                                 <span className="inline-flex text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
                                   Stop {index + 1}
                                 </span>
@@ -225,6 +328,9 @@ const Dashboard: React.FC<Props> = ({
       <TeamModal
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
+        techTimeOff={techTimeOff}
+        onAddTimeOff={onAddTimeOff}
+        onDeleteTimeOff={onDeleteTimeOff}
       />
     </div>
   );

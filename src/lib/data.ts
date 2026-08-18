@@ -1,7 +1,8 @@
 export type JobType = 'emergency' | 'maintenance' | 'installation' | 'inspection';
 export type Priority = 'emergency' | 'high' | 'normal' | 'low';
 export type CallStatus = 'active' | 'missed' | 'callback' | 'completed';
-export type JobStatus = 'scheduled' | 'pending' | 'active' | 'completed';
+/** Job lifecycle: scheduled (on board) → active (in progress) → completed. */
+export type JobStatus = 'scheduled' | 'active' | 'completed';
 
 export interface Call {
   id: string;
@@ -19,6 +20,8 @@ export interface Job {
   id: string;
   customerId: string;
   customerName: string;
+  /** Optional link to public.projects for per-site billing. */
+  projectId?: string;
   address: string;
   type: JobType;
   status: JobStatus;
@@ -33,6 +36,11 @@ export interface Job {
   phase: string;
   serviceType?: string;
   estimatedDuration: number;
+  /** T&M log — only used when tmEnabled is true / phase is T&M. */
+  tmEnabled?: boolean;
+  tmApprovedBy?: string;
+  tmWorkDescription?: string;
+  tmHours?: number | null;
 }
 
 // Full-day service categories selected on a job (jobs.service_type).
@@ -81,11 +89,64 @@ export interface Technician {
   skills?: string[];
 }
 
-/** First-stop routing: one priority job per technician per calendar day. */
+/** Route pins: ranked stop (1st / 2nd) per technician per calendar day. */
+export type StopRank = 1 | 2;
+
 export interface TechDailyPriority {
   technicianId: string;
   workDate: string;
   jobId: string;
+  stopRank: StopRank;
+}
+
+/** Logged leave for a technician (single day when start === end). */
+export interface TechTimeOff {
+  id: string;
+  technicianId: string;
+  startDate: string;
+  endDate: string;
+  note: string | null;
+  createdAt?: string;
+}
+
+/** Editable dispatch reminder banner (single row). */
+export interface DispatchAnnouncement {
+  id: number;
+  message: string;
+  updatedAt?: string;
+}
+
+/** Inclusive YYYY-MM-DD range overlap. */
+export function datesOverlap(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string,
+): boolean {
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+/** First leave row that overlaps [start, end] for this tech, if any. */
+export function isTechOffOnRange(
+  techId: string,
+  start: string,
+  end: string,
+  rows: TechTimeOff[],
+): TechTimeOff | undefined {
+  const safeEnd = end < start ? start : end;
+  return rows.find(
+    r =>
+      r.technicianId === techId
+      && datesOverlap(start, safeEnd, r.startDate, r.endDate),
+  );
+}
+
+export function isTechOffOnDay(
+  techId: string,
+  day: string,
+  rows: TechTimeOff[],
+): boolean {
+  return !!isTechOffOnRange(techId, day, day, rows);
 }
 
 export interface Customer {
@@ -174,7 +235,7 @@ export const mockJobs: Job[] = [
     customerName: 'Canyon Ranch',
     address: '8600 E Rockcliff Rd',
     type: 'installation',
-    status: 'pending',
+    status: 'scheduled',
     technicianId: 't1',
     date: todayStr,
     startTime: '08:00',
@@ -190,7 +251,7 @@ export const mockJobs: Job[] = [
     customerName: 'Sarah Jenkins',
     address: '1423 W Baseline Rd',
     type: 'maintenance',
-    status: 'pending',
+    status: 'scheduled',
     technicianId: 't2',
     date: todayStr,
     startTime: '13:00',

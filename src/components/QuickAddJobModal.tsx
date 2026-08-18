@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, MapPin, Sparkles, Loader2, User, CalendarDays, Check, Users, Wrench } from 'lucide-react';
-import type { Customer, Technician, Job, JobType, Priority, JobStatus } from '@/lib/data';
-import { SERVICE_TYPES } from '@/lib/data';
+import type { Customer, Technician, Job, JobType, Priority, JobStatus, TechTimeOff } from '@/lib/data';
+import { SERVICE_TYPES, isTechOffOnRange } from '@/lib/data';
 
 
 // ── Guard functions ────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ interface Props {
   onClose: () => void;
   customers: Customer[];
   technicians: Technician[];
+  techTimeOff?: TechTimeOff[];
   jobs: Job[];
   weekDates: string[];
   defaults?: Partial<Job>;
@@ -58,6 +59,7 @@ const QuickAddJobModal: React.FC<Props> = ({
   onClose,
   customers,
   technicians,
+  techTimeOff = [],
   weekDates,
   defaults,
   onCreate,
@@ -79,6 +81,10 @@ const QuickAddJobModal: React.FC<Props> = ({
   const [date, setDate]               = useState('');
   const [endDate, setEndDate]         = useState('');
   const [description, setDescription] = useState('');
+  const [tmEnabled, setTmEnabled]     = useState(false);
+  const [tmApprovedBy, setTmApprovedBy] = useState('');
+  const [tmWorkDescription, setTmWorkDescription] = useState('');
+  const [tmHours, setTmHours]         = useState('');
 
   // Jobs are full-day; times are kept only to satisfy the existing data model.
   const startTime = '08:00';
@@ -100,6 +106,10 @@ const QuickAddJobModal: React.FC<Props> = ({
     setTechnicianIds([]);
     setDate(weekDates[0] ?? '');
     setEndDate(weekDates[0] ?? '');
+    setTmEnabled(false);
+    setTmApprovedBy('');
+    setTmWorkDescription('');
+    setTmHours('');
     setRecommendation(null);
     setRecError(null);
     setRecApplied(false);
@@ -128,6 +138,11 @@ const QuickAddJobModal: React.FC<Props> = ({
       );
       setDate(defaults.date ?? weekDates[0] ?? '');
       setEndDate(defaults.endDate ?? defaults.date ?? weekDates[0] ?? '');
+      const tmOn = Boolean(defaults.tmEnabled) || defaults.phase === 'T&M';
+      setTmEnabled(tmOn);
+      setTmApprovedBy(defaults.tmApprovedBy ?? '');
+      setTmWorkDescription(defaults.tmWorkDescription ?? '');
+      setTmHours(defaults.tmHours != null ? String(defaults.tmHours) : '');
     } else {
       resetState();
     }
@@ -179,6 +194,12 @@ const QuickAddJobModal: React.FC<Props> = ({
   };
 
   const toggleTechnician = (id: string) => {
+    const resolvedEnd = endDate && endDate >= date ? endDate : date;
+    const leave = isTechOffOnRange(id, date || resolvedEnd, resolvedEnd || date, techTimeOff);
+    if (leave && !technicianIds.includes(id)) {
+      // Hard block — cannot select someone who is off on these dates.
+      return;
+    }
     setTechnicianIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
     );
@@ -215,13 +236,25 @@ const QuickAddJobModal: React.FC<Props> = ({
     // Full-day jobs: no time-of-day. Ensure end >= start.
     const resolvedEnd = endDate && endDate >= date ? endDate : date;
 
+    for (const techId of technicianIds) {
+      const leave = isTechOffOnRange(techId, date, resolvedEnd, techTimeOff);
+      if (leave) {
+        setRecError(
+          `${technicians.find(t => t.id === techId)?.name ?? 'Crew member'} is off on those dates.`,
+        );
+        return;
+      }
+    }
+
     const customer = customers.find(
       c => c.name.toLowerCase() === customerName.toLowerCase()
-    );
-
+    )
+      ?? (defaults?.customerId
+        ? customers.find(c => c.id === defaults.customerId)
+        : undefined);
 
     const job: Omit<Job, 'id'> = {
-      customerId: customer?.id ?? `new-${Date.now()}`,
+      customerId: customer?.id ?? defaults?.customerId ?? `new-${Date.now()}`,
       customerName,
       address,
       type,
@@ -235,8 +268,13 @@ const QuickAddJobModal: React.FC<Props> = ({
       startTime,
       endTime: '17:00',
       description,
-      phase: 'Rough-In',
+      phase: tmEnabled ? 'T&M' : 'Rough-In',
       estimatedDuration: 480,
+      projectId: defaults?.projectId,
+      tmEnabled,
+      tmApprovedBy: tmEnabled ? tmApprovedBy.trim() : '',
+      tmWorkDescription: tmEnabled ? tmWorkDescription.trim() : '',
+      tmHours: tmEnabled && tmHours.trim() !== '' ? Number(tmHours) : null,
     };
 
 
@@ -413,6 +451,72 @@ const QuickAddJobModal: React.FC<Props> = ({
             />
           </div>
 
+          {/* T&M toggle + log */}
+          <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 space-y-3">
+            <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={tmEnabled}
+                onChange={e => setTmEnabled(e.target.checked)}
+                className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+              />
+              T&amp;M (Time &amp; Materials)
+            </label>
+            {tmEnabled && (
+              <div className="space-y-3 pt-1 border-t border-slate-100 dark:border-slate-700">
+                <div>
+                  <label htmlFor="tmApprovedBy" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Approved by
+                  </label>
+                  <input
+                    id="tmApprovedBy"
+                    list="tm-approver-suggestions"
+                    required={tmEnabled}
+                    value={tmApprovedBy}
+                    onChange={e => setTmApprovedBy(e.target.value)}
+                    placeholder="Who approved this T&M?"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                  <datalist id="tm-approver-suggestions">
+                    {customers.slice(0, 20).map(c => (
+                      <option key={c.id} value={c.name} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label htmlFor="tmWorkDescription" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Work performed
+                  </label>
+                  <textarea
+                    id="tmWorkDescription"
+                    required={tmEnabled}
+                    value={tmWorkDescription}
+                    onChange={e => setTmWorkDescription(e.target.value)}
+                    rows={3}
+                    placeholder="Describe the T&M work performed..."
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none resize-none"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="tmHours" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Hours committed
+                  </label>
+                  <input
+                    id="tmHours"
+                    type="number"
+                    min={0}
+                    step={0.25}
+                    required={tmEnabled}
+                    value={tmHours}
+                    onChange={e => setTmHours(e.target.value)}
+                    placeholder="e.g. 4.5"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
 
           {/* AI Recommendation */}
           <div className="space-y-2">
@@ -478,12 +582,27 @@ const QuickAddJobModal: React.FC<Props> = ({
                 <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 divide-y divide-slate-100 dark:divide-slate-700/60">
                   {technicians.map(t => {
                     const checked = technicianIds.includes(t.id);
+                    const resolvedEnd = endDate && endDate >= date ? endDate : date;
+                    const leave = date
+                      ? isTechOffOnRange(t.id, date, resolvedEnd || date, techTimeOff)
+                      : undefined;
+                    const span = leave
+                      ? (leave.startDate === leave.endDate
+                        ? leave.startDate
+                        : `${leave.startDate}–${leave.endDate}`)
+                      : '';
                     return (
                       <button
                         key={t.id}
                         type="button"
+                        disabled={!!leave && !checked}
                         onClick={() => toggleTechnician(t.id)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                        title={leave ? `Off ${span}` : undefined}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                          leave && !checked
+                            ? 'text-slate-400 cursor-not-allowed opacity-60'
+                            : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60'
+                        }`}
                       >
                         <span
                           className={`inline-flex items-center justify-center w-4 h-4 rounded border shrink-0 ${
@@ -495,7 +614,11 @@ const QuickAddJobModal: React.FC<Props> = ({
                           {checked && <Check className="w-3 h-3" />}
                         </span>
                         <span className="truncate">{t.name}</span>
-                        <span className="ml-auto text-[10px] font-medium text-slate-400">{t.role}</span>
+                        {leave ? (
+                          <span className="ml-auto text-[10px] font-black uppercase text-rose-500">Off {span}</span>
+                        ) : (
+                          <span className="ml-auto text-[10px] font-medium text-slate-400">{t.role}</span>
+                        )}
                       </button>
                     );
                   })}

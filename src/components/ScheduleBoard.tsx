@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft, ChevronRight, CalendarRange, Loader2, Plus, Trash2, X,
-  ClipboardCheck, ArrowRightLeft, Check, AlertTriangle, CheckCircle2,
+  ClipboardCheck, ArrowRightLeft, Check, AlertTriangle, CheckCircle2, Pencil,
   MapPin, User, CalendarDays,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
-import type { Job, Technician, JobTask, TaskStatus } from '@/lib/data';
+import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/data';
+import { isTechOffOnRange, isTechOffOnDay } from '@/lib/data';
+import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
 
@@ -115,6 +117,7 @@ function mapTask(r: RawTaskRow, fallbackStart: string, fallbackEnd: string): Job
 interface Props {
   jobs: Job[];
   technicians: Technician[];
+  techTimeOff?: TechTimeOff[];
   onRefresh: () => Promise<void> | void;
 }
 
@@ -122,7 +125,7 @@ interface Props {
 
 const COL_W = 36; // px per day column
 
-const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
+const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh }) => {
   const { canEdit } = useAuth();
 
   const [mode, setMode] = useState<'month' | 'timeline' | 'myday'>(
@@ -237,6 +240,19 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
   }, [fetchTasks]);
 
   const addCrewToJob = useCallback(async (job: Job, techIds: string[]) => {
+    const jobStart = job.date;
+    const jobEnd = job.endDate ?? job.date;
+    for (const id of techIds) {
+      const leave = isTechOffOnRange(id, jobStart, jobEnd, techTimeOff);
+      if (leave) {
+        const name = technicians.find(t => t.id === id)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        setError(`${name} is off ${span}. Cannot assign them to this job.`);
+        return;
+      }
+    }
     const existing = new Set(tasks.filter(t => t.jobId === job.id).map(t => t.technicianId));
     const rows = techIds
       .filter(id => !existing.has(id))
@@ -257,7 +273,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
     await supabase.from('jobs').update({ technician_ids: merged, technician_id: merged[0] ?? null }).eq('id', job.id);
     await fetchTasks();
     await onRefresh();
-  }, [tasks, fetchTasks, onRefresh]);
+  }, [tasks, fetchTasks, onRefresh, techTimeOff, technicians]);
 
   const removeCrewRow = useCallback(async (task: JobTask) => {
     const { error: err } = await supabase.from('job_tasks').delete().eq('id', task.id);
@@ -274,6 +290,22 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
   const moveTaskToJob = useCallback(async (task: JobTask, newJobId: string) => {
     const newJob = jobs.find(j => j.id === newJobId);
     if (!newJob) return;
+    if (task.technicianId) {
+      const leave = isTechOffOnRange(
+        task.technicianId,
+        newJob.date,
+        newJob.endDate ?? newJob.date,
+        techTimeOff,
+      );
+      if (leave) {
+        const name = technicians.find(t => t.id === task.technicianId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        setError(`${name} is off ${span}. Cannot move them onto that job.`);
+        return;
+      }
+    }
     const { error: err } = await supabase
       .from('job_tasks')
       .update({ job_id: newJobId, start_date: newJob.date, end_date: newJob.endDate ?? newJob.date })
@@ -292,13 +324,80 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
     setMoveTask(null);
     await fetchTasks();
     await onRefresh();
-  }, [jobs, fetchTasks, onRefresh]);
+  }, [jobs, fetchTasks, onRefresh, techTimeOff, technicians]);
 
-  const saveJobDates = useCallback(async (job: Job, start: string, end: string) => {
+  const saveJobDates = useCallback(async (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    tm?: { enabled: boolean; approvedBy: string; workDescription: string; hours: number | null },
+  ) => {
     const safeEnd = end < start ? start : end;
-    const { error: err } = await supabase.from('jobs').update({ date: start, end_date: safeEnd }).eq('id', job.id);
+    const oldStart = job.date;
+    const shiftDays = daysBetween(oldStart, start);
+    const tmEnabled = tm?.enabled ?? (phase === 'T&M' || Boolean(job.tmEnabled));
+
+    const { error: err } = await supabase
+      .from('jobs')
+      .update({
+        date: start,
+        end_date: safeEnd,
+        phase: tmEnabled ? 'T&M' : phase,
+        tm_enabled: tmEnabled,
+        tm_approved_by: tmEnabled ? (tm?.approvedBy?.trim() || job.tmApprovedBy || null) : null,
+        tm_work_description: tmEnabled ? (tm?.workDescription?.trim() || job.tmWorkDescription || null) : null,
+        tm_hours: tmEnabled
+          ? (tm?.hours != null ? tm.hours : (job.tmHours ?? null))
+          : null,
+      })
+      .eq('id', job.id);
     if (err) { setError(err.message); return; }
+
+    // Keep crew task bars aligned when the whole job is pushed forward/back.
+    const jobTasks = tasks.filter(t => t.jobId === job.id);
+    if (jobTasks.length && shiftDays !== 0) {
+      await Promise.all(jobTasks.map(async t => {
+        const nextStart = addDays(t.startDate, shiftDays);
+        const nextEnd = addDays(t.endDate, shiftDays);
+        const { error: taskErr } = await supabase
+          .from('job_tasks')
+          .update({ start_date: nextStart, end_date: nextEnd })
+          .eq('id', t.id);
+        if (taskErr) console.error('Failed to shift job_task dates:', taskErr);
+      }));
+    } else if (jobTasks.length && (oldStart !== start || (job.endDate ?? job.date) !== safeEnd)) {
+      // Start unchanged but end changed (or zero-shift range reset) — clamp tasks into new job window.
+      await Promise.all(jobTasks.map(async t => {
+        let nextStart = t.startDate < start ? start : t.startDate;
+        let nextEnd = t.endDate > safeEnd ? safeEnd : t.endDate;
+        if (nextEnd < nextStart) nextEnd = nextStart;
+        if (nextStart === t.startDate && nextEnd === t.endDate) return;
+        const { error: taskErr } = await supabase
+          .from('job_tasks')
+          .update({ start_date: nextStart, end_date: nextEnd })
+          .eq('id', t.id);
+        if (taskErr) console.error('Failed to clamp job_task dates:', taskErr);
+      }));
+    }
+
     setEditJob(null);
+    // If the job moved outside the current month/timeline, jump the board to its new start.
+    if (safeEnd < rangeStart || start > rangeEnd) {
+      const d = parseYMD(start);
+      setAnchor(mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d);
+    }
+    await fetchTasks();
+    await onRefresh();
+  }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode]);
+
+  const saveJobPhase = useCallback(async (job: Job, phase: string) => {
+    const tmEnabled = phase === 'T&M';
+    const { error: err } = await supabase.from('jobs').update({
+      phase,
+      tm_enabled: tmEnabled,
+    }).eq('id', job.id);
+    if (err) { setError(err.message); return; }
     await onRefresh();
   }, [onRefresh]);
 
@@ -433,12 +532,22 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
       {mode !== 'myday' && technicians.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Crew colors:</span>
-          {technicians.map(t => (
-            <span key={t.id} className="inline-flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-full ring-1 ring-black/10" style={{ backgroundColor: techColor(t.id) }} />
-              <span className="text-xs font-bold" style={{ color: techColor(t.id) }}>{t.name}</span>
-            </span>
-          ))}
+          {technicians.map(t => {
+            const off = isTechOffOnDay(t.id, today, techTimeOff);
+            return (
+              <span
+                key={t.id}
+                className={`inline-flex items-center gap-1.5 ${off ? 'opacity-50' : ''}`}
+                title={off ? 'Off today' : undefined}
+              >
+                <span className="w-3 h-3 rounded-full ring-1 ring-black/10" style={{ backgroundColor: techColor(t.id) }} />
+                <span className="text-xs font-bold" style={{ color: off ? '#94a3b8' : techColor(t.id) }}>{t.name}</span>
+                {off && (
+                  <span className="text-[9px] font-black uppercase tracking-wide text-rose-600 dark:text-rose-400">OFF</span>
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
 
@@ -511,29 +620,61 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                     {/* Job group header row */}
                     <div className="flex items-stretch bg-slate-50/70 dark:bg-slate-800/30">
                       <div className="w-80 shrink-0 px-4 py-2.5 flex items-center gap-2 min-w-0">
-                        <button
-                          type="button"
-                          disabled={!canEdit}
-                          onClick={() => setEditJob(job)}
-                          className="min-w-0 text-left disabled:cursor-default"
-                          title={canEdit ? 'Edit job dates' : undefined}
-                        >
-                          <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
-                            {job.customerName}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            {job.serviceType && (
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            disabled={!canEdit}
+                            onClick={() => setEditJob(job)}
+                            className="min-w-0 w-full text-left disabled:cursor-default group/edit"
+                            title={canEdit ? 'Edit job dates & phase' : undefined}
+                          >
+                            <div className="font-bold text-sm text-slate-900 dark:text-white truncate inline-flex items-center gap-1.5 max-w-full">
+                              <span className="truncate">{job.customerName}</span>
+                              {canEdit && (
+                                <Pencil className="w-3 h-3 text-slate-400 opacity-0 group-hover/edit:opacity-100 transition-opacity shrink-0" />
+                              )}
+                            </div>
+                          </button>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {canEdit ? (
+                              <select
+                                value={job.phase || 'Rough-In'}
+                                onChange={e => void saveJobPhase(job, e.target.value)}
+                                aria-label={`Phase for ${job.customerName}`}
+                                className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 outline-none cursor-pointer"
+                              >
+                                {PLUMBING_PHASES.map(p => (
+                                  <option key={p} value={p}>{p}</option>
+                                ))}
+                                {job.phase && !(PLUMBING_PHASES as readonly string[]).includes(job.phase) && (
+                                  <option value={job.phase}>{job.phase}</option>
+                                )}
+                              </select>
+                            ) : (
                               <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
-                                {job.serviceType}
+                                {job.phase || 'Rough-In'}
                               </span>
                             )}
-                            <span className="text-[10px] text-slate-400">
-                              {parseYMD(jobStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                              {' – '}
-                              {parseYMD(jobEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            </span>
+                            {canEdit ? (
+                              <button
+                                type="button"
+                                onClick={() => setEditJob(job)}
+                                className="text-[10px] text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 font-semibold underline-offset-2 hover:underline"
+                                title="Change start and end dates"
+                              >
+                                {parseYMD(jobStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                {' – '}
+                                {parseYMD(jobEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">
+                                {parseYMD(jobStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                {' – '}
+                                {parseYMD(jobEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </span>
+                            )}
                           </div>
-                        </button>
+                        </div>
                         <span className={`ml-auto shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full ${
                           jobBehind
                             ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
@@ -545,10 +686,14 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                       {/* Job bar */}
                       <div className="relative" style={{ width: gridWidth }}>
                         {jobBar && (
-                          <div
+                          <button
+                            type="button"
+                            disabled={!canEdit}
+                            onClick={() => canEdit && setEditJob(job)}
+                            title={canEdit ? 'Change job dates' : undefined}
                             className={`absolute top-1/2 -translate-y-1/2 h-3 rounded-full ${
                               jobBehind ? 'bg-red-400/70 dark:bg-red-500/50' : 'bg-indigo-400/60 dark:bg-indigo-500/40'
-                            }`}
+                            } ${canEdit ? 'cursor-pointer hover:brightness-110' : 'cursor-default'}`}
                             style={jobBar}
                           />
                         )}
@@ -561,7 +706,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                         <div className="w-80 shrink-0 px-4 py-2 text-xs text-slate-400 italic">
                           No crew assigned yet.
                           {canEdit && (
-                            <AddCrewInline job={job} tasks={tasks} technicians={technicians} onAdd={addCrewToJob} />
+                            <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
                           )}
                         </div>
                         <div style={{ width: gridWidth }} />
@@ -683,7 +828,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
                     {canEdit && rows.length > 0 && (
                       <div className="flex">
                         <div className="w-80 shrink-0 px-4 pb-2">
-                          <AddCrewInline job={job} tasks={tasks} technicians={technicians} onAdd={addCrewToJob} />
+                          <AddCrewInline job={job} tasks={tasks} technicians={technicians} techTimeOff={techTimeOff} onAdd={addCrewToJob} />
                         </div>
                         <div style={{ width: gridWidth }} />
                       </div>
@@ -701,6 +846,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, onRefresh }) => {
       {editJob && (
         <EditJobDatesModal job={editJob} onClose={() => setEditJob(null)} onSave={saveJobDates} />
       )}
+
       {logTask && (
         <LogTodayModal
           task={logTask}
@@ -918,11 +1064,14 @@ const AddCrewInline: React.FC<{
   job: Job;
   tasks: JobTask[];
   technicians: Technician[];
+  techTimeOff: TechTimeOff[];
   onAdd: (job: Job, ids: string[]) => Promise<void> | void;
-}> = ({ job, tasks, technicians, onAdd }) => {
+}> = ({ job, tasks, technicians, techTimeOff, onAdd }) => {
   const [open, setOpen] = useState(false);
   const assigned = new Set(tasks.filter(t => t.jobId === job.id).map(t => t.technicianId));
   const available = technicians.filter(t => !assigned.has(t.id));
+  const jobStart = job.date;
+  const jobEnd = job.endDate ?? job.date;
 
   if (!open) {
     return (
@@ -937,17 +1086,33 @@ const AddCrewInline: React.FC<{
       {available.length === 0 ? (
         <p className="text-[10px] text-slate-400 px-1 py-1">All crew already on this job.</p>
       ) : (
-        available.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => { void onAdd(job, [t.id]); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-2 py-1 text-left text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded"
-          >
-            <Plus className="w-3 h-3 text-indigo-500" /> {t.name}
-            <span className="ml-auto text-[9px] text-slate-400">{t.role}</span>
-          </button>
-        ))
+        available.map(t => {
+          const leave = isTechOffOnRange(t.id, jobStart, jobEnd, techTimeOff);
+          const span = leave
+            ? (leave.startDate === leave.endDate ? leave.startDate : `${leave.startDate}–${leave.endDate}`)
+            : '';
+          return (
+            <button
+              key={t.id}
+              type="button"
+              disabled={!!leave}
+              title={leave ? `Off ${span}` : undefined}
+              onClick={() => { if (!leave) { void onAdd(job, [t.id]); setOpen(false); } }}
+              className={`w-full flex items-center gap-2 px-2 py-1 text-left text-[11px] font-semibold rounded ${
+                leave
+                  ? 'text-slate-400 cursor-not-allowed opacity-60'
+                  : 'text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
+              }`}
+            >
+              <Plus className="w-3 h-3 text-indigo-500" /> {t.name}
+              {leave ? (
+                <span className="ml-auto text-[9px] font-black uppercase text-rose-500">Off {span}</span>
+              ) : (
+                <span className="ml-auto text-[9px] text-slate-400">{t.role}</span>
+              )}
+            </button>
+          );
+        })
       )}
       <button type="button" onClick={() => setOpen(false)}
         className="w-full mt-1 text-[10px] text-slate-400 hover:text-slate-600">Done</button>
@@ -960,17 +1125,64 @@ const AddCrewInline: React.FC<{
 const EditJobDatesModal: React.FC<{
   job: Job;
   onClose: () => void;
-  onSave: (job: Job, start: string, end: string) => Promise<void> | void;
+  onSave: (
+    job: Job,
+    start: string,
+    end: string,
+    phase: string,
+    tm?: { enabled: boolean; approvedBy: string; workDescription: string; hours: number | null },
+  ) => Promise<void> | void;
 }> = ({ job, onClose, onSave }) => {
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
+  const [phase, setPhase] = useState(job.phase || 'Rough-In');
+  const [tmEnabled, setTmEnabled] = useState(Boolean(job.tmEnabled) || job.phase === 'T&M');
+  const [tmApprovedBy, setTmApprovedBy] = useState(job.tmApprovedBy ?? '');
+  const [tmWorkDescription, setTmWorkDescription] = useState(job.tmWorkDescription ?? '');
+  const [tmHours, setTmHours] = useState(job.tmHours != null ? String(job.tmHours) : '');
+  const [saving, setSaving] = useState(false);
+
+  const handlePhaseChange = (next: string) => {
+    setPhase(next);
+    if (next === 'T&M') setTmEnabled(true);
+    else if (tmEnabled && next !== 'T&M') setTmEnabled(false);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const enabled = tmEnabled || phase === 'T&M';
+      await onSave(
+        job,
+        start,
+        end < start ? start : end,
+        enabled ? 'T&M' : phase,
+        {
+          enabled,
+          approvedBy: tmApprovedBy,
+          workDescription: tmWorkDescription,
+          hours: tmHours.trim() === '' ? null : Number(tmHours),
+        },
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ModalShell title="Edit job schedule" onClose={onClose}>
       <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{job.customerName}</p>
-      <div className="grid grid-cols-2 gap-3 mt-3">
+      <p className="text-xs text-slate-500 mt-1">
+        Change the start/end dates to push this job forward or back. Crew task bars move with the job.
+      </p>
+      <div className="grid grid-cols-2 gap-3 mt-4">
         <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
           Start date
-          <input type="date" value={start} onChange={e => setStart(e.target.value)}
+          <input type="date" value={start} onChange={e => {
+            const next = e.target.value;
+            setStart(next);
+            if (end < next) setEnd(next);
+          }}
             className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
         </label>
         <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
@@ -979,14 +1191,82 @@ const EditJobDatesModal: React.FC<{
             className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
         </label>
       </div>
+      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mt-3">
+        Plumbing phase
+        <select
+          value={phase}
+          onChange={e => handlePhaseChange(e.target.value)}
+          className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+        >
+          {PLUMBING_PHASES.map(p => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+          {phase && !(PLUMBING_PHASES as readonly string[]).includes(phase) && (
+            <option value={phase}>{phase}</option>
+          )}
+        </select>
+      </label>
+
+      <label className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={tmEnabled || phase === 'T&M'}
+          onChange={e => {
+            const on = e.target.checked;
+            setTmEnabled(on);
+            if (on) setPhase('T&M');
+          }}
+          className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+        />
+        T&amp;M (Time &amp; Materials)
+      </label>
+
+      {(tmEnabled || phase === 'T&M') && (
+        <div className="mt-3 space-y-2 border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Approved by
+            <input
+              list="tm-approver-edit"
+              value={tmApprovedBy}
+              onChange={e => setTmApprovedBy(e.target.value)}
+              placeholder="Who approved this T&M?"
+              className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+            <datalist id="tm-approver-edit" />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Work performed
+            <textarea
+              value={tmWorkDescription}
+              onChange={e => setTmWorkDescription(e.target.value)}
+              rows={3}
+              placeholder="Describe the T&M work performed..."
+              className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+            />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Hours committed
+            <input
+              type="number"
+              min={0}
+              step={0.25}
+              value={tmHours}
+              onChange={e => setTmHours(e.target.value)}
+              placeholder="e.g. 4.5"
+              className="mt-1 w-full px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+          </label>
+        </div>
+      )}
+
       <div className="flex gap-2 mt-5">
-        <button type="button" onClick={onClose}
-          className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
+        <button type="button" onClick={onClose} disabled={saving}
+          className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">
           Cancel
         </button>
-        <button type="button" onClick={() => void onSave(job, start, end)}
-          className="flex-1 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold inline-flex items-center justify-center gap-1">
-          <Check className="w-4 h-4" /> Save
+        <button type="button" onClick={() => void handleSave()} disabled={saving || !start || !end}
+          className="flex-1 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-sm font-bold inline-flex items-center justify-center gap-1">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save dates
         </button>
       </div>
     </ModalShell>

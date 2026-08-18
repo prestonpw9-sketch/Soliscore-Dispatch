@@ -20,6 +20,7 @@ import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
 import { useAuth } from '@/lib/AuthContext';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
+import DispatchBanner from './DispatchBanner';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ const AppLayout: React.FC = () => {
   const viewAccess: Record<string, string[]> = {
     dashboard: ['owner', 'office', 'crew'],
     schedule:  ['owner', 'office', 'crew'],
-    customers: ['owner', 'office'],
+    customers: ['owner'],
     estimator: ['owner', 'crew'],
     takeoff:   ['owner'],
     settings:  ['owner', 'office', 'crew'],
@@ -57,6 +58,7 @@ const AppLayout: React.FC = () => {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [selectedJob, setSelectedJob]       = useState<Job | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
+  const [toastTone, setToastTone]           = useState<'success' | 'error'>('success');
 
   const {
     loading,
@@ -75,7 +77,21 @@ const AppLayout: React.FC = () => {
     fireTechnician,
     createCustomer,
     techPriorities,
-    setFirstPriorityJob,
+    techTimeOff,
+    announcement,
+    submittalsCount,
+    blueprintsCount,
+    sitePhotosCount,
+    refreshSubmittals,
+    refreshBlueprints,
+    refreshSitePhotos,
+    reportSubmittalsCount,
+    reportBlueprintsCount,
+    reportSitePhotosCount,
+    setStopPriority,
+    addTimeOff,
+    deleteTimeOff,
+    updateAnnouncement,
   } = useDispatchData();
 
   const { updateContext } = useAIProviderContext();
@@ -112,6 +128,32 @@ const AppLayout: React.FC = () => {
       ))
       .map(t => t.name);
 
+    const scheduleWindow = jobs
+      .filter(j => j.status !== 'completed')
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0, 60)
+      .map(j => ({
+        id:           j.id,
+        customerName: j.customerName,
+        site:         j.address,
+        phase:        j.phase,
+        status:       j.status,
+        serviceType:  j.serviceType,
+        startDate:    j.date,
+        endDate:      j.endDate ?? j.date,
+        crew:         (j.technicianIds?.length
+          ? j.technicianIds.map(id => techName(id)).filter(Boolean)
+          : [techName(j.technicianId)].filter(Boolean)) as string[],
+      }));
+
+    const crewRoster = technicians.map(t => ({
+      id:     t.id,
+      name:   t.name,
+      role:   t.role,
+      skills: t.skills ?? [],
+    }));
+
     updateContext({
       currentPage:       titles[view].title,
       currentDateTime:   new Date().toLocaleString('en-US', {
@@ -126,10 +168,17 @@ const AppLayout: React.FC = () => {
       }),
       todayDate:         todayStr,
       activeJobs:        jobs.filter(j => j.status !== 'completed').length,
-      pendingDispatches: jobs.filter(j => j.status === 'pending').length,
+      // Unassigned scheduled jobs still waiting for a crew.
+      pendingDispatches: jobs.filter(j =>
+        j.status === 'scheduled'
+        && !j.technicianId
+        && !(j.technicianIds?.length)
+      ).length,
       techsOnDuty,
       openJobsToday,
       totalJobsToday:    todayOpen.length,
+      scheduleWindow,
+      crewRoster,
       selectedJob: selectedJob
         ? {
             id:           selectedJob.id,
@@ -145,7 +194,8 @@ const AppLayout: React.FC = () => {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, tone: 'success' | 'error' = 'success') => {
+    setToastTone(tone);
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
   };
@@ -154,6 +204,7 @@ const AppLayout: React.FC = () => {
 
   const handleScheduleFromCustomer = (c: Customer) => {
     setModalDefaults({
+      customerId: c.id,
       customerName: c.name,
       address: `${c.address}, ${c.city}`,
     });
@@ -175,16 +226,19 @@ const AppLayout: React.FC = () => {
     }
   };
 
-  const handleSetFirstPriority = async (
+  const handleSetStopPriority = async (
     technicianId: string,
     workDate: string,
     jobId: string,
+    rank: 1 | 2 | null,
   ) => {
     try {
-      await setFirstPriorityJob(technicianId, workDate, jobId);
-      showToast('First stop updated.');
+      await setStopPriority(technicianId, workDate, jobId, rank);
+      if (rank === 1) showToast('1st stop updated.');
+      else if (rank === 2) showToast('2nd stop updated.');
+      else showToast('Stop pin cleared.');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Could not set first stop.');
+      showToast(err instanceof Error ? err.message : 'Could not update stop pin.');
     }
   };
 
@@ -210,7 +264,11 @@ const AppLayout: React.FC = () => {
 
   const handleAssignCrew = (jobId: string, technicianIds: string[]) => {
     void (async () => {
-      await assignTechnicians(jobId, technicianIds);
+      const result = await assignTechnicians(jobId, technicianIds);
+      if (result.ok === false) {
+        showToast(result.message, 'error');
+        return;
+      }
       const n = technicianIds.length;
       showToast(n === 0 ? 'Crew cleared (0 assigned)' : `Crew updated (${n} assigned)`);
     })();
@@ -218,13 +276,14 @@ const AppLayout: React.FC = () => {
 
   const handleCreateJob = (job: Omit<Job, 'id'>) => {
     void (async () => {
-      if (editingJobId) {
-        await updateJob(editingJobId, job);
-        showToast('Job updated');
-      } else {
-        await createJob(job);
-        showToast('Job scheduled successfully');
+      const result = editingJobId
+        ? await updateJob(editingJobId, job)
+        : await createJob(job);
+      if (result.ok === false) {
+        showToast(result.message, 'error');
+        return;
       }
+      showToast(editingJobId ? 'Job updated' : 'Job scheduled successfully');
       setEditingJobId(null);
     })();
   };
@@ -399,11 +458,31 @@ const AppLayout: React.FC = () => {
             </div>
           ) : (
             <>
+              {(view === 'dashboard' || view === 'schedule') && (
+                <div className="mb-4">
+                  <DispatchBanner
+                    announcement={announcement}
+                    onSave={updateAnnouncement}
+                  />
+                </div>
+              )}
+
               {view === 'dashboard' && (
                 <Dashboard
                   jobs={jobs}
                   technicians={technicians}
                   techPriorities={techPriorities}
+                  techTimeOff={techTimeOff}
+                  submittalsCount={submittalsCount}
+                  blueprintsCount={blueprintsCount}
+                  sitePhotosCount={sitePhotosCount}
+                  refreshSubmittals={refreshSubmittals}
+                  refreshBlueprints={refreshBlueprints}
+                  refreshSitePhotos={refreshSitePhotos}
+                  reportSubmittalsCount={reportSubmittalsCount}
+                  reportBlueprintsCount={reportBlueprintsCount}
+                  reportSitePhotosCount={reportSitePhotosCount}
+                  onJobsChanged={refresh}
                   todayStr={todayStr}
                   canEdit={canEdit}
                   onViewCalendar={() => setView('schedule')}
@@ -412,7 +491,9 @@ const AppLayout: React.FC = () => {
                   onHire={hireTechnician}
                   onFire={fireTechnician}
                   onJobClick={openJobForEdit}
-                  onSetFirstPriority={handleSetFirstPriority}
+                  onSetStopPriority={handleSetStopPriority}
+                  onAddTimeOff={addTimeOff}
+                  onDeleteTimeOff={deleteTimeOff}
                 />
               )}
 
@@ -420,6 +501,7 @@ const AppLayout: React.FC = () => {
                 <ScheduleBoard
                   jobs={jobs}
                   technicians={technicians}
+                  techTimeOff={techTimeOff}
                   onRefresh={refresh}
                 />
               )}
@@ -450,6 +532,7 @@ const AppLayout: React.FC = () => {
         }}
         customers={customers}
         technicians={technicians}
+        techTimeOff={techTimeOff}
         jobs={jobs}
         weekDates={weekDates}
         defaults={modalDefaults}
@@ -475,7 +558,10 @@ const AppLayout: React.FC = () => {
           aria-live="polite"
           className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 pointer-events-none"
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-400" aria-hidden="true" />
+          <span
+            className={`w-2 h-2 rounded-full ${toastTone === 'error' ? 'bg-red-400' : 'bg-emerald-400'}`}
+            aria-hidden="true"
+          />
           {toast}
         </div>
       )}

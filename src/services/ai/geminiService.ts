@@ -1,9 +1,11 @@
 import { supabase } from '@/lib/supabase';
-import type { IAIProvider, AIMessage, AIRequestOptions, SOLIDCOREContext } from './types';
+import type { IAIProvider, AIMessage, AIRequestOptions, SOLIDCOREContext, AIChatResult } from './types';
 
 interface GeminiChatResponse {
   reply?: string;
   error?: string;
+  didMutate?: boolean;
+  toolsUsed?: string[];
 }
 
 export class GeminiService implements IAIProvider {
@@ -13,7 +15,7 @@ export class GeminiService implements IAIProvider {
     messages: AIMessage[],
     context: SOLIDCOREContext,
     options: AIRequestOptions = {},
-  ): Promise<string> {
+  ): Promise<AIChatResult> {
     const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
     const session = refreshed.session ?? (await supabase.auth.getSession()).data.session;
 
@@ -54,6 +56,10 @@ export class GeminiService implements IAIProvider {
       throw new Error('Empty response from AI service.');
     }
 
-    return data.reply;
+    return {
+      reply: data.reply,
+      didMutate: Boolean(data.didMutate),
+      toolsUsed: data.toolsUsed,
+    };
   }
 }

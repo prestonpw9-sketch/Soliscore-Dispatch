@@ -106,6 +106,7 @@ function defaultSummary(): SummaryInputs {
     salesTaxPct: 0.087,
     taxBaseOverride: null,
     bidFactor: 1,
+    notes: '',
   };
 }
 

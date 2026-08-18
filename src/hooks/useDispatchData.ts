@@ -1,10 +1,33 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
-import type { Job, Customer, Technician, TechDailyPriority } from '@/lib/data';
+import { fetchSubmittalsCount } from '@/lib/submittals';
+import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
+import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
+import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
+import { isTechOffOnRange } from '@/lib/data';
 
-function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Customer {
+export type MutationResult = { ok: true } | { ok: false; message: string };
+
+/** Map DB / legacy values onto the single status language. */
+function normalizeJobStatus(raw: unknown): JobStatus {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value === 'active' || value === 'completed' || value === 'scheduled') return value;
+  // Legacy "pending" and anything unexpected → scheduled.
+  return 'scheduled';
+}
+
+function mapCustomerRow(
+  c: Record<string, unknown>,
+  builderIds: Set<string>,
+  projectCounts: Map<string, number>,
+  jobStats: Map<string, { count: number; lastDate: string }>,
+): Customer {
   const id = String(c.id ?? '');
+  const isBuilder = builderIds.has(id);
+  const stats = jobStats.get(id);
+  const projectCount = projectCounts.get(id) ?? 0;
+  const created = String(c.created_at ?? '').split('T')[0] || '';
   return {
     id,
     name:         String(c.name ?? ''),
@@ -12,9 +35,10 @@ function mapCustomerRow(c: Record<string, unknown>, builderIds: Set<string>): Cu
     email:        String(c.email ?? ''),
     address:      String(c.address ?? ''),
     city:         String(c.city ?? ''),
-    propertyType: builderIds.has(id) ? 'Commercial' : 'Residential',
-    totalJobs:    0,
-    lastService:  String(c.created_at ?? '').split('T')[0] || '',
+    propertyType: isBuilder ? 'Commercial' : 'Residential',
+    // Commercial list shows project count; residential shows linked job count.
+    totalJobs:    isBuilder ? projectCount : (stats?.count ?? 0),
+    lastService:  stats?.lastDate || created,
     notes:        String(c.notes ?? ''),
   };
 }
@@ -45,6 +69,11 @@ export const useDispatchData = () => {
   const [customers, setCustomers]     = useState<Customer[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techPriorities, setTechPriorities] = useState<TechDailyPriority[]>([]);
+  const [techTimeOff, setTechTimeOff] = useState<TechTimeOff[]>([]);
+  const [announcement, setAnnouncement] = useState<DispatchAnnouncement | null>(null);
+  const [submittalsCount, setSubmittalsCount] = useState(0);
+  const [blueprintsCount, setBlueprintsCount] = useState(0);
+  const [sitePhotosCount, setSitePhotosCount] = useState(0);
 
   // FIX: keep a stable ref to jobs so rescheduleJob's DB write
   // always reads the latest job without needing `jobs` in its dep array.
@@ -61,11 +90,13 @@ export const useDispatchData = () => {
       const liveJobs: Job[] = (data ?? []).map(j => ({
         ...j,
         id:                j.id?.toString() ?? '',
+        customerId:        j.customer_id ? String(j.customer_id) : '',
+        projectId:         j.project_id ? String(j.project_id) : undefined,
         customerName:      j.title ?? j.customerName ?? 'New Field Job',
         address:           j.location ?? j.address ?? 'Tucson, AZ',
         description:       j.description ?? '',
         phase:             j.phase ?? 'Rough-In',
-        status:            j.status ?? 'pending',
+        status:            normalizeJobStatus(j.status),
         startTime:         j.startTime ?? '08:00',
         endTime:           j.endTime ?? '10:00',
         date:              j.date ?? new Date().toISOString().split('T')[0],
@@ -77,6 +108,10 @@ export const useDispatchData = () => {
                              : (j.technician_id ? [j.technician_id] : []),
         type:              j.type ?? 'maintenance',
         estimatedDuration: j.estimatedDuration ?? 120,
+        tmEnabled:         Boolean(j.tm_enabled) || String(j.phase ?? '').toLowerCase() === 't&m',
+        tmApprovedBy:      j.tm_approved_by != null ? String(j.tm_approved_by) : '',
+        tmWorkDescription: j.tm_work_description != null ? String(j.tm_work_description) : '',
+        tmHours:           j.tm_hours != null && j.tm_hours !== '' ? Number(j.tm_hours) : null,
       }));
       setJobs(liveJobs);
     } catch (err) {
@@ -91,7 +126,21 @@ export const useDispatchData = () => {
     try {
       const { data, error: sbError } = await supabase.from('technicians').select('*');
       if (sbError) throw sbError;
-      setTechnicians(data ?? []);
+      setTechnicians((data ?? []).map((t: Record<string, unknown>) => {
+        const rawSkills = t.skills;
+        const skills = Array.isArray(rawSkills)
+          ? rawSkills.map(s => String(s).trim()).filter(Boolean)
+          : typeof rawSkills === 'string' && rawSkills.trim()
+            ? rawSkills.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
+            : [];
+        return {
+          id: String(t.id ?? ''),
+          name: String(t.name ?? ''),
+          role: String(t.role ?? ''),
+          color: t.color ? String(t.color) : undefined,
+          skills,
+        };
+      }));
     } catch (err) {
       console.error('Error fetching team:', err);
     }
@@ -100,31 +149,153 @@ export const useDispatchData = () => {
   // FIX: customers were fetched nowhere — the state was always [].
   const fetchCustomers = useCallback(async () => {
     try {
-      const [{ data, error: sbError }, { data: builders }] = await Promise.all([
+      const [
+        { data, error: sbError },
+        { data: builders },
+        { data: projects },
+        { data: jobRows },
+      ] = await Promise.all([
         supabase.from('customers').select('*'),
         supabase.from('builders').select('id'),
+        supabase.from('projects').select('id, builder_id'),
+        supabase.from('jobs').select('id, customer_id, date, end_date, title, customerName'),
       ]);
       if (sbError) throw sbError;
       const builderIds = new Set((builders ?? []).map(b => String(b.id)));
-      setCustomers((data ?? []).map(row => mapCustomerRow(row as Record<string, unknown>, builderIds)));
+
+      const projectCounts = new Map<string, number>();
+      for (const p of projects ?? []) {
+        const bid = p.builder_id ? String(p.builder_id) : '';
+        if (!bid) continue;
+        projectCounts.set(bid, (projectCounts.get(bid) ?? 0) + 1);
+      }
+
+      const jobStats = new Map<string, { count: number; lastDate: string }>();
+      for (const j of jobRows ?? []) {
+        const cid = j.customer_id ? String(j.customer_id) : '';
+        if (!cid) continue;
+        const date = String(j.end_date || j.date || '');
+        const prev = jobStats.get(cid);
+        if (!prev) {
+          jobStats.set(cid, { count: 1, lastDate: date });
+        } else {
+          jobStats.set(cid, {
+            count: prev.count + 1,
+            lastDate: date > prev.lastDate ? date : prev.lastDate,
+          });
+        }
+      }
+
+      setCustomers(
+        (data ?? []).map(row =>
+          mapCustomerRow(row as Record<string, unknown>, builderIds, projectCounts, jobStats),
+        ),
+      );
     } catch (err) {
       console.error('Error fetching customers:', err);
     }
+  }, []);
+
+  const fetchSubmittals = useCallback(async () => {
+    try {
+      const count = await fetchSubmittalsCount();
+      setSubmittalsCount(count);
+      return count;
+    } catch (err) {
+      console.error('Error fetching submittals count:', err);
+      return 0;
+    }
+  }, []);
+
+  const fetchBlueprints = useCallback(async () => {
+    try {
+      const count = await fetchBlueprintsCount();
+      setBlueprintsCount(count);
+      return count;
+    } catch (err) {
+      console.error('Error fetching blueprints count:', err);
+      return 0;
+    }
+  }, []);
+
+  const fetchSitePhotos = useCallback(async () => {
+    try {
+      const count = await fetchSitePhotosCount();
+      setSitePhotosCount(count);
+      return count;
+    } catch (err) {
+      console.error('Error fetching site photos count:', err);
+      return 0;
+    }
+  }, []);
+
+  /** Let modals push a count they already loaded (avoids a second fetch). */
+  const reportSubmittalsCount = useCallback((count: number) => {
+    setSubmittalsCount(count);
+  }, []);
+  const reportBlueprintsCount = useCallback((count: number) => {
+    setBlueprintsCount(count);
+  }, []);
+  const reportSitePhotosCount = useCallback((count: number) => {
+    setSitePhotosCount(count);
   }, []);
 
   const fetchTechPriorities = useCallback(async () => {
     try {
       const { data, error: sbError } = await supabase
         .from('tech_daily_priorities')
-        .select('technician_id, work_date, job_id');
+        .select('technician_id, work_date, job_id, stop_rank');
       if (sbError) throw sbError;
       setTechPriorities((data ?? []).map(row => ({
         technicianId: String(row.technician_id),
         workDate: String(row.work_date),
         jobId: String(row.job_id),
+        stopRank: (Number(row.stop_rank) === 2 ? 2 : 1) as 1 | 2,
       })));
     } catch (err) {
       console.error('Error fetching tech priorities:', err);
+    }
+  }, []);
+
+  const fetchTechTimeOff = useCallback(async () => {
+    try {
+      const { data, error: sbError } = await supabase
+        .from('tech_time_off')
+        .select('id, technician_id, start_date, end_date, note, created_at')
+        .order('start_date', { ascending: true });
+      if (sbError) throw sbError;
+      setTechTimeOff((data ?? []).map(row => ({
+        id: String(row.id),
+        technicianId: String(row.technician_id),
+        startDate: String(row.start_date),
+        endDate: String(row.end_date),
+        note: row.note == null ? null : String(row.note),
+        createdAt: row.created_at ? String(row.created_at) : undefined,
+      })));
+    } catch (err) {
+      console.error('Error fetching tech time off:', err);
+    }
+  }, []);
+
+  const fetchAnnouncement = useCallback(async () => {
+    try {
+      const { data, error: sbError } = await supabase
+        .from('dispatch_announcements')
+        .select('id, message, updated_at')
+        .eq('id', 1)
+        .maybeSingle();
+      if (sbError) throw sbError;
+      if (!data) {
+        setAnnouncement(null);
+        return;
+      }
+      setAnnouncement({
+        id: Number(data.id),
+        message: String(data.message ?? ''),
+        updatedAt: data.updated_at ? String(data.updated_at) : undefined,
+      });
+    } catch (err) {
+      console.error('Error fetching announcement:', err);
     }
   }, []);
 
@@ -155,7 +326,27 @@ export const useDispatchData = () => {
       }
     }, 12000);
 
-    void Promise.allSettled([fetchJobs(), fetchTeam(), fetchCustomers(), fetchTechPriorities()])
+    void Promise.allSettled([
+      fetchJobs(),
+      fetchTeam(),
+      fetchCustomers(),
+      fetchTechPriorities(),
+      fetchTechTimeOff(),
+      fetchAnnouncement(),
+      fetchSubmittals(),
+      fetchBlueprints(),
+      fetchSitePhotos(),
+    ])
+      .then(async () => {
+        // Retry once after the main sync — covers the rare case where the first
+        // count request raced ahead of the auth token on the Supabase client.
+        if (!active) return;
+        const count = await fetchSubmittals();
+        if (active && count === 0) {
+          await new Promise(r => setTimeout(r, 750));
+          if (active) await fetchSubmittals();
+        }
+      })
       .finally(() => {
         if (active) {
           clearTimeout(timeout);
@@ -164,16 +355,40 @@ export const useDispatchData = () => {
       });
 
     return () => { active = false; clearTimeout(timeout); };
-  }, [session, authLoading, fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities]);
+  }, [
+    session, authLoading, fetchJobs, fetchTeam, fetchCustomers,
+    fetchTechPriorities, fetchTechTimeOff, fetchAnnouncement,
+    fetchSubmittals, fetchBlueprints, fetchSitePhotos,
+  ]);
 
   const refresh = useCallback(async () => {
-    await Promise.all([fetchJobs(), fetchTeam(), fetchCustomers(), fetchTechPriorities()]);
-  }, [fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities]);
+    await Promise.all([
+      fetchJobs(),
+      fetchTeam(),
+      fetchCustomers(),
+      fetchTechPriorities(),
+      fetchTechTimeOff(),
+      fetchAnnouncement(),
+      fetchSubmittals(),
+      fetchBlueprints(),
+      fetchSitePhotos(),
+    ]);
+  }, [
+    fetchJobs, fetchTeam, fetchCustomers, fetchTechPriorities,
+    fetchTechTimeOff, fetchAnnouncement,
+    fetchSubmittals, fetchBlueprints, fetchSitePhotos,
+  ]);
 
+  // AI assistant mutates schedule/memories via edge tools — refresh live boards.
+  useEffect(() => {
+    const onRefresh = () => { void refresh(); };
+    window.addEventListener('solidcore:data-refresh', onRefresh);
+    return () => window.removeEventListener('solidcore:data-refresh', onRefresh);
+  }, [refresh]);
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   // FIX: accepts typed `Omit<Job, 'id'>` instead of `any`
-  const createJob = useCallback(async (jobData: Omit<Job, 'id'>) => {
+  const createJob = useCallback(async (jobData: Omit<Job, 'id'>): Promise<MutationResult> => {
     // Multi-crew: prefer the array, fall back to the legacy single id. Keep
     // technician_id in sync (= first crew member) for older views.
     const crew = Array.from(
@@ -182,12 +397,35 @@ export const useDispatchData = () => {
     const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
     const startDate = jobData.date;
     const endDate   = jobData.endDate ?? jobData.date;
+
+    for (const techId of crew) {
+      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      if (leave) {
+        const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        return {
+          ok: false,
+          message: `${techName} is off ${span}. Remove them before scheduling.`,
+        };
+      }
+    }
+
+    // Persist real customer/project FKs when present (ignore ephemeral `new-…` ids).
+    const customerId =
+      jobData.customerId && !jobData.customerId.startsWith('new-')
+        ? jobData.customerId
+        : null;
+    const projectId = jobData.projectId || null;
+    const tmEnabled = Boolean(jobData.tmEnabled) || jobData.phase === 'T&M';
+
     const { data: inserted, error: sbError } = await supabase.from('jobs').insert([{
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
       description:  jobData.description ?? '',
-      phase:        jobData.phase ?? 'Rough-In',
-      status:       'pending',
+      phase:        tmEnabled ? 'T&M' : (jobData.phase ?? 'Rough-In'),
+      status:       'scheduled',
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
@@ -195,57 +433,104 @@ export const useDispatchData = () => {
       endTime:      jobData.endTime,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
+      customer_id:  customerId,
+      project_id:   projectId,
+      tm_enabled:   tmEnabled,
+      tm_approved_by: tmEnabled ? (jobData.tmApprovedBy?.trim() || null) : null,
+      tm_work_description: tmEnabled ? (jobData.tmWorkDescription?.trim() || null) : null,
+      tm_hours: tmEnabled && jobData.tmHours != null && !Number.isNaN(Number(jobData.tmHours))
+        ? Number(jobData.tmHours)
+        : null,
       // NOTE: the `jobs` table has no `type` column; including it makes the whole
       // insert fail (PGRST204) and silently drop the job. Type is derived on read.
     }]).select('id').single();
     if (sbError) {
       console.error('Error saving job to DB:', sbError);
-      return;
+      return { ok: false, message: sbError.message || 'Could not schedule job.' };
     }
     // Seed a job_tasks row for every assigned crew member (task blank, span = job range).
     const newJobId = inserted?.id;
     if (newJobId && crew.length) {
-      const rows = crew.map(techId => ({
-        job_id:           newJobId,
-        technician_id:    techId,
-        task:             '',
-        start_date:       startDate,
-        end_date:         endDate,
-        status:           'not_started',
-        percent_complete: 0,
-      }));
-      const { error: taskError } = await supabase.from('job_tasks').insert(rows);
-      if (taskError) console.error('Error seeding job_tasks:', taskError);
+      const taskError = await syncJobTasksForCrew(newJobId, crew, startDate, endDate);
+      if (taskError) {
+        // Job exists; surface the schedule-row issue but treat create as ok.
+        console.error('Error seeding job_tasks:', taskError);
+      }
     }
     // FIX: await refresh so callers get updated state after createJob resolves
     await refresh();
-  }, [refresh]);
+    return { ok: true };
+  }, [refresh, techTimeOff, technicians]);
 
   // Update an existing job (used when editing from the dashboard / calendar).
-  const updateJob = useCallback(async (jobId: string, jobData: Omit<Job, 'id'>) => {
+  const updateJob = useCallback(async (
+    jobId: string,
+    jobData: Omit<Job, 'id'>,
+  ): Promise<MutationResult> => {
     const crew = Array.from(new Set((jobData.technicianIds ?? []).filter(Boolean)));
     const primary = normalizeTechId(crew[0] ?? jobData.technicianId);
     const startDate = jobData.date;
     const endDate   = jobData.endDate ?? jobData.date;
+
+    for (const techId of crew) {
+      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      if (leave) {
+        const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        return {
+          ok: false,
+          message: `${techName} is off ${span}. Remove them before saving.`,
+        };
+      }
+    }
+
+    const customerId =
+      jobData.customerId && !jobData.customerId.startsWith('new-')
+        ? jobData.customerId
+        : null;
+    const projectId = jobData.projectId || null;
+    const tmEnabled = Boolean(jobData.tmEnabled) || jobData.phase === 'T&M';
+
     const { error: sbError } = await supabase.from('jobs').update({
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
       description:  jobData.description ?? '',
-      phase:        jobData.phase ?? 'Rough-In',
+      phase:        tmEnabled ? 'T&M' : (jobData.phase ?? 'Rough-In'),
       date:         startDate,
       end_date:     endDate,
       service_type: jobData.serviceType ?? null,
       technician_id: primary,
       technician_ids: primary ? (crew.length ? crew : [primary]) : [],
+      customer_id:  customerId,
+      project_id:   projectId,
+      tm_enabled:   tmEnabled,
+      tm_approved_by: tmEnabled ? (jobData.tmApprovedBy?.trim() || null) : null,
+      tm_work_description: tmEnabled ? (jobData.tmWorkDescription?.trim() || null) : null,
+      tm_hours: tmEnabled && jobData.tmHours != null && !Number.isNaN(Number(jobData.tmHours))
+        ? Number(jobData.tmHours)
+        : null,
       // NOTE: `jobs` has no `type` column — see createJob. Omitted so the update
       // doesn't fail (PGRST204) and silently no-op.
     }).eq('id', jobId);
     if (sbError) {
       console.error('Error updating job:', sbError);
-      return;
+      return { ok: false, message: sbError.message || 'Could not update job.' };
+    }
+    // Keep Schedule board task rows in sync with the assigned crew.
+    const taskError = await syncJobTasksForCrew(
+      jobId,
+      primary ? (crew.length ? crew : [primary]) : [],
+      startDate,
+      endDate,
+    );
+    if (taskError) {
+      console.error('Error syncing job_tasks:', taskError);
     }
     await refresh();
-  }, [refresh]);
+    return { ok: true };
+  }, [refresh, techTimeOff, technicians]);
 
   const rescheduleJob = useCallback(async (
     id: string, newDate: string, newStartHour: number,
@@ -290,7 +575,7 @@ export const useDispatchData = () => {
     // FIX: read from ref — same stale closure fix as rescheduleJob
     const job = jobsRef.current.find(j => j.id === id);
     if (!job) return;
-    const newStatus = job.status === 'completed' ? 'pending' : 'completed';
+    const newStatus = job.status === 'completed' ? 'scheduled' : 'completed';
     setJobs(prev => prev.map(j => j.id === id ? { ...j, status: newStatus } : j));
     const { error: sbError } = await supabase
       .from('jobs').update({ status: newStatus }).eq('id', id);
@@ -318,11 +603,30 @@ export const useDispatchData = () => {
 
   // Assign MULTIPLE crew to a job. Writes technician_ids[] and keeps the legacy
   // technician_id in sync (= first crew member, or null) for older views.
+  // Also syncs job_tasks so the Schedule board shows the same crew.
   const assignTechnicians = useCallback(async (
     jobId: string, technicianIds: string[],
-  ) => {
+  ): Promise<MutationResult> => {
     const cleaned = Array.from(new Set((technicianIds || []).filter(Boolean)));
     const primary = cleaned[0] ?? null;
+    const current = jobsRef.current.find(j => j.id === jobId);
+    const startDate = current?.date ?? new Date().toISOString().split('T')[0];
+    const endDate = current?.endDate ?? current?.date ?? startDate;
+
+    for (const techId of cleaned) {
+      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      if (leave) {
+        const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
+        const span = leave.startDate === leave.endDate
+          ? leave.startDate
+          : `${leave.startDate}–${leave.endDate}`;
+        return {
+          ok: false,
+          message: `${techName} is off ${span}. Cannot assign them on those dates.`,
+        };
+      }
+    }
+
     setJobs(prev => prev.map(j =>
       j.id === jobId ? { ...j, technicianIds: cleaned, technicianId: primary } : j
     ));
@@ -333,8 +637,17 @@ export const useDispatchData = () => {
     if (sbError) {
       console.error('Failed to assign crew:', sbError);
       await refresh();
+      return { ok: false, message: sbError.message || 'Could not assign crew.' };
     }
-  }, [refresh]);
+    const taskError = await syncJobTasksForCrew(jobId, cleaned, startDate, endDate);
+    if (taskError) {
+      console.error('Failed to sync job_tasks after crew assign:', taskError);
+      await refresh();
+      return { ok: false, message: taskError };
+    }
+    await refresh();
+    return { ok: true };
+  }, [refresh, techTimeOff, technicians]);
 
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase: newPhase } : j));
@@ -411,24 +724,119 @@ export const useDispatchData = () => {
     await refresh();
   }, [refresh]);
 
+  /**
+   * Pin a job as 1st or 2nd stop for a tech/day, or clear the pin (rank = null).
+   * Ensures a job is never both ranks, and each rank holds at most one job.
+   */
+  const setStopPriority = useCallback(async (
+    technicianId: string,
+    workDate: string,
+    jobId: string,
+    rank: 1 | 2 | null,
+  ) => {
+    const jobNum = Number(jobId);
+
+    // Always clear this job from any existing rank for that day first.
+    const { error: clearJobErr } = await supabase
+      .from('tech_daily_priorities')
+      .delete()
+      .eq('technician_id', technicianId)
+      .eq('work_date', workDate)
+      .eq('job_id', jobNum);
+    if (clearJobErr) {
+      console.error('Error clearing job stop pin:', clearJobErr);
+      throw new Error(clearJobErr.message);
+    }
+
+    if (rank == null) {
+      await fetchTechPriorities();
+      return;
+    }
+
+    // Replace whoever currently holds this rank.
+    const { error: clearRankErr } = await supabase
+      .from('tech_daily_priorities')
+      .delete()
+      .eq('technician_id', technicianId)
+      .eq('work_date', workDate)
+      .eq('stop_rank', rank);
+    if (clearRankErr) {
+      console.error('Error clearing stop rank:', clearRankErr);
+      throw new Error(clearRankErr.message);
+    }
+
+    const { error: insertErr } = await supabase
+      .from('tech_daily_priorities')
+      .insert({
+        technician_id: technicianId,
+        work_date: workDate,
+        job_id: jobNum,
+        stop_rank: rank,
+      });
+    if (insertErr) {
+      console.error('Error setting stop priority:', insertErr);
+      throw new Error(insertErr.message);
+    }
+    await fetchTechPriorities();
+  }, [fetchTechPriorities]);
+
+  /** @deprecated Prefer setStopPriority — kept as a thin 1st-stop wrapper. */
   const setFirstPriorityJob = useCallback(async (
     technicianId: string,
     workDate: string,
     jobId: string,
-  ) => {
-    const { error: sbError } = await supabase
-      .from('tech_daily_priorities')
-      .upsert({
-        technician_id: technicianId,
-        work_date: workDate,
-        job_id: Number(jobId),
-      }, { onConflict: 'technician_id,work_date' });
+  ) => setStopPriority(technicianId, workDate, jobId, 1), [setStopPriority]);
+
+  const addTimeOff = useCallback(async (
+    technicianId: string,
+    startDate: string,
+    endDate: string,
+    note?: string | null,
+  ): Promise<MutationResult> => {
+    const safeEnd = endDate < startDate ? startDate : endDate;
+    const { error: sbError } = await supabase.from('tech_time_off').insert([{
+      technician_id: technicianId,
+      start_date: startDate,
+      end_date: safeEnd,
+      note: note?.trim() || null,
+    }]);
     if (sbError) {
-      console.error('Error setting first priority job:', sbError);
-      throw new Error(sbError.message);
+      console.error('Error adding time off:', sbError);
+      return { ok: false, message: sbError.message || 'Could not save day off.' };
     }
-    await fetchTechPriorities();
-  }, [fetchTechPriorities]);
+    await fetchTechTimeOff();
+    return { ok: true };
+  }, [fetchTechTimeOff]);
+
+  const deleteTimeOff = useCallback(async (id: string): Promise<MutationResult> => {
+    const { error: sbError } = await supabase.from('tech_time_off').delete().eq('id', id);
+    if (sbError) {
+      console.error('Error deleting time off:', sbError);
+      return { ok: false, message: sbError.message || 'Could not remove day off.' };
+    }
+    await fetchTechTimeOff();
+    return { ok: true };
+  }, [fetchTechTimeOff]);
+
+  const updateAnnouncement = useCallback(async (message: string): Promise<MutationResult> => {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return { ok: false, message: 'Reminder cannot be empty.' };
+    }
+    const { error: sbError } = await supabase
+      .from('dispatch_announcements')
+      .upsert({
+        id: 1,
+        message: trimmed,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+    if (sbError) {
+      console.error('Error updating announcement:', sbError);
+      return { ok: false, message: sbError.message || 'Could not save reminder.' };
+    }
+    await fetchAnnouncement();
+    return { ok: true };
+  }, [fetchAnnouncement]);
 
   return {
     loading,
@@ -437,6 +845,17 @@ export const useDispatchData = () => {
     customers,
     technicians,
     techPriorities,
+    techTimeOff,
+    announcement,
+    submittalsCount,
+    blueprintsCount,
+    sitePhotosCount,
+    refreshSubmittals: fetchSubmittals,
+    refreshBlueprints: fetchBlueprints,
+    refreshSitePhotos: fetchSitePhotos,
+    reportSubmittalsCount,
+    reportBlueprintsCount,
+    reportSitePhotosCount,
     refresh,
     createJob,
     updateJob,
@@ -449,5 +868,9 @@ export const useDispatchData = () => {
     fireTechnician,
     createCustomer,
     setFirstPriorityJob,
+    setStopPriority,
+    addTimeOff,
+    deleteTimeOff,
+    updateAnnouncement,
   };
 };

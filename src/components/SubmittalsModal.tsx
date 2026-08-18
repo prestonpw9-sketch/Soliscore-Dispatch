@@ -6,25 +6,22 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job } from '@/lib/data';
+import { fetchAllSubmittals, type SubmittalRecord } from '@/lib/submittals';
 
-interface Submittal {
-  id: string;
-  job_id: string | number | null;
-  name: string;
-  file_path: string;
-  status: string | null;
-  created_at?: string;
-}
+interface Submittal extends SubmittalRecord {}
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   jobs: Job[];
+  /** Push the loaded file count straight to the dashboard scorecard. */
+  onCountChange?: (count: number) => void;
+  onRefresh?: () => void | Promise<unknown>;
 }
 
 const BUCKET = 'submittals';
 
-const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs }) => {
+const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange, onRefresh }) => {
   const { canEdit } = useAuth();
   const [submittals, setSubmittals] = useState<Submittal[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -43,14 +40,13 @@ const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs }) => {
   const fetchSubmittals = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error: fetchError } = await supabase
-      .from('submittals')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (fetchError) setError(fetchError.message);
-    else setSubmittals((data ?? []) as Submittal[]);
+    const rows = await fetchAllSubmittals();
+    setSubmittals(rows);
+    // Update the scorecard from the list we already have — no second fetch.
+    onCountChange?.(rows.length);
     setLoading(false);
-  }, []);
+    await onRefresh?.();
+  }, [onCountChange, onRefresh]);
 
   useEffect(() => {
     if (isOpen) void fetchSubmittals();
@@ -109,10 +105,17 @@ const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs }) => {
   const handleDelete = async (s: Submittal) => {
     const { error: storageError } = await supabase.storage.from(BUCKET).remove([s.file_path]);
     if (storageError) { setError(storageError.message); return; }
-    const { error: rowError } = await supabase.from('submittals').delete().eq('id', s.id);
-    if (rowError) { setError(rowError.message); return; }
-    setSubmittals(prev => prev.filter(x => x.id !== s.id));
+    if (!s.id.startsWith('storage:')) {
+      const { error: rowError } = await supabase.from('submittals').delete().eq('id', s.id);
+      if (rowError) { setError(rowError.message); return; }
+    }
+    setSubmittals(prev => {
+      const next = prev.filter(x => x.id !== s.id);
+      onCountChange?.(next.length);
+      return next;
+    });
     setConfirmDelete(null);
+    void onRefresh?.();
   };
 
   const openFile = (filePath: string) => {
