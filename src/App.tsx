@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import AppLayout from './components/AppLayout';
 import LoginScreen from './components/LoginScreen';
+import SetPasswordScreen from './components/SetPasswordScreen';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { ThemeProvider } from './lib/ThemeContext';
@@ -41,7 +42,7 @@ function NotFound() {
 // Valid (allow-listed) session => the real app.
 
 function Gate() {
-  const { session, loading } = useAuth();
+  const { session, loading, passwordRecovery, completePasswordRecovery } = useAuth();
 
   if (loading) {
     return (
@@ -49,6 +50,10 @@ function Gate() {
         <Loader2 className="w-7 h-7 text-teal-500 animate-spin" />
       </div>
     );
+  }
+
+  if (passwordRecovery) {
+    return <SetPasswordScreen onComplete={completePasswordRecovery} />;
   }
 
   if (!session) return <LoginScreen />;
