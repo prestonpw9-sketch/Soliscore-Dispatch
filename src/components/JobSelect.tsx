@@ -32,7 +32,7 @@ export const JobSelect: React.FC<Props> = ({
       onChange={e => onChange(e.target.value)}
       required={required}
       className={`text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 px-2.5 py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${className}`}
-      aria-label="Select job for photo"
+      aria-label="Select job"
     >
       <option value="">{placeholder}</option>
       {sorted.map(job => (

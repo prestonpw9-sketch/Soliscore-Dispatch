@@ -178,6 +178,7 @@ const StatsCards: React.FC<Props> = ({
       <BlueprintsModal
         isOpen={blueprintsModalOpen}
         onClose={() => setBlueprintsModalOpen(false)}
+        jobs={jobs}
         onCountChange={reportBlueprintsCount}
         onRefresh={refreshBlueprints}
       />
