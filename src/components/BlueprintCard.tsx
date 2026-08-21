@@ -121,10 +121,10 @@ export const BlueprintCard: React.FC<Props> = ({ jobs }) => {
             id="blueprints-card-job"
             className="max-w-[180px]"
           />
-          <label className={`cursor-pointer text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${
+          <label className={`cursor-pointer text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${
             canUpload
-              ? 'bg-indigo-600 hover:bg-indigo-700'
-              : 'bg-indigo-400 cursor-not-allowed'
+              ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              : 'bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-700 dark:text-slate-500'
           }`}>
             <UploadCloud className="w-3.5 h-3.5" aria-hidden="true" />
             {uploading ? 'Uploading…' : 'Add Plan'}
@@ -137,6 +137,11 @@ export const BlueprintCard: React.FC<Props> = ({ jobs }) => {
               aria-label="Upload blueprint file"
             />
           </label>
+          {!selectedJobId && (
+            <p className="text-[10px] font-semibold text-slate-400 max-w-[180px] text-right">
+              Pick a job first
+            </p>
+          )}
         </div>
       </div>
 

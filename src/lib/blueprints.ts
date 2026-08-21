@@ -39,20 +39,33 @@ export function parseBlueprintPath(fileName: string): ParsedBlueprintPath {
   return { prefix: prefix || null, displayName };
 }
 
+function normalizeLabel(value: string): string {
+  return value.replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 export function getBlueprintGroup(
   fileName: string,
   jobs: Job[],
 ): { key: string; jobId: string | null; label: string } {
   const { prefix } = parseBlueprintPath(fileName);
-  if (!prefix) {
+  if (!prefix || normalizeLabel(prefix) === 'unassigned') {
     return { key: UNASSIGNED_KEY, jobId: null, label: UNASSIGNED_LABEL };
   }
-  const job = jobs.find(j => j.id === prefix);
-  if (job) {
+  const byId = jobs.find(j => j.id === prefix);
+  if (byId) {
     return {
-      key: prefix,
-      jobId: prefix,
-      label: job.customerName || job.address || 'Untitled job',
+      key: byId.id,
+      jobId: byId.id,
+      label: byId.customerName || byId.address || 'Untitled job',
+    };
+  }
+  const normalized = normalizeLabel(prefix);
+  const byName = jobs.find(j => normalizeLabel(j.customerName || '') === normalized);
+  if (byName) {
+    return {
+      key: byName.id,
+      jobId: byName.id,
+      label: byName.customerName || byName.address || 'Untitled job',
     };
   }
   // Legacy "ProjectName---file" prefixes that aren't job ids stay grouped by name.

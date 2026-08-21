@@ -195,32 +195,39 @@ const BlueprintsModal: React.FC<Props> = ({
 
         {/* Upload bar with job picker — same pattern as submittals / site photos */}
         {canEdit && (
-          <div className="px-6 py-3 bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-100 dark:border-blue-900/30 flex flex-col sm:flex-row gap-3 shrink-0">
-            <JobSelect
-              jobs={jobs}
-              value={selectedJobId}
-              onChange={setSelectedJobId}
-              id="blueprints-modal-job"
-              placeholder="Select a job to attach to…"
-              className="flex-1 min-w-0 py-2 px-3 text-sm rounded-xl"
-            />
-            <label
-              className={`cursor-pointer inline-flex items-center justify-center gap-1.5 text-sm font-bold px-4 py-2 rounded-xl transition-colors ${
-                canUpload
-                  ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                  : 'bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-700'
-              }`}
-            >
-              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {uploading ? 'Uploading…' : 'Upload'}
-              <input
-                type="file"
-                accept=".pdf,.png,.jpg,.jpeg,.dwg"
-                className="hidden"
-                disabled={!canUpload}
-                onChange={e => void handleHeaderUpload(e)}
+          <div className="px-6 py-3 bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-100 dark:border-blue-900/30 shrink-0 space-y-2">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <JobSelect
+                jobs={jobs}
+                value={selectedJobId}
+                onChange={setSelectedJobId}
+                id="blueprints-modal-job"
+                placeholder="Select a job to attach to…"
+                className="flex-1 min-w-0 py-2 px-3 text-sm rounded-xl"
               />
-            </label>
+              <label
+                className={`inline-flex items-center justify-center gap-1.5 text-sm font-bold px-4 py-2 rounded-xl transition-colors ${
+                  canUpload
+                    ? 'cursor-pointer bg-blue-600 hover:bg-blue-500 text-white'
+                    : 'pointer-events-none bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-700'
+                }`}
+              >
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                {uploading ? 'Uploading…' : 'Upload'}
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.dwg"
+                  className="hidden"
+                  disabled={!canUpload}
+                  onChange={e => void handleHeaderUpload(e)}
+                />
+              </label>
+            </div>
+            {!selectedJobId && (
+              <p className="text-[11px] font-medium text-slate-500">
+                Pick an existing job, then upload. Create a new job from the board first if it is not in the list.
+              </p>
+            )}
           </div>
         )}
 
