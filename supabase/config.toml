@@ -26,3 +26,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/gemini-chat/deno.json"
 entrypoint = "./functions/gemini-chat/index.ts"
+
+# Twilio inbound SMS webhook — must stay JWT-off; auth is X-Twilio-Signature.
+[functions.super-processor]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/super-processor/index.ts"
