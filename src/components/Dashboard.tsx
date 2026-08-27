@@ -288,17 +288,17 @@ const Dashboard: React.FC<Props> = ({
                             )}
                             <div className="flex-1 min-w-0">
                               {isPinnedFirst && (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200/80 dark:bg-amber-400/20 dark:text-amber-200 dark:border-amber-300/30 mb-1">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 border border-amber-300 dark:bg-amber-400/40 dark:text-amber-50 dark:border-amber-200/50 mb-1">
                                   <Star className="w-3 h-3 fill-current" /> 1st Stop
                                 </span>
                               )}
                               {isPinnedSecond && (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200/80 dark:bg-sky-400/20 dark:text-sky-200 dark:border-sky-300/30 mb-1">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-sky-200 text-sky-900 border border-sky-300 dark:bg-sky-400/40 dark:text-sky-50 dark:border-sky-200/50 mb-1">
                                   <Star className="w-3 h-3 fill-current" /> 2nd Stop
                                 </span>
                               )}
                               {!isPinned && techJobs.length > 1 && (
-                                <span className="inline-flex text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200/80 dark:bg-white/10 dark:text-slate-200 dark:border-white/15 mb-1">
+                                <span className="inline-flex text-[10px] font-black uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 border border-slate-300 dark:bg-white/15 dark:text-white dark:border-white/20 mb-1">
                                   Stop {index + 1}
                                 </span>
                               )}

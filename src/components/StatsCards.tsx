@@ -31,8 +31,8 @@ interface Props {
 
 const STAT_CARD_SHELL =
   'relative overflow-hidden rounded-2xl p-5 flex flex-col justify-between text-white text-left ' +
-  'border border-white/25 ring-1 ring-inset ring-white/15 ' +
-  'backdrop-blur-md shadow-lg shadow-black/20 ' +
+  'border border-white/40 ring-1 ring-inset ring-white/25 ' +
+  'backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_12px_32px_rgba(0,0,0,0.35)] ' +
   'hover:brightness-110 hover:-translate-y-1 active:scale-95 ' +
   'transition-all duration-200 group cursor-pointer';
 
@@ -59,7 +59,7 @@ const StatCard: React.FC<StatCardProps> = ({
       aria-hidden="true"
     />
     <Icon
-      className="pointer-events-none absolute -bottom-5 -right-4 w-32 h-32 text-white/[0.14]"
+      className="pointer-events-none absolute -bottom-6 -right-5 w-40 h-40 text-white/[0.18]"
       strokeWidth={1.15}
       aria-hidden="true"
     />
@@ -67,8 +67,11 @@ const StatCard: React.FC<StatCardProps> = ({
       <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-110">
         <Icon className="w-5 h-5 text-white" />
       </div>
-      <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-white/85 uppercase tracking-widest">
-        <span className={`status-led ${ledClass}`} aria-hidden="true" />
+      <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-white/90 uppercase tracking-widest">
+        <span className="relative inline-flex h-2.5 w-2.5 items-center justify-center">
+          <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping ${ledClass}`} aria-hidden="true" />
+          <span className={`status-led ${ledClass}`} aria-hidden="true" />
+        </span>
         {status}
       </span>
     </div>

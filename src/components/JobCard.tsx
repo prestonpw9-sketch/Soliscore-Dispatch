@@ -6,25 +6,25 @@ import { avatarGradientClass } from '@/lib/avatarStyle';
 // ── Phase colors ───────────────────────────────────────────────────────────
 
 const PHASE_COLORS: Record<PlumbingPhase, string> = {
-  'Underground':  'bg-amber-50   text-amber-700  border-amber-200/80  dark:bg-amber-400/20  dark:text-amber-200  dark:border-amber-300/30',
-  'Rough-In':     'bg-blue-50    text-blue-700   border-blue-200/80   dark:bg-blue-400/20   dark:text-blue-200   dark:border-blue-300/30',
-  'Top-Out':      'bg-purple-50  text-purple-700 border-purple-200/80 dark:bg-purple-400/20 dark:text-purple-200 dark:border-purple-300/30',
-  'Trim/Finish':  'bg-emerald-50 text-emerald-700 border-emerald-200/80 dark:bg-emerald-400/20 dark:text-emerald-200 dark:border-emerald-300/30',
-  'Service Call': 'bg-rose-50    text-rose-700   border-rose-200/80   dark:bg-rose-400/25   dark:text-rose-200   dark:border-rose-300/35',
-  'T&M':          'bg-slate-100  text-slate-700  border-slate-200     dark:bg-slate-500/30  dark:text-slate-100  dark:border-slate-400/30',
+  'Underground':  'bg-amber-100  text-amber-800  border-amber-300  dark:bg-amber-400/35  dark:text-amber-100  dark:border-amber-300/50',
+  'Rough-In':     'bg-sky-100    text-sky-800    border-sky-300    dark:bg-sky-400/35    dark:text-sky-50    dark:border-sky-300/50',
+  'Top-Out':      'bg-violet-100 text-violet-800 border-violet-300 dark:bg-violet-400/35 dark:text-violet-50 dark:border-violet-300/50',
+  'Trim/Finish':  'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-400/35 dark:text-emerald-50 dark:border-emerald-300/50',
+  'Service Call': 'bg-rose-100   text-rose-800   border-rose-300   dark:bg-rose-500/45   dark:text-rose-50   dark:border-rose-300/55',
+  'T&M':          'bg-slate-200  text-slate-800  border-slate-300  dark:bg-slate-400/35  dark:text-white     dark:border-slate-200/40',
 };
 
 const PHASE_ACCENT: Record<PlumbingPhase, string> = {
-  'Underground':  'border-l-amber-400',
-  'Rough-In':     'border-l-blue-400',
-  'Top-Out':      'border-l-violet-500',
-  'Trim/Finish':  'border-l-emerald-400',
-  'Service Call': 'border-l-rose-500',
-  'T&M':          'border-l-slate-400',
+  'Underground':  'bg-amber-400',
+  'Rough-In':     'bg-sky-400',
+  'Top-Out':      'bg-violet-500',
+  'Trim/Finish':  'bg-emerald-400',
+  'Service Call': 'bg-rose-500',
+  'T&M':          'bg-slate-400',
 };
 
 const DEFAULT_PHASE_COLORS = 'bg-slate-100 text-slate-800 border-slate-200';
-const DEFAULT_ACCENT = 'border-l-slate-400';
+const DEFAULT_ACCENT = 'bg-slate-400';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -72,8 +72,12 @@ const JobCard: React.FC<JobCardProps> = ({
       tabIndex={0}
       onClick={onClick}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
-      className={`relative overflow-hidden bg-white/85 dark:bg-slate-900/70 backdrop-blur-md rounded-xl border border-slate-200/80 dark:border-white/10 border-l-[6px] ${accent} p-5 hover:shadow-xl transition-shadow flex flex-col gap-4 w-full cursor-pointer shadow-[0_10px_28px_rgba(15,23,42,0.08)] dark:shadow-[0_14px_36px_rgba(0,0,0,0.55)]`}
+      className="relative overflow-hidden bg-white/90 dark:bg-slate-800/85 backdrop-blur-md rounded-xl border border-slate-200/90 dark:border-white/15 p-5 pl-6 hover:shadow-xl transition-shadow flex flex-col gap-4 w-full cursor-pointer shadow-[0_10px_24px_rgba(15,23,42,0.12)] dark:shadow-[0_16px_40px_rgba(0,0,0,0.7)]"
     >
+      <span
+        className={`absolute inset-y-0 left-0 w-1.5 ${accent}`}
+        aria-hidden="true"
+      />
       {/* Header */}
       <div>
         <div className="flex justify-between items-start mb-1 gap-2">
