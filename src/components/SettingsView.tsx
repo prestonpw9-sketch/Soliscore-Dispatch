@@ -10,7 +10,7 @@ const SettingsView: React.FC = () => {
   const [ownerName, setOwnerName] = useState('David Williamson');
   const [qualifyingParty, setQualifyingParty] = useState('Preston Watson');
   const [location, setLocation] = useState('Tucson, AZ');
-  const [license, setLicense] = useState('ROC Commercial');
+  const [plumbingLicense, setPlumbingLicense] = useState('CR37#317290');
 
   const [supabaseUrl, setSupabaseUrl] = useState('');
   const [supabaseKey, setSupabaseKey] = useState('');
@@ -158,16 +158,16 @@ const SettingsView: React.FC = () => {
                     </div>
                     <div>
                       <label
-                        htmlFor="license"
+                        htmlFor="plumbingLicense"
                         className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
                       >
-                        License Class
+                        Plumbing License Number
                       </label>
                       <input
-                        id="license"
+                        id="plumbingLicense"
                         type="text"
-                        value={license}
-                        onChange={e => setLicense(e.target.value)}
+                        value={plumbingLicense}
+                        onChange={e => setPlumbingLicense(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-teal-500 outline-none transition-shadow"
                       />
                     </div>

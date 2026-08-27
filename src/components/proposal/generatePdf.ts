@@ -7,7 +7,7 @@ export const LICENSE_LINES: string[] = [
   'Arizona General Contractor License # B1-303364',
   'Arizona Electrical License # CR11-303365',
   'Arizona HVAC License # CR39-311534',
-  'Arizona Plumbing License # CR37-317290',
+  'Arizona Plumbing License # CR37#317290',
   'California General Contractor License # 1025041',
   'Oregon General Contractor License # 227953',
   'Omaha, NE General Contractors License # 2101173',
