@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { fetchSubmittalsCount } from '@/lib/submittals';
 import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts';
 import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
+import { upsertTodayScheduleHistory } from '@/lib/scheduleHistory';
 import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
 import { isTechOffOnRange } from '@/lib/data';
 
@@ -79,6 +80,7 @@ export const useDispatchData = () => {
   // always reads the latest job without needing `jobs` in its dep array.
   const jobsRef = useRef<Job[]>(jobs);
   jobsRef.current = jobs;
+  const jobsFetchOkRef = useRef(false);
 
   // ── Fetchers ─────────────────────────────────────────────────────────────
 
@@ -114,6 +116,7 @@ export const useDispatchData = () => {
         tmHours:           j.tm_hours != null && j.tm_hours !== '' ? Number(j.tm_hours) : null,
       }));
       setJobs(liveJobs);
+      jobsFetchOkRef.current = true;
     } catch (err) {
       // FIX: no `catch (err: any)` — narrow with helper
       const msg = getErrorMessage(err, 'Failed to load jobs.');
@@ -303,7 +306,7 @@ export const useDispatchData = () => {
   // before the token is attached can hang indefinitely. We also clear the
   // loading flag after all fetches settle, with a hard timeout safety net so
   // the app can NEVER get permanently stuck on "Syncing…".
-  const { session, loading: authLoading } = useAuth();
+  const { session, loading: authLoading, canEdit } = useAuth();
 
   useEffect(() => {
     // Wait until auth has resolved.
@@ -385,6 +388,20 @@ export const useDispatchData = () => {
     window.addEventListener('solidcore:data-refresh', onRefresh);
     return () => window.removeEventListener('solidcore:data-refresh', onRefresh);
   }, [refresh]);
+
+  // Freeze today's board so the AI can recall assignments after jobs move.
+  useEffect(() => {
+    if (!session || loading || !canEdit || !jobsFetchOkRef.current) return;
+    const timer = window.setTimeout(() => {
+      void upsertTodayScheduleHistory({
+        jobs,
+        technicians,
+        techTimeOff,
+        createdBy: session.user.id,
+      });
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [session, loading, canEdit, jobs, technicians, techTimeOff]);
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   // FIX: accepts typed `Omit<Job, 'id'>` instead of `any`

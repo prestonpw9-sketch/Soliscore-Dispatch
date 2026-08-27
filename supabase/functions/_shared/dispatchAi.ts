@@ -13,6 +13,8 @@ export const CORS_HEADERS = {
 export const DEFAULT_MODEL = 'gemini-2.5-flash';
 const MEMORY_BUCKET = 'ai-memory';
 const MEMORY_PATH = 'dispatch-memories.json';
+const HISTORY_PATH = 'schedule-history.json';
+const MAX_HISTORY_DAYS = 180;
 const MAX_TOOL_ROUNDS = 6;
 
 export type UserRole = 'owner' | 'office' | 'crew';
@@ -82,7 +84,7 @@ interface MemoryFile {
 }
 
 const SYSTEM_PROMPT = `You are the AI dispatch assistant for ITDG Plumbing (Arizona).
-You can READ the live schedule, crew roster, time-off, and long-term memories.
+You can READ the live schedule, crew roster, time-off, long-term memories, and frozen daily history.
 You LEARN and REMEMBER: when the user teaches you about a tech's abilities, preferences,
 site quirks, or scheduling rules, call remember_fact (and update_technician_skills when it is a skill).
 Memories persist across chats — treat them as ground truth unless the user corrects them.
@@ -90,6 +92,12 @@ Memories persist across chats — treat them as ground truth unless the user cor
 Job statuses: scheduled (on board), active (in progress), completed.
 Pending dispatches = scheduled jobs with no crew assigned.
 Dates are full-day YYYY-MM-DD (America/Phoenix). Never invent dates.
+
+HISTORICAL SCHEDULE:
+- A daily freeze of the board is stored automatically (who was on which job that day).
+- Past freezes survive reschedules, crew moves, and completed jobs. The live board is NOT history.
+- When asked about last week, a past date, who worked a site before, or "what did the schedule look like",
+  call lookup_schedule_history. Do not guess from today's live jobs.
 
 SCHEDULING / PLACEMENT:
 - Prefer techs whose remembered skills match the job's service_type/phase.
@@ -365,6 +373,298 @@ async function forgetFact(
   return { ok: true };
 }
 
+interface HistoryIndexRow {
+  snapshot_date: string;
+  job_count: number;
+  source: string;
+  captured_at: string;
+}
+
+interface ScheduleHistoryJobPayload {
+  id: string;
+  title: string;
+  location: string;
+  status: string;
+  phase: string;
+  service_type: string;
+  date: string;
+  end_date: string;
+  crew: Array<{ id: string; name: string }>;
+  tasks: Array<{
+    id?: string;
+    technician_id: string | null;
+    technician_name: string;
+    task: string;
+    start_date?: string;
+    end_date?: string;
+    status: string;
+    percent_complete: number;
+  }>;
+}
+
+interface ScheduleHistoryPayload {
+  version: 1;
+  jobs: ScheduleHistoryJobPayload[];
+  time_off: Array<{
+    technician_id: string;
+    technician_name: string;
+    start_date: string;
+    end_date: string;
+    note: string | null;
+  }>;
+}
+
+interface HistoryFile {
+  version: number;
+  snapshots: Record<string, {
+    captured_at: string;
+    source: string;
+    job_count: number;
+    payload: ScheduleHistoryPayload;
+  }>;
+}
+
+function emptyHistoryFile(): HistoryFile {
+  return { version: 1, snapshots: {} };
+}
+
+async function loadHistoryFile(admin: SupabaseClient): Promise<HistoryFile> {
+  const { data, error } = await admin.storage.from(MEMORY_BUCKET).download(HISTORY_PATH);
+  if (error || !data) return emptyHistoryFile();
+  try {
+    const parsed = JSON.parse(await data.text()) as HistoryFile;
+    if (!parsed || typeof parsed.snapshots !== 'object' || parsed.snapshots == null) {
+      return emptyHistoryFile();
+    }
+    return { version: parsed.version ?? 1, snapshots: parsed.snapshots };
+  } catch {
+    return emptyHistoryFile();
+  }
+}
+
+async function saveHistoryFile(admin: SupabaseClient, file: HistoryFile): Promise<string | null> {
+  const dates = Object.keys(file.snapshots).sort();
+  if (dates.length > MAX_HISTORY_DAYS) {
+    for (const d of dates.slice(0, dates.length - MAX_HISTORY_DAYS)) {
+      delete file.snapshots[d];
+    }
+  }
+  const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
+  const { error } = await admin.storage.from(MEMORY_BUCKET).upload(HISTORY_PATH, blob, {
+    upsert: true,
+    contentType: 'application/json',
+  });
+  return error ? error.message : null;
+}
+
+function buildHistoryPayload(snap: DispatchSnapshot): ScheduleHistoryPayload {
+  return {
+    version: 1,
+    jobs: snap.allJobs.map(j => ({
+      id: j.id,
+      title: j.title,
+      location: j.location,
+      status: j.status,
+      phase: j.phase,
+      service_type: j.service_type,
+      date: j.date,
+      end_date: j.end_date,
+      crew: j.technician_ids.map(id => ({ id, name: techName(snap, id) })),
+      tasks: snap.jobTasks
+        .filter(t => t.job_id === j.id)
+        .map(t => ({
+          id: t.id,
+          technician_id: t.technician_id,
+          technician_name: techName(snap, t.technician_id),
+          task: t.task,
+          start_date: t.start_date,
+          end_date: t.end_date,
+          status: t.status,
+          percent_complete: t.percent_complete,
+        })),
+    })),
+    time_off: snap.timeOff.map(r => ({
+      technician_id: r.technician_id,
+      technician_name: techName(snap, r.technician_id),
+      start_date: r.start_date,
+      end_date: r.end_date,
+      note: r.note,
+    })),
+  };
+}
+
+async function upsertDbHistory(
+  admin: SupabaseClient,
+  snapshotDate: string,
+  payload: ScheduleHistoryPayload,
+  source: 'system' | 'ai' | 'user',
+  createdBy: string | null,
+): Promise<boolean> {
+  const { error } = await admin.from('schedule_history').upsert({
+    snapshot_date: snapshotDate,
+    captured_at: new Date().toISOString(),
+    source,
+    created_by: createdBy,
+    job_count: payload.jobs.length,
+    payload,
+  }, { onConflict: 'snapshot_date' });
+  return !error;
+}
+
+async function captureTodayScheduleHistory(
+  admin: SupabaseClient,
+  snap: DispatchSnapshot,
+  source: 'system' | 'ai' | 'user',
+  createdBy: string | null,
+): Promise<void> {
+  const payload = buildHistoryPayload(snap);
+  const wroteDb = await upsertDbHistory(admin, snap.today, payload, source, createdBy);
+  if (wroteDb) return;
+
+  const file = await loadHistoryFile(admin);
+  file.snapshots[snap.today] = {
+    captured_at: new Date().toISOString(),
+    source,
+    job_count: payload.jobs.length,
+    payload,
+  };
+  await saveHistoryFile(admin, file);
+}
+
+async function loadHistoryIndex(admin: SupabaseClient): Promise<HistoryIndexRow[]> {
+  const { data, error } = await admin
+    .from('schedule_history')
+    .select('snapshot_date, job_count, source, captured_at')
+    .order('snapshot_date', { ascending: false })
+    .limit(60);
+  if (!error && data) {
+    return (data as HistoryIndexRow[]).filter(r => typeof r.snapshot_date === 'string');
+  }
+
+  const file = await loadHistoryFile(admin);
+  return Object.entries(file.snapshots)
+    .map(([snapshot_date, row]) => ({
+      snapshot_date,
+      job_count: row.job_count,
+      source: row.source,
+      captured_at: row.captured_at,
+    }))
+    .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))
+    .slice(0, 60);
+}
+
+function jobMatchesHistoryFilters(
+  job: ScheduleHistoryJobPayload,
+  technicianId: string,
+  query: string,
+): boolean {
+  if (technicianId && !job.crew.some(c => c.id === technicianId)) return false;
+  if (query) {
+    const hay = `${job.title} ${job.location} ${job.phase} ${job.service_type}`.toLowerCase();
+    if (!hay.includes(query)) return false;
+  }
+  return true;
+}
+
+function formatHistoryDay(
+  date: string,
+  meta: { source?: string; job_count?: number } | undefined,
+  jobs: ScheduleHistoryJobPayload[],
+): string {
+  const lines: string[] = [];
+  const src = meta?.source ? ` source=${meta.source}` : '';
+  lines.push(`${date} (${jobs.length} jobs${src}):`);
+  if (!jobs.length) {
+    lines.push('  (no matching jobs)');
+    return lines.join('\n');
+  }
+  for (const j of jobs) {
+    const crew = j.crew.length ? j.crew.map(c => c.name).join(', ') : 'UNASSIGNED';
+    const span = j.date === j.end_date ? j.date : `${j.date}→${j.end_date}`;
+    lines.push(
+      `  - Job #${j.id} "${j.title}" @ ${j.location || 'n/a'} | ${span} | ${j.status}` +
+        ` | ${j.phase || 'n/a'} / ${j.service_type || 'n/a'} | crew=${crew}`,
+    );
+    for (const t of j.tasks ?? []) {
+      if (!t.task && !t.status) continue;
+      lines.push(
+        `      · ${t.technician_name}: "${t.task || '(blank)'}" ${t.status} ${t.percent_complete}%`,
+      );
+    }
+  }
+  return lines.join('\n');
+}
+
+async function lookupScheduleHistory(
+  admin: SupabaseClient,
+  args: {
+    start_date: string;
+    end_date: string;
+    technician_id?: string;
+    job_query?: string;
+  },
+): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const start = args.start_date;
+  const end = args.end_date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return { ok: false, error: 'Dates must be YYYY-MM-DD.' };
+  }
+  if (end < start) return { ok: false, error: 'end_date must be >= start_date.' };
+
+  const days: string[] = [];
+  let cursor = start;
+  for (let i = 0; i < 31 && cursor <= end; i++) {
+    days.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+  if (cursor <= end) {
+    return { ok: false, error: 'Range too long — ask for at most 31 days.' };
+  }
+
+  const technicianId = args.technician_id ?? '';
+  const query = (args.job_query ?? '').trim().toLowerCase();
+
+  const { data, error } = await admin
+    .from('schedule_history')
+    .select('snapshot_date, source, job_count, payload')
+    .in('snapshot_date', days)
+    .order('snapshot_date', { ascending: true });
+
+  const byDate = new Map<string, { source: string; job_count: number; payload: ScheduleHistoryPayload }>();
+  if (!error && data) {
+    for (const row of data as Array<{ snapshot_date: string; source: string; job_count: number; payload: ScheduleHistoryPayload }>) {
+      byDate.set(row.snapshot_date, {
+        source: row.source,
+        job_count: row.job_count,
+        payload: row.payload,
+      });
+    }
+  } else {
+    const file = await loadHistoryFile(admin);
+    for (const d of days) {
+      const snap = file.snapshots[d];
+      if (snap) byDate.set(d, snap);
+    }
+  }
+
+  const blocks: string[] = [`SCHEDULE HISTORY ${start} → ${days[days.length - 1]}`];
+  let found = 0;
+  for (const d of days) {
+    const row = byDate.get(d);
+    if (!row) {
+      blocks.push(`${d}: no snapshot stored`);
+      continue;
+    }
+    found += 1;
+    const jobs = (row.payload?.jobs ?? []).filter(j => jobMatchesHistoryFilters(j, technicianId, query));
+    blocks.push(formatHistoryDay(d, row, jobs));
+  }
+  if (!found) {
+    blocks.push('No frozen days in this range yet. Snapshots start the first day the app or AI runs after this feature is enabled.');
+  }
+  return { ok: true, text: blocks.join('\n') };
+}
+
 interface DispatchSnapshot {
   today: string;
   windowStart: string;
@@ -376,6 +676,19 @@ interface DispatchSnapshot {
     skills: string[];
   }>;
   jobs: Array<{
+    id: string;
+    title: string;
+    location: string;
+    status: string;
+    phase: string;
+    service_type: string;
+    date: string;
+    end_date: string;
+    technician_ids: string[];
+    description: string;
+  }>;
+  /** Full current board (unwindowed) — written into daily history freezes. */
+  allJobs: Array<{
     id: string;
     title: string;
     location: string;
@@ -406,6 +719,7 @@ interface DispatchSnapshot {
   }>;
   memories: AiMemory[];
   skillsColumnAvailable: boolean;
+  historyIndex: HistoryIndexRow[];
 }
 
 async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnapshot> {
@@ -413,12 +727,13 @@ async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnap
   const windowStart = addDays(today, -7);
   const windowEnd = addDays(today, 28);
 
-  const [techRes, jobsRes, tasksRes, offRes, memories] = await Promise.all([
+  const [techRes, jobsRes, tasksRes, offRes, memories, historyIndex] = await Promise.all([
     admin.from('technicians').select('*').order('name'),
     admin.from('jobs').select('*'),
     admin.from('job_tasks').select('*'),
     admin.from('tech_time_off').select('id, technician_id, start_date, end_date, note'),
     loadAllMemories(admin),
+    loadHistoryIndex(admin),
   ]);
 
   let techRows = techRes.data ?? [];
@@ -448,7 +763,7 @@ async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnap
     };
   });
 
-  const jobs = (jobsRes.data ?? [])
+  const allJobs = (jobsRes.data ?? [])
     .map((j: Record<string, unknown>) => {
       const date = String(j.date ?? '');
       const end = String(j.end_date ?? j.date ?? '');
@@ -467,7 +782,9 @@ async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnap
         technician_ids: ids,
         description: String(j.description ?? ''),
       };
-    })
+    });
+
+  const jobs = allJobs
     .filter(j => j.status !== 'completed' || (j.end_date >= windowStart && j.date <= windowEnd))
     .filter(j => !j.date || (j.end_date >= windowStart && j.date <= windowEnd));
 
@@ -496,10 +813,12 @@ async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnap
     windowEnd,
     technicians,
     jobs,
+    allJobs,
     jobTasks,
     timeOff,
     memories,
     skillsColumnAvailable: Boolean(techRows[0] && 'skills' in (techRows[0] as object)),
+    historyIndex,
   };
 }
 
@@ -559,6 +878,22 @@ function formatSnapshot(snap: DispatchSnapshot): string {
     }
   } else {
     lines.push('\nLONG-TERM MEMORIES: none yet — learn from the dispatcher and call remember_fact.');
+  }
+
+  if (snap.historyIndex.length) {
+    const oldest = snap.historyIndex[snap.historyIndex.length - 1]?.snapshot_date;
+    const newest = snap.historyIndex[0]?.snapshot_date;
+    lines.push(`\nFROZEN DAILY SNAPSHOTS (${snap.historyIndex.length} stored, ${oldest} → ${newest}). Past days survive reschedules.`);
+    for (const row of snap.historyIndex.slice(0, 14)) {
+      lines.push(`- ${row.snapshot_date}: ${row.job_count} jobs (${row.source})`);
+    }
+    if (snap.historyIndex.length > 14) {
+      lines.push(`- … ${snap.historyIndex.length - 14} older days. Call lookup_schedule_history for details.`);
+    } else {
+      lines.push('Call lookup_schedule_history to read a date range.');
+    }
+  } else {
+    lines.push('\nFROZEN DAILY SNAPSHOTS: none yet — today’s board is saved automatically. Use lookup_schedule_history for past days after snapshots exist.');
   }
 
   return lines.join('\n');
@@ -697,6 +1032,21 @@ const TOOL_DECLARATIONS = [
       required: ['start_date'],
     },
   },
+  {
+    name: 'lookup_schedule_history',
+    description:
+      'Read frozen daily schedule snapshots (who was assigned where on past dates). Use for last week, a past day, or who worked a site before. Live jobs are not history.',
+    parameters: {
+      type: 'object',
+      properties: {
+        start_date: { type: 'string', description: 'YYYY-MM-DD inclusive' },
+        end_date: { type: 'string', description: 'YYYY-MM-DD inclusive. Defaults to start_date. Max 31 days.' },
+        technician_id: { type: 'string', description: 'Optional technician UUID to filter crew.' },
+        job_query: { type: 'string', description: 'Optional substring match on job title/site/phase.' },
+      },
+      required: ['start_date'],
+    },
+  },
 ];
 
 async function syncJobTasks(
@@ -755,7 +1105,7 @@ async function executeTool(
   role: UserRole | null,
   userId: string,
 ): Promise<{ result: unknown; mutated: boolean; snap?: DispatchSnapshot }> {
-  const writeNeeded = !['list_available_crew'].includes(name);
+  const writeNeeded = !['list_available_crew', 'lookup_schedule_history'].includes(name);
   if (writeNeeded && !canWrite(role)) {
     return { result: { error: 'Read-only role (office). Cannot change schedule or memories.' }, mutated: false };
   }
@@ -981,6 +1331,18 @@ async function executeTool(
     return { result: { start_date: start, end_date: end, available }, mutated: false };
   }
 
+  if (name === 'lookup_schedule_history') {
+    const start = String(args.start_date ?? snap.today);
+    const end = String(args.end_date ?? start);
+    const looked = await lookupScheduleHistory(admin, {
+      start_date: start,
+      end_date: end,
+      technician_id: args.technician_id ? String(args.technician_id) : '',
+      job_query: args.job_query ? String(args.job_query) : '',
+    });
+    return { result: looked, mutated: false };
+  }
+
   return { result: { error: `Unknown tool: ${name}` }, mutated: false };
 }
 
@@ -1074,6 +1436,12 @@ export async function handleDispatchAiChat(
   }
 
   let snap = await loadDispatchSnapshot(admin);
+  try {
+    await captureTodayScheduleHistory(admin, snap, 'ai', user.id);
+    snap = { ...snap, historyIndex: await loadHistoryIndex(admin) };
+  } catch (err) {
+    console.error('schedule history capture failed:', err);
+  }
   const model = resolveGeminiModel(body.model);
   const systemInstruction = buildSystemPrompt(snap, context, role, options.systemPrompt);
 
@@ -1128,6 +1496,12 @@ export async function handleDispatchAiChat(
         didMutate = true;
         // Refresh snapshot after mutations so later tools see fresh data
         snap = await loadDispatchSnapshot(admin);
+        try {
+          await captureTodayScheduleHistory(admin, snap, 'ai', user.id);
+          snap = { ...snap, historyIndex: await loadHistoryIndex(admin) };
+        } catch (err) {
+          console.error('schedule history capture failed:', err);
+        }
       }
       toolTrace.push({ name, args, result: exec.result });
       responseParts.push({
