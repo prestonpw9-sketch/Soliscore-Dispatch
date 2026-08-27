@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Briefcase, Map, Camera, Users, FolderOpen,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { Job } from '@/lib/data';
 import { useAuth } from '@/lib/AuthContext';
 import { fetchSubmittalsCount } from '@/lib/submittals';
@@ -27,6 +28,59 @@ interface Props {
   onJobsChanged?: () => void | Promise<unknown>;
   onOpenTeam: () => void;
 }
+
+const STAT_CARD_SHELL =
+  'relative overflow-hidden rounded-2xl p-5 flex flex-col justify-between text-white text-left ' +
+  'border border-white/40 ring-1 ring-inset ring-white/25 ' +
+  'backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_12px_32px_rgba(0,0,0,0.35)] ' +
+  'hover:brightness-110 hover:-translate-y-1 active:scale-95 ' +
+  'transition-all duration-200 group cursor-pointer';
+
+interface StatCardProps {
+  label: string;
+  value: number;
+  status: string;
+  ledClass: string;
+  icon: LucideIcon;
+  gradient: string;
+  onClick: () => void;
+}
+
+const StatCard: React.FC<StatCardProps> = ({
+  label, value, status, ledClass, icon: Icon, gradient, onClick,
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`${STAT_CARD_SHELL} ${gradient}`}
+  >
+    <div
+      className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-white/10 via-transparent to-transparent"
+      aria-hidden="true"
+    />
+    <Icon
+      className="pointer-events-none absolute -bottom-6 -right-5 w-40 h-40 text-white/[0.18]"
+      strokeWidth={1.15}
+      aria-hidden="true"
+    />
+    <div className="relative z-10 flex justify-between items-start mb-4">
+      <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-110">
+        <Icon className="w-5 h-5 text-white" />
+      </div>
+      <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-white/90 uppercase tracking-widest">
+        <span className="relative inline-flex h-2.5 w-2.5 items-center justify-center">
+          <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping ${ledClass}`} aria-hidden="true" />
+          <span className={`status-led ${ledClass}`} aria-hidden="true" />
+        </span>
+        {status}
+      </span>
+    </div>
+    <div className="relative z-10">
+      <h4 className="text-3xl font-black text-white tracking-tight leading-none">{value}</h4>
+      <p className="text-sm font-bold text-white/90 mt-2">{label}</p>
+    </div>
+  </button>
+);
 
 const StatsCards: React.FC<Props> = ({
   jobs,
@@ -75,98 +129,51 @@ const StatsCards: React.FC<Props> = ({
   return (
     <>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 w-full">
-
-        {/* Active Jobs */}
-        <button
-          type="button"
+        <StatCard
+          label="Active Jobs"
+          value={activeJobCount}
+          status="Live"
+          ledClass="bg-lime-300 text-lime-300"
+          icon={Briefcase}
+          gradient="bg-gradient-to-br from-violet-900 via-purple-600 to-fuchsia-500"
           onClick={() => setJobsModalOpen(true)}
-          className="bg-indigo-600 dark:bg-indigo-500 rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group cursor-pointer hover:-translate-y-1 active:scale-95 flex flex-col justify-between text-white border border-white/10 text-left"
-        >
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-110">
-              <Briefcase className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">Live</span>
-          </div>
-          <div>
-            <h4 className="text-3xl font-black text-white tracking-tight leading-none">{activeJobCount}</h4>
-            <p className="text-sm font-bold text-white/90 mt-2">Active Jobs</p>
-          </div>
-        </button>
-
-        {/* Active Blueprints */}
-        <button
-          type="button"
+        />
+        <StatCard
+          label="Active Blueprints"
+          value={activeBlueprints}
+          status="Synced"
+          ledClass="bg-cyan-300 text-cyan-300"
+          icon={Map}
+          gradient="bg-gradient-to-br from-blue-900 via-blue-600 to-sky-400"
           onClick={() => setBlueprintsModalOpen(true)}
-          className="bg-blue-600 dark:bg-blue-500 rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group cursor-pointer hover:-translate-y-1 active:scale-95 flex flex-col justify-between text-white border border-white/10 text-left"
-        >
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-110">
-              <Map className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">Synced</span>
-          </div>
-          <div>
-            <h4 className="text-3xl font-black text-white tracking-tight leading-none">{activeBlueprints}</h4>
-            <p className="text-sm font-bold text-white/90 mt-2">Active Blueprints</p>
-          </div>
-        </button>
-
-        {/* Site Photos */}
-        <button
-          type="button"
+        />
+        <StatCard
+          label="Site Photos"
+          value={sitePhotos}
+          status="Updating"
+          ledClass="bg-amber-300 text-amber-300"
+          icon={Camera}
+          gradient="bg-gradient-to-br from-emerald-900 via-emerald-600 to-teal-400"
           onClick={() => setPhotosModalOpen(true)}
-          className="bg-emerald-600 dark:bg-emerald-500 rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group cursor-pointer hover:-translate-y-1 active:scale-95 flex flex-col justify-between text-white border border-white/10 text-left"
-        >
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-110">
-              <Camera className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">Updating</span>
-          </div>
-          <div>
-            <h4 className="text-3xl font-black text-white tracking-tight leading-none">{sitePhotos}</h4>
-            <p className="text-sm font-bold text-white/90 mt-2">Site Photos</p>
-          </div>
-        </button>
-
-        {/* Active Plumbers */}
-        <button
-          type="button"
+        />
+        <StatCard
+          label="Active Plumbers"
+          value={activePlumbers}
+          status="Deployed"
+          ledClass="bg-emerald-300 text-emerald-300"
+          icon={Users}
+          gradient="bg-gradient-to-br from-teal-900 via-cyan-600 to-cyan-400"
           onClick={onOpenTeam}
-          className="bg-teal-600 dark:bg-teal-500 rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group cursor-pointer hover:-translate-y-1 active:scale-95 flex flex-col justify-between text-white border border-white/10 text-left"
-        >
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-110">
-              <Users className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">Deployed</span>
-          </div>
-          <div>
-            <h4 className="text-3xl font-black text-white tracking-tight leading-none">{activePlumbers}</h4>
-            <p className="text-sm font-bold text-white/90 mt-2">Active Plumbers</p>
-          </div>
-        </button>
-
-        {/* Submittals folder */}
-        <button
-          type="button"
+        />
+        <StatCard
+          label="Submittals"
+          value={submittalsCount}
+          status="Open"
+          ledClass="bg-sky-300 text-sky-300"
+          icon={FolderOpen}
+          gradient="bg-gradient-to-br from-indigo-900 via-indigo-600 to-violet-500"
           onClick={() => setSubmittalsModalOpen(true)}
-          className="w-full bg-blue-600 dark:bg-blue-500 rounded-2xl p-5 shadow-md hover:brightness-110 transition-all duration-200 group flex flex-col justify-between text-white border border-white/10 text-left h-full hover:-translate-y-1 active:scale-95"
-        >
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-110">
-              <FolderOpen className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">Open</span>
-          </div>
-          <div>
-            <h4 className="text-3xl font-black text-white tracking-tight leading-none">
-              {submittalsCount}
-            </h4>
-            <p className="text-sm font-bold text-white/90 mt-2">Submittals</p>
-          </div>
-        </button>
+        />
       </div>
 
       {/* Modals */}

@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowRight, Calculator, CalendarDays, Star, CalendarOff } from 'lucide-react';
 import type { Job, Technician, TechDailyPriority, TechTimeOff } from '@/lib/data';
 import { isTechOffOnDay } from '@/lib/data';
+import { avatarGradientClass } from '@/lib/avatarStyle';
 import StatsCards from './StatsCards';
 import JobCard from './JobCard';
 import { BlueprintCard } from './BlueprintCard';
@@ -167,7 +168,7 @@ const Dashboard: React.FC<Props> = ({
         <button
           type="button"
           onClick={onOpenEstimator}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-md transition-colors shrink-0"
+          className="flex items-center gap-2 bg-gradient-to-r from-violet-800 via-purple-600 to-fuchsia-500 hover:from-violet-700 hover:to-fuchsia-400 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-purple-600/30 border border-white/20 transition-all shrink-0"
         >
           <Calculator className="w-5 h-5" />
           New Estimate
@@ -192,8 +193,8 @@ const Dashboard: React.FC<Props> = ({
       />
 
       <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
-          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <div className="lg:col-span-2 bg-white/80 dark:bg-slate-900/55 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-xl overflow-hidden shadow-[0_10px_28px_rgba(15,23,42,0.08)] dark:shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+          <div className="px-5 py-4 border-b border-slate-100 dark:border-white/10 flex items-center justify-between">
             <div>
               <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <CalendarDays className="w-4 h-4 text-indigo-500" aria-hidden="true" />
@@ -214,7 +215,7 @@ const Dashboard: React.FC<Props> = ({
             </button>
           </div>
 
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          <div className="divide-y divide-slate-100 dark:divide-white/10">
             {offToday.length > 0 && (
               <div className="p-4 bg-rose-50/80 dark:bg-rose-950/20">
                 <p className="text-[10px] font-black uppercase tracking-wide text-rose-600 dark:text-rose-300 mb-2 flex items-center gap-1">
@@ -245,7 +246,7 @@ const Dashboard: React.FC<Props> = ({
                 return (
                   <div key={tech.id} className="p-4">
                     <div className="flex items-center gap-2 mb-3">
-                      <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-700 dark:text-indigo-400 font-black text-sm">
+                      <div className={`w-8 h-8 rounded-full ${avatarGradientClass(tech.name)} flex items-center justify-center text-white font-black text-sm shadow-sm`}>
                         {tech.name.charAt(0)}
                       </div>
                       <div>
@@ -287,17 +288,17 @@ const Dashboard: React.FC<Props> = ({
                             )}
                             <div className="flex-1 min-w-0">
                               {isPinnedFirst && (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-amber-600 dark:text-amber-400 mb-1">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 border border-amber-300 dark:bg-amber-400/40 dark:text-amber-50 dark:border-amber-200/50 mb-1">
                                   <Star className="w-3 h-3 fill-current" /> 1st Stop
                                 </span>
                               )}
                               {isPinnedSecond && (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-sky-600 dark:text-sky-400 mb-1">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-sky-200 text-sky-900 border border-sky-300 dark:bg-sky-400/40 dark:text-sky-50 dark:border-sky-200/50 mb-1">
                                   <Star className="w-3 h-3 fill-current" /> 2nd Stop
                                 </span>
                               )}
                               {!isPinned && techJobs.length > 1 && (
-                                <span className="inline-flex text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
+                                <span className="inline-flex text-[10px] font-black uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 border border-slate-300 dark:bg-white/15 dark:text-white dark:border-white/20 mb-1">
                                   Stop {index + 1}
                                 </span>
                               )}
