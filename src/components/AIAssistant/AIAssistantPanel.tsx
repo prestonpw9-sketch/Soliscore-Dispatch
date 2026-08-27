@@ -9,6 +9,7 @@ import { AIMessage }                   from './AIMessage';
 const BASE_QUICK_PROMPTS = [
   "Summarise today's open jobs",
   'Who is free this week and what are they good at?',
+  'What did last week’s schedule look like?',
   'Remember: ask me about each tech\'s strengths',
   'Suggest crew placement for unassigned jobs',
 ] as const;
@@ -80,7 +81,7 @@ export function AIAssistantPanel({ onClose }: { onClose: () => void }) {
             <div>
               <p className="text-sm font-semibold text-white mb-1">{config.label} ready</p>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Reads your schedule, learns crew abilities,<br />and can place guys on jobs.
+                Reads your schedule, stores daily history,<br />learns crew abilities, and can place guys on jobs.
               </p>
             </div>
             <div className="w-full space-y-1.5 mt-2">
