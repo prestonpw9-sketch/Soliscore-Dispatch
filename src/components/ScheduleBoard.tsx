@@ -7,7 +7,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/data';
-import { isTechOffOnRange, isTechOffOnDay } from '@/lib/data';
+import { clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, isTechOffOnDay } from '@/lib/data';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
@@ -243,28 +243,29 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     const jobStart = job.date;
     const jobEnd = job.endDate ?? job.date;
     for (const id of techIds) {
-      const leave = isTechOffOnRange(id, jobStart, jobEnd, techTimeOff);
+      const leave = fullyOffLeave(id, jobStart, jobEnd, techTimeOff);
       if (leave) {
         const name = technicians.find(t => t.id === id)?.name ?? 'That crew member';
-        const span = leave.startDate === leave.endDate
-          ? leave.startDate
-          : `${leave.startDate}–${leave.endDate}`;
-        setError(`${name} is off ${span}. Cannot assign them to this job.`);
+        setError(`${name} is off ${formatTimeOffSpan(leave)}. Cannot assign them to this job.`);
         return;
       }
     }
     const existing = new Set(tasks.filter(t => t.jobId === job.id).map(t => t.technicianId));
     const rows = techIds
       .filter(id => !existing.has(id))
-      .map(id => ({
-        job_id: job.id,
-        technician_id: id,
-        task: '',
-        start_date: job.date,
-        end_date: job.endDate ?? job.date,
-        status: 'not_started',
-        percent_complete: 0,
-      }));
+      .map(id => {
+        const work = clipWorkRangeAroundTimeOff(id, jobStart, jobEnd, techTimeOff)
+          ?? { start: jobStart, end: jobEnd };
+        return {
+          job_id: job.id,
+          technician_id: id,
+          task: '',
+          start_date: work.start,
+          end_date: work.end,
+          status: 'not_started',
+          percent_complete: 0,
+        };
+      });
     if (!rows.length) return;
     const { error: err } = await supabase.from('job_tasks').insert(rows);
     if (err) { setError(err.message); return; }
@@ -291,7 +292,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     const newJob = jobs.find(j => j.id === newJobId);
     if (!newJob) return;
     if (task.technicianId) {
-      const leave = isTechOffOnRange(
+      const leave = fullyOffLeave(
         task.technicianId,
         newJob.date,
         newJob.endDate ?? newJob.date,
@@ -299,16 +300,21 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       );
       if (leave) {
         const name = technicians.find(t => t.id === task.technicianId)?.name ?? 'That crew member';
-        const span = leave.startDate === leave.endDate
-          ? leave.startDate
-          : `${leave.startDate}–${leave.endDate}`;
-        setError(`${name} is off ${span}. Cannot move them onto that job.`);
+        setError(`${name} is off ${formatTimeOffSpan(leave)}. Cannot move them onto that job.`);
         return;
       }
     }
+    const work = task.technicianId
+      ? (clipWorkRangeAroundTimeOff(
+          task.technicianId,
+          newJob.date,
+          newJob.endDate ?? newJob.date,
+          techTimeOff,
+        ) ?? { start: newJob.date, end: newJob.endDate ?? newJob.date })
+      : { start: newJob.date, end: newJob.endDate ?? newJob.date };
     const { error: err } = await supabase
       .from('job_tasks')
-      .update({ job_id: newJobId, start_date: newJob.date, end_date: newJob.endDate ?? newJob.date })
+      .update({ job_id: newJobId, start_date: work.start, end_date: work.end })
       .eq('id', task.id);
     if (err) { setError(err.message); return; }
     // Sync crew arrays on both jobs.
@@ -356,13 +362,21 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
 
     // Keep crew task bars aligned when the whole job is pushed forward/back.
     const jobTasks = tasks.filter(t => t.jobId === job.id);
+    const clipTaskDates = (techId: string | null, nextStart: string, nextEnd: string) => {
+      if (!techId) return { start: nextStart, end: nextEnd };
+      return clipWorkRangeAroundTimeOff(techId, nextStart, nextEnd, techTimeOff)
+        ?? { start: nextStart, end: nextEnd };
+    };
     if (jobTasks.length && shiftDays !== 0) {
       await Promise.all(jobTasks.map(async t => {
-        const nextStart = addDays(t.startDate, shiftDays);
-        const nextEnd = addDays(t.endDate, shiftDays);
+        const shifted = clipTaskDates(
+          t.technicianId,
+          addDays(t.startDate, shiftDays),
+          addDays(t.endDate, shiftDays),
+        );
         const { error: taskErr } = await supabase
           .from('job_tasks')
-          .update({ start_date: nextStart, end_date: nextEnd })
+          .update({ start_date: shifted.start, end_date: shifted.end })
           .eq('id', t.id);
         if (taskErr) console.error('Failed to shift job_task dates:', taskErr);
       }));
@@ -372,10 +386,11 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
         let nextStart = t.startDate < start ? start : t.startDate;
         let nextEnd = t.endDate > safeEnd ? safeEnd : t.endDate;
         if (nextEnd < nextStart) nextEnd = nextStart;
-        if (nextStart === t.startDate && nextEnd === t.endDate) return;
+        const clipped = clipTaskDates(t.technicianId, nextStart, nextEnd);
+        if (clipped.start === t.startDate && clipped.end === t.endDate) return;
         const { error: taskErr } = await supabase
           .from('job_tasks')
-          .update({ start_date: nextStart, end_date: nextEnd })
+          .update({ start_date: clipped.start, end_date: clipped.end })
           .eq('id', t.id);
         if (taskErr) console.error('Failed to clamp job_task dates:', taskErr);
       }));
@@ -389,7 +404,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     }
     await fetchTasks();
     await onRefresh();
-  }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode]);
+  }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode, techTimeOff]);
 
   const saveJobPhase = useCallback(async (job: Job, phase: string) => {
     const tmEnabled = phase === 'T&M';
@@ -1087,16 +1102,18 @@ const AddCrewInline: React.FC<{
         <p className="text-[10px] text-slate-400 px-1 py-1">All crew already on this job.</p>
       ) : (
         available.map(t => {
-          const leave = isTechOffOnRange(t.id, jobStart, jobEnd, techTimeOff);
-          const span = leave
-            ? (leave.startDate === leave.endDate ? leave.startDate : `${leave.startDate}–${leave.endDate}`)
+          const leave = fullyOffLeave(t.id, jobStart, jobEnd, techTimeOff);
+          const work = clipWorkRangeAroundTimeOff(t.id, jobStart, jobEnd, techTimeOff);
+          const span = leave ? formatTimeOffSpan(leave) : '';
+          const partialNote = !leave && work && (work.start !== jobStart || work.end !== jobEnd)
+            ? `From ${work.start}`
             : '';
           return (
             <button
               key={t.id}
               type="button"
               disabled={!!leave}
-              title={leave ? `Off ${span}` : undefined}
+              title={leave ? `Off ${span}` : (partialNote || undefined)}
               onClick={() => { if (!leave) { void onAdd(job, [t.id]); setOpen(false); } }}
               className={`w-full flex items-center gap-2 px-2 py-1 text-left text-[11px] font-semibold rounded ${
                 leave
@@ -1107,6 +1124,8 @@ const AddCrewInline: React.FC<{
               <Plus className="w-3 h-3 text-indigo-500" /> {t.name}
               {leave ? (
                 <span className="ml-auto text-[9px] font-black uppercase text-rose-500">Off {span}</span>
+              ) : partialNote ? (
+                <span className="ml-auto text-[9px] font-bold text-amber-600 dark:text-amber-400">{partialNote}</span>
               ) : (
                 <span className="ml-auto text-[9px] text-slate-400">{t.role}</span>
               )}

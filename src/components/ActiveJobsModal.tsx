@@ -3,6 +3,7 @@ import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check } from 'lucide-react
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
+import { toLocalYMD } from '@/lib/data';
 
 interface Job {
   id: number;
@@ -44,7 +45,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
   const [newCustomer, setNewCustomer] = useState('');
   const [newAddress, setNewAddress]   = useState('');
   const [newPhase, setNewPhase]       = useState('Rough-In');
-  const [newDate, setNewDate]         = useState(new Date().toISOString().split('T')[0]);
+  const [newDate, setNewDate]         = useState(toLocalYMD());
   const modalRef    = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);

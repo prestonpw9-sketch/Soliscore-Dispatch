@@ -3,7 +3,7 @@ import { X, UserPlus, Trash2, Briefcase, Loader2, CalendarOff, Plus } from 'luci
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { TechTimeOff } from '@/lib/data';
-import { isTechOffOnDay } from '@/lib/data';
+import { isTechOffOnDay, toLocalYMD } from '@/lib/data';
 
 interface Technician {
   id: string;
@@ -38,7 +38,7 @@ interface Props {
 type TechRole = 'Plumber' | 'Apprentice';
 
 function todayYMD() {
-  return new Date().toISOString().split('T')[0];
+  return toLocalYMD();
 }
 
 const TeamModal: React.FC<Props> = ({
