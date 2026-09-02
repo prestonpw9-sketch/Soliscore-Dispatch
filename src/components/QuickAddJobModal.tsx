@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, MapPin, Sparkles, Loader2, User, CalendarDays, Check, Users, Wrench } from 'lucide-react';
 import type { Customer, Technician, Job, JobType, Priority, JobStatus, TechTimeOff } from '@/lib/data';
-import { SERVICE_TYPES, isTechOffOnRange } from '@/lib/data';
+import { SERVICE_TYPES, clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave } from '@/lib/data';
 
 
 // ── Guard functions ────────────────────────────────────────────────────────
@@ -195,9 +195,9 @@ const QuickAddJobModal: React.FC<Props> = ({
 
   const toggleTechnician = (id: string) => {
     const resolvedEnd = endDate && endDate >= date ? endDate : date;
-    const leave = isTechOffOnRange(id, date || resolvedEnd, resolvedEnd || date, techTimeOff);
+    const leave = fullyOffLeave(id, date || resolvedEnd, resolvedEnd || date, techTimeOff);
     if (leave && !technicianIds.includes(id)) {
-      // Hard block — cannot select someone who is off on these dates.
+      // Hard block — cannot select someone who is off for the entire job.
       return;
     }
     setTechnicianIds(prev =>
@@ -237,10 +237,10 @@ const QuickAddJobModal: React.FC<Props> = ({
     const resolvedEnd = endDate && endDate >= date ? endDate : date;
 
     for (const techId of technicianIds) {
-      const leave = isTechOffOnRange(techId, date, resolvedEnd, techTimeOff);
+      const leave = fullyOffLeave(techId, date, resolvedEnd, techTimeOff);
       if (leave) {
         setRecError(
-          `${technicians.find(t => t.id === techId)?.name ?? 'Crew member'} is off on those dates.`,
+          `${technicians.find(t => t.id === techId)?.name ?? 'Crew member'} is off ${formatTimeOffSpan(leave)}.`,
         );
         return;
       }
@@ -584,12 +584,15 @@ const QuickAddJobModal: React.FC<Props> = ({
                     const checked = technicianIds.includes(t.id);
                     const resolvedEnd = endDate && endDate >= date ? endDate : date;
                     const leave = date
-                      ? isTechOffOnRange(t.id, date, resolvedEnd || date, techTimeOff)
+                      ? fullyOffLeave(t.id, date, resolvedEnd || date, techTimeOff)
                       : undefined;
-                    const span = leave
-                      ? (leave.startDate === leave.endDate
-                        ? leave.startDate
-                        : `${leave.startDate}–${leave.endDate}`)
+                    const work = date
+                      ? clipWorkRangeAroundTimeOff(t.id, date, resolvedEnd || date, techTimeOff)
+                      : null;
+                    const span = leave ? formatTimeOffSpan(leave) : '';
+                    const partialNote = !leave && work && date
+                      && (work.start !== date || work.end !== (resolvedEnd || date))
+                      ? `From ${work.start}`
                       : '';
                     return (
                       <button
@@ -597,7 +600,7 @@ const QuickAddJobModal: React.FC<Props> = ({
                         type="button"
                         disabled={!!leave && !checked}
                         onClick={() => toggleTechnician(t.id)}
-                        title={leave ? `Off ${span}` : undefined}
+                        title={leave ? `Off ${span}` : (partialNote || undefined)}
                         className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold transition-colors ${
                           leave && !checked
                             ? 'text-slate-400 cursor-not-allowed opacity-60'
@@ -616,6 +619,8 @@ const QuickAddJobModal: React.FC<Props> = ({
                         <span className="truncate">{t.name}</span>
                         {leave ? (
                           <span className="ml-auto text-[10px] font-black uppercase text-rose-500">Off {span}</span>
+                        ) : partialNote ? (
+                          <span className="ml-auto text-[10px] font-bold text-amber-600 dark:text-amber-400">{partialNote}</span>
                         ) : (
                           <span className="ml-auto text-[10px] font-medium text-slate-400">{t.role}</span>
                         )}

@@ -6,7 +6,7 @@ import { fetchBlueprintsCount, fetchSitePhotosCount } from '@/lib/storageCounts'
 import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
 import { upsertTodayScheduleHistory } from '@/lib/scheduleHistory';
 import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
-import { isTechOffOnRange } from '@/lib/data';
+import { formatTimeOffSpan, fullyOffLeave, toLocalYMD } from '@/lib/data';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -101,8 +101,8 @@ export const useDispatchData = () => {
         status:            normalizeJobStatus(j.status),
         startTime:         j.startTime ?? '08:00',
         endTime:           j.endTime ?? '10:00',
-        date:              j.date ?? new Date().toISOString().split('T')[0],
-        endDate:           j.end_date ?? j.date ?? new Date().toISOString().split('T')[0],
+        date:              j.date ?? toLocalYMD(),
+        endDate:           j.end_date ?? j.date ?? toLocalYMD(),
         serviceType:       j.service_type ?? '',
         technicianId:      j.technician_id ?? null,
         technicianIds:     Array.isArray(j.technician_ids)
@@ -416,15 +416,12 @@ export const useDispatchData = () => {
     const endDate   = jobData.endDate ?? jobData.date;
 
     for (const techId of crew) {
-      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      const leave = fullyOffLeave(techId, startDate, endDate, techTimeOff);
       if (leave) {
         const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
-        const span = leave.startDate === leave.endDate
-          ? leave.startDate
-          : `${leave.startDate}–${leave.endDate}`;
         return {
           ok: false,
-          message: `${techName} is off ${span}. Remove them before scheduling.`,
+          message: `${techName} is off ${formatTimeOffSpan(leave)}. Remove them before scheduling.`,
         };
       }
     }
@@ -468,7 +465,7 @@ export const useDispatchData = () => {
     // Seed a job_tasks row for every assigned crew member (task blank, span = job range).
     const newJobId = inserted?.id;
     if (newJobId && crew.length) {
-      const taskError = await syncJobTasksForCrew(newJobId, crew, startDate, endDate);
+      const taskError = await syncJobTasksForCrew(newJobId, crew, startDate, endDate, techTimeOff);
       if (taskError) {
         // Job exists; surface the schedule-row issue but treat create as ok.
         console.error('Error seeding job_tasks:', taskError);
@@ -490,15 +487,12 @@ export const useDispatchData = () => {
     const endDate   = jobData.endDate ?? jobData.date;
 
     for (const techId of crew) {
-      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      const leave = fullyOffLeave(techId, startDate, endDate, techTimeOff);
       if (leave) {
         const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
-        const span = leave.startDate === leave.endDate
-          ? leave.startDate
-          : `${leave.startDate}–${leave.endDate}`;
         return {
           ok: false,
-          message: `${techName} is off ${span}. Remove them before saving.`,
+          message: `${techName} is off ${formatTimeOffSpan(leave)}. Remove them before saving.`,
         };
       }
     }
@@ -541,6 +535,7 @@ export const useDispatchData = () => {
       primary ? (crew.length ? crew : [primary]) : [],
       startDate,
       endDate,
+      techTimeOff,
     );
     if (taskError) {
       console.error('Error syncing job_tasks:', taskError);
@@ -627,19 +622,16 @@ export const useDispatchData = () => {
     const cleaned = Array.from(new Set((technicianIds || []).filter(Boolean)));
     const primary = cleaned[0] ?? null;
     const current = jobsRef.current.find(j => j.id === jobId);
-    const startDate = current?.date ?? new Date().toISOString().split('T')[0];
+    const startDate = current?.date ?? toLocalYMD();
     const endDate = current?.endDate ?? current?.date ?? startDate;
 
     for (const techId of cleaned) {
-      const leave = isTechOffOnRange(techId, startDate, endDate, techTimeOff);
+      const leave = fullyOffLeave(techId, startDate, endDate, techTimeOff);
       if (leave) {
         const techName = technicians.find(t => t.id === techId)?.name ?? 'That crew member';
-        const span = leave.startDate === leave.endDate
-          ? leave.startDate
-          : `${leave.startDate}–${leave.endDate}`;
         return {
           ok: false,
-          message: `${techName} is off ${span}. Cannot assign them on those dates.`,
+          message: `${techName} is off ${formatTimeOffSpan(leave)}. Cannot assign them on those dates.`,
         };
       }
     }
@@ -656,7 +648,7 @@ export const useDispatchData = () => {
       await refresh();
       return { ok: false, message: sbError.message || 'Could not assign crew.' };
     }
-    const taskError = await syncJobTasksForCrew(jobId, cleaned, startDate, endDate);
+    const taskError = await syncJobTasksForCrew(jobId, cleaned, startDate, endDate, techTimeOff);
     if (taskError) {
       console.error('Failed to sync job_tasks after crew assign:', taskError);
       await refresh();

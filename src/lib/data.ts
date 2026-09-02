@@ -126,6 +126,28 @@ export function datesOverlap(
   return aStart <= bEnd && bStart <= aEnd;
 }
 
+/** Calendar-day arithmetic on YYYY-MM-DD strings (UTC, so no TZ shift). */
+export function addCalendarDays(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Local calendar date as YYYY-MM-DD (not UTC — Tucson evening must stay "today"). */
+export function toLocalYMD(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function formatTimeOffSpan(leave: Pick<TechTimeOff, 'startDate' | 'endDate'>): string {
+  return leave.startDate === leave.endDate
+    ? leave.startDate
+    : `${leave.startDate}–${leave.endDate}`;
+}
+
 /** First leave row that overlaps [start, end] for this tech, if any. */
 export function isTechOffOnRange(
   techId: string,
@@ -149,6 +171,54 @@ export function isTechOffOnDay(
   return !!isTechOffOnRange(techId, day, day, rows);
 }
 
+/**
+ * Shrink a job/task window so it starts after leading leave and ends before
+ * trailing leave. Mid-range days off are left in place (the tech still works
+ * the days around them). Returns null when leave covers every remaining day.
+ */
+export function clipWorkRangeAroundTimeOff(
+  techId: string,
+  start: string,
+  end: string,
+  rows: TechTimeOff[],
+): { start: string; end: string } | null {
+  let s = start;
+  let e = end < start ? start : end;
+  const leaves = rows
+    .filter(r => r.technicianId === techId)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+  for (let i = 0; i < 64; i++) {
+    const hit = leaves.find(r => datesOverlap(s, e, r.startDate, r.endDate));
+    if (!hit) return { start: s, end: e };
+    if (hit.startDate <= s && hit.endDate >= e) return null;
+    if (hit.startDate <= s) {
+      s = addCalendarDays(hit.endDate, 1);
+      if (s > e) return null;
+      continue;
+    }
+    if (hit.endDate >= e) {
+      e = addCalendarDays(hit.startDate, -1);
+      if (e < s) return null;
+      continue;
+    }
+    // Leave sits in the middle of the window — keep the surrounding work days.
+    return { start: s, end: e };
+  }
+  return s <= e ? { start: s, end: e } : null;
+}
+
+/** Leave that covers the entire range (no remaining work days). */
+export function fullyOffLeave(
+  techId: string,
+  start: string,
+  end: string,
+  rows: TechTimeOff[],
+): TechTimeOff | undefined {
+  if (clipWorkRangeAroundTimeOff(techId, start, end, rows)) return undefined;
+  return isTechOffOnRange(techId, start, end, rows);
+}
+
 export interface Customer {
   id: string;
   name: string;
@@ -162,14 +232,14 @@ export interface Customer {
   notes: string;
 }
 
-// Date Helpers
+// Date Helpers — local calendar dates so evening (Tucson UTC-7) is not "tomorrow".
 const today = new Date();
-export const todayStr = today.toISOString().split('T')[0];
+export const todayStr = toLocalYMD(today);
 
 export const weekDates = Array.from({ length: 7 }).map((_, i) => {
-  const d = new Date(today);
-  d.setDate(today.getDate() - today.getDay() + i);
-  return d.toISOString().split('T')[0];
+  const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  d.setDate(d.getDate() - d.getDay() + i);
+  return toLocalYMD(d);
 });
 
 export const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

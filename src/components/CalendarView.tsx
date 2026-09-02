@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Filter, Users, Check } from 'lucide-react';
 import type { Job, Technician, JobType } from '@/lib/data';
-import { dayNames, hours } from '@/lib/data';
+import { dayNames, hours, toLocalYMD } from '@/lib/data';
 
 interface Props {
   jobs: Job[];
@@ -154,15 +154,21 @@ const CalendarView: React.FC<Props> = ({
     return true;
   });
 
-  const formatDate = (dateStr: string) => new Date(dateStr).getDate();
+  const formatDate = (dateStr: string) => {
+    const parts = dateStr.split('-').map(Number);
+    return parts[2] ?? 0;
+  };
 
   const isToday = (dateStr: string) =>
-    dateStr === new Date().toISOString().split('T')[0];
+    dateStr === toLocalYMD();
 
-  const monthYear = new Date(weekDates[0]).toLocaleDateString('en-US', {
-    month: 'long',
-    year: 'numeric',
-  });
+  const monthYear = (() => {
+    const [y, m] = (weekDates[0] ?? toLocalYMD()).split('-').map(Number);
+    return new Date(y, (m ?? 1) - 1, 1).toLocaleDateString('en-US', {
+      month: 'long',
+      year: 'numeric',
+    });
+  })();
 
   return (
     <div className="space-y-4 w-full">

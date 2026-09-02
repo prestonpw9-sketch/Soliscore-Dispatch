@@ -101,7 +101,7 @@ HISTORICAL SCHEDULE:
 
 SCHEDULING / PLACEMENT:
 - Prefer techs whose remembered skills match the job's service_type/phase.
-- Never assign a tech who is on time-off overlapping the job dates.
+- Never assign a tech whose time-off covers every day of the job. If they have a requested day off that only overlaps the start (or end), still assign them and start (or end) their task the next available work day.
 - Prefer lighter workloads / avoid stacking too many concurrent jobs on one person.
 - When the user asks you to place or move crew, use assign_crew_to_job (and set_job_task when useful).
 - If the request is ambiguous, ask one short clarifying question before writing.
@@ -147,6 +147,40 @@ function addDays(ymd: string, days: number): string {
 
 function datesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
   return aStart <= bEnd && bStart <= aEnd;
+}
+
+type TimeOffRow = { technician_id: string; start_date: string; end_date: string };
+
+/** Shrink a window past leading/trailing leave. Null when leave covers every day. */
+function clipWorkRangeAroundTimeOff(
+  techId: string,
+  start: string,
+  end: string,
+  timeOff: TimeOffRow[],
+): { start: string; end: string } | null {
+  let s = start;
+  let e = end < start ? start : end;
+  const leaves = timeOff
+    .filter(r => r.technician_id === techId)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date));
+
+  for (let i = 0; i < 64; i++) {
+    const hit = leaves.find(r => datesOverlap(s, e, r.start_date, r.end_date));
+    if (!hit) return { start: s, end: e };
+    if (hit.start_date <= s && hit.end_date >= e) return null;
+    if (hit.start_date <= s) {
+      s = addDays(hit.end_date, 1);
+      if (s > e) return null;
+      continue;
+    }
+    if (hit.end_date >= e) {
+      e = addDays(hit.start_date, -1);
+      if (e < s) return null;
+      continue;
+    }
+    return { start: s, end: e };
+  }
+  return s <= e ? { start: s, end: e } : null;
 }
 
 function makeId(): string {
@@ -1056,11 +1090,12 @@ async function syncJobTasks(
   startDate: string,
   endDate: string,
   taskLabel?: string,
+  timeOff: TimeOffRow[] = [],
 ): Promise<string | null> {
   const desired = Array.from(new Set(crewIds.filter(Boolean)));
   const { data: existing, error: fetchError } = await admin
     .from('job_tasks')
-    .select('id, technician_id')
+    .select('id, technician_id, start_date, end_date')
     .eq('job_id', jobId);
   if (fetchError) return fetchError.message;
 
@@ -1074,16 +1109,33 @@ async function syncJobTasks(
   );
 
   if (toAdd.length) {
-    const insertRows = toAdd.map(techId => ({
-      job_id: jobId,
-      technician_id: techId,
-      task: taskLabel ?? '',
-      start_date: startDate,
-      end_date: endDate,
-      status: 'not_started',
-      percent_complete: 0,
-    }));
+    const insertRows = toAdd.map(techId => {
+      const work = clipWorkRangeAroundTimeOff(techId, startDate, endDate, timeOff)
+        ?? { start: startDate, end: endDate };
+      return {
+        job_id: jobId,
+        technician_id: techId,
+        task: taskLabel ?? '',
+        start_date: work.start,
+        end_date: work.end,
+        status: 'not_started',
+        percent_complete: 0,
+      };
+    });
     const { error } = await admin.from('job_tasks').insert(insertRows);
+    if (error) return error.message;
+  }
+
+  for (const r of rows as Array<{ id: string; technician_id: string | null; start_date: string | null; end_date: string | null }>) {
+    if (!r.technician_id || !desired.includes(r.technician_id)) continue;
+    const currentStart = String(r.start_date ?? startDate);
+    const currentEnd = String(r.end_date ?? endDate);
+    const work = clipWorkRangeAroundTimeOff(r.technician_id, currentStart, currentEnd, timeOff);
+    if (!work || (work.start === currentStart && work.end === currentEnd)) continue;
+    const { error } = await admin
+      .from('job_tasks')
+      .update({ start_date: work.start, end_date: work.end })
+      .eq('id', r.id);
     if (error) return error.message;
   }
 
@@ -1184,13 +1236,15 @@ async function executeTool(
       if (!snap.technicians.some(t => t.id === tid)) {
         return { result: { error: `Unknown technician_id ${tid}` }, mutated: false };
       }
-      const leave = snap.timeOff.find(
-        r => r.technician_id === tid && datesOverlap(job.date, job.end_date, r.start_date, r.end_date),
-      );
-      if (leave) {
+      const work = clipWorkRangeAroundTimeOff(tid, job.date, job.end_date, snap.timeOff);
+      if (!work) {
+        const leave = snap.timeOff.find(
+          r => r.technician_id === tid && datesOverlap(job.date, job.end_date, r.start_date, r.end_date),
+        );
+        const span = leave ? `${leave.start_date}→${leave.end_date}` : 'those dates';
         return {
           result: {
-            error: `${techName(snap, tid)} is off ${leave.start_date}→${leave.end_date}; cannot assign.`,
+            error: `${techName(snap, tid)} is off ${span}; cannot assign (no remaining work days).`,
           },
           mutated: false,
         };
@@ -1211,6 +1265,7 @@ async function executeTool(
       job.date,
       job.end_date,
       args.task_label ? String(args.task_label) : undefined,
+      snap.timeOff,
     );
     if (taskErr) return { result: { error: taskErr }, mutated: true };
 
@@ -1246,6 +1301,7 @@ async function executeTool(
       .from('job_tasks')
       .update({ start_date: start, end_date: end })
       .eq('job_id', jobId);
+    await syncJobTasks(admin, jobId, job.technician_ids, start, end, undefined, snap.timeOff);
 
     job.date = start;
     job.end_date = end;
@@ -1307,11 +1363,10 @@ async function executeTool(
     const required = args.required_skill ? String(args.required_skill).toLowerCase() : '';
 
     const available = snap.technicians
-      .filter(t => !snap.timeOff.some(
-        r => r.technician_id === t.id && datesOverlap(start, end, r.start_date, r.end_date),
-      ))
+      .filter(t => !!clipWorkRangeAroundTimeOff(t.id, start, end, snap.timeOff))
       .filter(t => !required || t.skills.some(s => s.toLowerCase().includes(required)))
       .map(t => {
+        const work = clipWorkRangeAroundTimeOff(t.id, start, end, snap.timeOff);
         const load = snap.jobs.filter(
           j => j.status !== 'completed'
             && j.technician_ids.includes(t.id)
@@ -1322,6 +1377,8 @@ async function executeTool(
           name: t.name,
           role: t.role,
           skills: t.skills,
+          available_from: work?.start,
+          available_until: work?.end,
           overlapping_jobs: load.map(j => ({ id: j.id, title: j.title, dates: `${j.date}→${j.end_date}` })),
           load: load.length,
         };
