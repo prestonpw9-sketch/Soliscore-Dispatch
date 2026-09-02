@@ -44,6 +44,65 @@ function emptyTwiml() {
   });
 }
 
+/** Constant-time string compare (equal length assumed after length check). */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+/**
+ * Public URL Twilio used when signing. Prefer an explicit env override when
+ * the edge runtime's req.url does not match the Console webhook URL.
+ */
+function resolveWebhookUrl(req: Request): string {
+  const configured = Deno.env.get("TWILIO_WEBHOOK_URL")?.trim();
+  if (configured) return configured;
+
+  const url = new URL(req.url);
+  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
+  const host = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
+    req.headers.get("host") ||
+    url.host;
+  return `${proto}://${host}${url.pathname}${url.search}`;
+}
+
+/**
+ * Validate X-Twilio-Signature (HMAC-SHA1 of URL + sorted POST params, Auth Token key).
+ * https://www.twilio.com/docs/usage/security#validating-requests
+ */
+async function validateTwilioSignature(
+  authToken: string,
+  signature: string,
+  webhookUrl: string,
+  params: URLSearchParams,
+): Promise<boolean> {
+  const pairs: [string, string][] = [];
+  for (const [key, value] of params.entries()) {
+    pairs.push([key, value]);
+  }
+  pairs.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+
+  let data = webhookUrl;
+  for (const [key, value] of pairs) {
+    data += key + value;
+  }
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(authToken),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  const computed = btoa(String.fromCharCode(...new Uint8Array(mac)));
+  return timingSafeEqual(computed, signature);
+}
+
 /** Calendar YMD in America/Phoenix (Solidcore's local day). */
 function phoenixYMD(offsetDays = 0): string {
   const now = new Date();
@@ -209,8 +268,37 @@ type JobInsert = {
 
 serve(async (req) => {
   try {
+    if (req.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    const twilioAuthToken = Deno.env.get("TWILIO_AUTH_TOKEN") ?? "";
+    if (!twilioAuthToken) {
+      console.error("Missing TWILIO_AUTH_TOKEN — refusing webhook");
+      return new Response("Server misconfiguration", { status: 500 });
+    }
+
+    const signature = req.headers.get("X-Twilio-Signature") ?? "";
+    if (!signature) {
+      console.error("Missing X-Twilio-Signature");
+      return new Response("Forbidden", { status: 403 });
+    }
+
     const bodyText = await req.text();
     const params = new URLSearchParams(bodyText);
+    const webhookUrl = resolveWebhookUrl(req);
+
+    const valid = await validateTwilioSignature(
+      twilioAuthToken,
+      signature,
+      webhookUrl,
+      params,
+    );
+    if (!valid) {
+      console.error("Invalid Twilio signature for webhook URL:", webhookUrl);
+      return new Response("Forbidden", { status: 403 });
+    }
+
     const incomingMessage = params.get("Body") || "";
     const phoneNumber = params.get("From") || "Unknown";
 
@@ -308,7 +396,9 @@ serve(async (req) => {
 
     if (aiData.error) {
       console.error("OPENAI REJECTED THE REQUEST:", aiData.error.message);
-      return twiml(`System Offline: ${aiData.error.message}`);
+      return twiml(
+        `${COMPANY}: Dispatch is temporarily unavailable. Please call ${HELP_CONTACT} or try again shortly.`,
+      );
     }
 
     const aiMessage = aiData.choices[0].message;
