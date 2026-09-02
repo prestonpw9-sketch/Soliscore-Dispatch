@@ -1478,6 +1478,13 @@ async function executeTool(
       pageAllWithPhone: pageAll,
       channel: args.channel === 'voice' ? 'voice' : 'sms',
     });
+    console.log('contact_crew', {
+      reason,
+      ok: notified.ok,
+      sent: notified.sent.length,
+      skipped: notified.skipped.map(s => ({ name: s.name, reason: s.reason })),
+      error: notified.error,
+    });
     return { result: { ...notified, reason }, mutated: notified.ok };
   }
 
