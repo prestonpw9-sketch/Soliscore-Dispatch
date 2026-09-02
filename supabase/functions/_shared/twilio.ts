@@ -5,6 +5,19 @@
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { escapeXml, normalizeToE164, phonesMatch } from './phone.ts';
+import {
+  formatTwilioError,
+  readTwilioCreds,
+  twilioFetch,
+} from './twilioAuth.ts';
+
+export {
+  cleanTwilioSecret,
+  probeTwilioAuth,
+  readTwilioCreds,
+  type TwilioCreds,
+  type TwilioProbeResult,
+} from './twilioAuth.ts';
 
 export interface CrewContact {
   id: string;
@@ -28,37 +41,43 @@ export interface NotifySkip {
   reason: string;
 }
 
+function resolveFromNumber(raw: string): { ok: true; from: string } | { ok: false; error: string } {
+  const from = normalizeToE164(raw);
+  if (!from) {
+    return {
+      ok: false,
+      error: 'TWILIO_PHONE_NUMBER must be E.164 (e.g. +15205551234). Update the Edge Function secret.',
+    };
+  }
+  return { ok: true, from };
+}
+
 export async function sendTwilioSms(
   to: string,
   body: string,
 ): Promise<{ ok: true; sid: string; status: string } | { ok: false; error: string }> {
-  const sid = Deno.env.get('TWILIO_ACCOUNT_SID');
-  const token = Deno.env.get('TWILIO_AUTH_TOKEN');
-  const from = Deno.env.get('TWILIO_PHONE_NUMBER');
-  if (!sid || !token || !from) {
-    return { ok: false, error: 'Twilio secrets are not configured (TWILIO_ACCOUNT_SID / AUTH_TOKEN / PHONE_NUMBER).' };
-  }
+  const loaded = readTwilioCreds();
+  if (!loaded.ok) return { ok: false, error: loaded.error };
 
   const e164 = normalizeToE164(to);
   if (!e164) return { ok: false, error: `Invalid phone number: ${to}` };
 
-  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
+  const fromNum = resolveFromNumber(loaded.creds.from);
+  if (!fromNum.ok) return fromNum;
   const formData = new URLSearchParams();
   formData.append('To', e164);
-  formData.append('From', from);
+  formData.append('From', fromNum.from);
   formData.append('Body', body);
 
-  const twilioRes = await fetch(twilioUrl, {
+  const { res, data } = await twilioFetch('/Messages.json', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `Basic ${btoa(`${sid}:${token}`)}`,
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formData,
   });
-  const data = await twilioRes.json() as { sid?: string; status?: string; message?: string };
-  if (!twilioRes.ok) {
-    return { ok: false, error: data.message ?? 'Twilio SMS request failed.' };
+  if (!res.ok) {
+    const error = formatTwilioError(res.status, data);
+    console.error('Twilio SMS failed', { httpStatus: res.status, code: data.code, message: data.message });
+    return { ok: false, error };
   }
   return { ok: true, sid: String(data.sid ?? ''), status: String(data.status ?? '') };
 }
@@ -67,37 +86,32 @@ export async function sendTwilioVoiceSay(
   to: string,
   sayText: string,
 ): Promise<{ ok: true; sid: string; status: string } | { ok: false; error: string }> {
-  const sid = Deno.env.get('TWILIO_ACCOUNT_SID');
-  const token = Deno.env.get('TWILIO_AUTH_TOKEN');
-  const from = Deno.env.get('TWILIO_PHONE_NUMBER');
-  if (!sid || !token || !from) {
-    return { ok: false, error: 'Twilio secrets are not configured (TWILIO_ACCOUNT_SID / AUTH_TOKEN / PHONE_NUMBER).' };
-  }
+  const loaded = readTwilioCreds();
+  if (!loaded.ok) return { ok: false, error: loaded.error };
 
   const e164 = normalizeToE164(to);
   if (!e164) return { ok: false, error: `Invalid phone number: ${to}` };
 
+  const fromNum = resolveFromNumber(loaded.creds.from);
+  if (!fromNum.ok) return fromNum;
   const spoken = sayText.replace(/\s+/g, ' ').trim().slice(0, 900);
   const twiml =
     `<Response><Say voice="Polly.Matthew">${escapeXml(spoken)}</Say></Response>`;
 
-  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json`;
   const formData = new URLSearchParams();
   formData.append('To', e164);
-  formData.append('From', from);
+  formData.append('From', fromNum.from);
   formData.append('Twiml', twiml);
 
-  const twilioRes = await fetch(twilioUrl, {
+  const { res, data } = await twilioFetch('/Calls.json', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `Basic ${btoa(`${sid}:${token}`)}`,
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formData,
   });
-  const data = await twilioRes.json() as { sid?: string; status?: string; message?: string };
-  if (!twilioRes.ok) {
-    return { ok: false, error: data.message ?? 'Twilio voice request failed.' };
+  if (!res.ok) {
+    const error = formatTwilioError(res.status, data);
+    console.error('Twilio voice failed', { httpStatus: res.status, code: data.code, message: data.message });
+    return { ok: false, error };
   }
   return { ok: true, sid: String(data.sid ?? ''), status: String(data.status ?? '') };
 }
@@ -235,7 +249,19 @@ export async function notifyCrew(
     });
   }
 
-  return { ok: sent.length > 0, channel, sent, skipped };
+  const authFail = skipped.find(s =>
+    s.reason.includes('Twilio authentication failed') ||
+    s.reason.includes('TWILIO_AUTH_TOKEN') ||
+    s.reason.includes('TWILIO_API_SECRET') ||
+    s.reason.includes('Twilio secrets are not configured')
+  );
+  return {
+    ok: sent.length > 0,
+    channel,
+    sent,
+    skipped,
+    error: sent.length > 0 ? undefined : (authFail?.reason ?? skipped[0]?.reason),
+  };
 }
 
 export function formatEmergencyPageMessage(opts: {

@@ -120,6 +120,7 @@ CREW DIRECTORY / CONTACT:
 - Do not invent phone numbers. If a tech has no phone, tell them to add it in the Plumber Directory.
 - Office users are read-only — they can see the directory but cannot send.
 - Prefer SMS. Use channel=voice only when they say "call".
+- If contact_crew returns a Twilio error, quote that error to the dispatcher. Do not call it a Gemini or login authentication problem.
 
 Be concise and practical. When you change the schedule, save a memory, or page crew, say what you did.`;
 
@@ -1477,6 +1478,13 @@ async function executeTool(
       pageOnCall: Boolean(args.page_on_call),
       pageAllWithPhone: pageAll,
       channel: args.channel === 'voice' ? 'voice' : 'sms',
+    });
+    console.log('contact_crew', {
+      reason,
+      ok: notified.ok,
+      sent: notified.sent.length,
+      skipped: notified.skipped.map(s => ({ name: s.name, reason: s.reason })),
+      error: notified.error,
     });
     return { result: { ...notified, reason }, mutated: notified.ok };
   }
