@@ -1,10 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { Job, Technician, TechTimeOff } from '@/lib/data';
-
-/** Arizona calendar day as YYYY-MM-DD. */
-export function arizonaToday(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' });
-}
+import { dispatchToday } from '@/lib/data';
 
 export interface ScheduleHistoryCrew {
   id: string;
@@ -129,7 +125,7 @@ export async function upsertTodayScheduleHistory(opts: {
   techTimeOff: TechTimeOff[];
   createdBy?: string | null;
 }): Promise<boolean> {
-  const snapshotDate = arizonaToday();
+  const snapshotDate = dispatchToday();
   let taskRows: JobTaskRow[] = [];
   try {
     const { data, error } = await supabase

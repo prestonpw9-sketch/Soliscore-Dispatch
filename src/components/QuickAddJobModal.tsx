@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, MapPin, Sparkles, Loader2, User, CalendarDays, Check, Users, Wrench } from 'lucide-react';
 import type { Customer, Technician, Job, JobType, Priority, JobStatus, TechTimeOff } from '@/lib/data';
-import { SERVICE_TYPES, clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave } from '@/lib/data';
+import { SERVICE_TYPES, clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, dispatchToday } from '@/lib/data';
 
 
 // ── Guard functions ────────────────────────────────────────────────────────
@@ -104,8 +104,8 @@ const QuickAddJobModal: React.FC<Props> = ({
     setType('maintenance');
     setServiceType(SERVICE_TYPES[0]);
     setTechnicianIds([]);
-    setDate(weekDates[0] ?? '');
-    setEndDate(weekDates[0] ?? '');
+    setDate(weekDates.includes(dispatchToday()) ? dispatchToday() : (weekDates[0] ?? dispatchToday()));
+    setEndDate(weekDates.includes(dispatchToday()) ? dispatchToday() : (weekDates[0] ?? dispatchToday()));
     setTmEnabled(false);
     setTmApprovedBy('');
     setTmWorkDescription('');
@@ -136,8 +136,8 @@ const QuickAddJobModal: React.FC<Props> = ({
             ? [defaults.technicianId]
             : [],
       );
-      setDate(defaults.date ?? weekDates[0] ?? '');
-      setEndDate(defaults.endDate ?? defaults.date ?? weekDates[0] ?? '');
+      setDate(defaults.date ?? dispatchToday());
+      setEndDate(defaults.endDate ?? defaults.date ?? dispatchToday());
       const tmOn = Boolean(defaults.tmEnabled) || defaults.phase === 'T&M';
       setTmEnabled(tmOn);
       setTmApprovedBy(defaults.tmApprovedBy ?? '');

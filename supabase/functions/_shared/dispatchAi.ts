@@ -138,6 +138,23 @@ export function arizonaToday(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' });
 }
 
+/** Dispatch board day: after 5:00pm Phoenix this is tomorrow. */
+export function dispatchToday(at: Date = new Date()): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Phoenix',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(at).map(p => [p.type, p.value]),
+  );
+  const ymd = `${parts.year}-${parts.month}-${parts.day}`;
+  const hour = Number(parts.hour);
+  return hour >= 17 ? addDays(ymd, 1) : ymd;
+}
+
 function addDays(ymd: string, days: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -757,7 +774,7 @@ interface DispatchSnapshot {
 }
 
 async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnapshot> {
-  const today = arizonaToday();
+  const today = dispatchToday();
   const windowStart = addDays(today, -7);
   const windowEnd = addDays(today, 28);
 
