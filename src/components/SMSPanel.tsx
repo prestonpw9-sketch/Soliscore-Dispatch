@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/AuthContext';
 import { X, Send, Bot, Smartphone, MessageSquare, Trash2, Phone } from 'lucide-react';
+import { formatPhoneDisplay, phonesMatch } from '@/lib/phone';
 
 /** ITDG dispatch line — shown in Comm Matrix so the team always has it handy. */
 export const DISPATCH_PHONE = '(520) 650-6100';
@@ -15,6 +16,12 @@ interface DispatchMessage {
   created_at?: string;
 }
 
+interface DirectoryTech {
+  id: string;
+  name: string;
+  phone: string | null;
+}
+
 interface SMSPanelProps {
   onClose: () => void;
 }
@@ -25,6 +32,7 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   const [activePhone, setActivePhone] = useState<string | null>(null);
   const [manualText, setManualText] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [directory, setDirectory] = useState<DirectoryTech[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Close on Escape — safety net so the panel is never a dead end.
@@ -36,6 +44,14 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
 
   useEffect(() => {
     void fetchMessages();
+    void (async () => {
+      const { data } = await supabase.from('technicians').select('id, name, phone');
+      setDirectory((data ?? []).map(t => ({
+        id: String(t.id),
+        name: String(t.name ?? ''),
+        phone: t.phone ? String(t.phone) : null,
+      })));
+    })();
 
     const subscription = supabase
       .channel('dispatch_messages_changes')
@@ -89,6 +105,12 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
   const uniquePhones = Array.from(
     new Set(messages.map(m => m.phone_number))
   );
+
+  const labelForPhone = (phone: string) => {
+    const tech = directory.find(t => t.phone && phonesMatch(t.phone, phone));
+    if (tech) return tech.name;
+    return formatPhoneDisplay(phone) || phone;
+  };
 
   const activeMessages = messages.filter(m => m.phone_number === activePhone);
 
@@ -228,9 +250,12 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="font-bold text-slate-900 dark:text-white">
-                      {phone}
+                    <div className="font-bold text-slate-900 dark:text-white truncate">
+                      {labelForPhone(phone)}
                     </div>
+                    {directory.some(t => t.phone && phonesMatch(t.phone, phone)) && (
+                      <div className="text-[10px] text-slate-400 truncate">{formatPhoneDisplay(phone)}</div>
+                    )}
                     <div
                       className={`text-xs truncate mt-0.5 ${
                         isActive
@@ -257,7 +282,7 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
             <div className="px-6 py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-sm z-10 shrink-0 gap-3">
               <div className="min-w-0">
                 <div className="font-black text-slate-900 dark:text-white text-xl tracking-tight truncate">
-                  {activePhone}
+                  {activePhone ? labelForPhone(activePhone) : ''}
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   Replying from {DISPATCH_PHONE}

@@ -157,9 +157,9 @@ const StatsCards: React.FC<Props> = ({
           onClick={() => setPhotosModalOpen(true)}
         />
         <StatCard
-          label="Active Plumbers"
+          label="Plumber Directory"
           value={activePlumbers}
-          status="Deployed"
+          status="On-call"
           ledClass="bg-emerald-300 text-emerald-300"
           icon={Users}
           gradient="bg-gradient-to-br from-teal-900 via-cyan-600 to-cyan-400"

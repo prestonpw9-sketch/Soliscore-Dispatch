@@ -142,6 +142,8 @@ export const useDispatchData = () => {
           role: String(t.role ?? ''),
           color: t.color ? String(t.color) : undefined,
           skills,
+          phone: t.phone ? String(t.phone) : null,
+          emergencyContact: Boolean(t.emergency_contact),
         };
       }));
     } catch (err) {
@@ -668,9 +670,12 @@ export const useDispatchData = () => {
     }
   }, [refresh]);
 
-  const hireTechnician = useCallback(async (name: string, role: string) => {
+  const hireTechnician = useCallback(async (name: string, role: string, phone?: string) => {
+    const row: Record<string, unknown> = { name, role };
+    const trimmedPhone = phone?.trim();
+    if (trimmedPhone) row.phone = trimmedPhone;
     const { error: sbError } = await supabase
-      .from('technicians').insert([{ name, role }]);
+      .from('technicians').insert([row]);
     if (sbError) {
       console.error('Error hiring technician:', sbError);
       return;

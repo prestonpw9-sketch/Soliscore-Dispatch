@@ -26,3 +26,13 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/gemini-chat/deno.json"
 entrypoint = "./functions/gemini-chat/index.ts"
+
+[functions.super-processor]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/super-processor/index.ts"
+
+[functions.twilio-voice]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/twilio-voice/index.ts"

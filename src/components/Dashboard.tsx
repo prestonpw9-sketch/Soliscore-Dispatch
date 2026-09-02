@@ -1,8 +1,9 @@
 import React from 'react';
-import { ArrowRight, Calculator, CalendarDays, Star, CalendarOff } from 'lucide-react';
+import { ArrowRight, Calculator, CalendarDays, Star, CalendarOff, Phone } from 'lucide-react';
 import type { Job, Technician, TechDailyPriority, TechTimeOff } from '@/lib/data';
 import { isTechOffOnDay } from '@/lib/data';
 import { avatarGradientClass } from '@/lib/avatarStyle';
+import { formatPhoneDisplay, telHref } from '@/lib/phone';
 import StatsCards from './StatsCards';
 import JobCard from './JobCard';
 import { BlueprintCard } from './BlueprintCard';
@@ -29,7 +30,7 @@ interface Props {
   onViewCalendar: () => void;
   onOpenEstimator: () => void;
   onPhaseChange: (jobId: string, newPhase: string) => void;
-  onHire: (name: string, role: string) => void;
+  onHire: (name: string, role: string, phone?: string) => void;
   onFire: (id: string) => void;
   onJobClick?: (job: Job) => void;
   onSetStopPriority?: (
@@ -251,7 +252,18 @@ const Dashboard: React.FC<Props> = ({
                       </div>
                       <div>
                         <h4 className="font-bold text-slate-900 dark:text-white text-sm">{tech.name}</h4>
-                        <p className="text-xs text-slate-500">{techJobs.length} stop{techJobs.length === 1 ? '' : 's'} today</p>
+                        <p className="text-xs text-slate-500">
+                          {techJobs.length} stop{techJobs.length === 1 ? '' : 's'} today
+                          {tech.phone ? ` · ${formatPhoneDisplay(tech.phone)}` : ''}
+                        </p>
+                        {tech.phone && telHref(tech.phone) && (
+                          <a
+                            href={telHref(tech.phone)!}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-teal-600 dark:text-teal-400 hover:underline mt-0.5"
+                          >
+                            <Phone className="w-3 h-3" /> Call
+                          </a>
+                        )}
                       </div>
                     </div>
 

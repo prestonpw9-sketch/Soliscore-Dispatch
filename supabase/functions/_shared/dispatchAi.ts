@@ -4,6 +4,7 @@
  */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { notifyCrew } from './twilio.ts';
 
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -110,9 +111,17 @@ SCHEDULING / PLACEMENT:
 CUSTOMER SMS:
 - Short professional SMS under 300 characters for today's scheduled work.
 - Header: **Customer Name (Site)** then the SMS. Sign: "— ITDG Plumbing"
-- Never put internal job IDs in customer-facing text.
+- Never put internal job IDs or crew cell numbers in customer-facing text.
 
-Be concise and practical. When you change the schedule or save a memory, say what you did.`;
+CREW DIRECTORY / CONTACT:
+- Each tech may have a cell number and an on-call (emergency_contact) flag from the Plumber Directory.
+- When the signed-in dispatcher explicitly asks you to text, page, or call a plumber, use contact_crew.
+- Never contact anyone unless they asked you to (or they confirmed a true emergency to page on-call).
+- Do not invent phone numbers. If a tech has no phone, tell them to add it in the Plumber Directory.
+- Office users are read-only — they can see the directory but cannot send.
+- Prefer SMS. Use channel=voice only when they say "call".
+
+Be concise and practical. When you change the schedule, save a memory, or page crew, say what you did.`;
 
 export function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -725,6 +734,8 @@ interface DispatchSnapshot {
     name: string;
     role: string;
     skills: string[];
+    phone: string | null;
+    emergency_contact: boolean;
   }>;
   jobs: Array<{
     id: string;
@@ -806,11 +817,14 @@ async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnap
     const colSkills = normalizeSkills(t.skills);
     const memSkills = abilityByTech.get(id) ?? [];
     const merged = Array.from(new Set([...colSkills, ...memSkills]));
+    const phoneRaw = t.phone == null ? '' : String(t.phone).trim();
     return {
       id,
       name: String(t.name ?? ''),
       role: String(t.role ?? ''),
       skills: merged,
+      phone: phoneRaw || null,
+      emergency_contact: Boolean(t.emergency_contact),
     };
   });
 
@@ -882,10 +896,12 @@ function formatSnapshot(snap: DispatchSnapshot): string {
   const lines: string[] = [];
   lines.push(`LIVE DISPATCH DATA (${snap.windowStart} → ${snap.windowEnd}, today=${snap.today})`);
 
-  lines.push('\nCREW ROSTER:');
+  lines.push('\nCREW ROSTER / DIRECTORY:');
   for (const t of snap.technicians) {
     const skills = t.skills.length ? t.skills.join(', ') : 'skills unknown';
-    lines.push(`- ${t.name} [${t.id}] role=${t.role}; abilities: ${skills}`);
+    const phone = t.phone ? `phone=${t.phone}` : 'phone=MISSING';
+    const onCall = t.emergency_contact ? 'on-call=YES' : 'on-call=no';
+    lines.push(`- ${t.name} [${t.id}] role=${t.role}; ${phone}; ${onCall}; abilities: ${skills}`);
   }
 
   const upcomingOff = snap.timeOff.filter(r => r.end_date >= snap.today);
@@ -1081,6 +1097,44 @@ const TOOL_DECLARATIONS = [
         required_skill: { type: 'string' },
       },
       required: ['start_date'],
+    },
+  },
+  {
+    name: 'contact_crew',
+    description:
+      'Text or call plumbers on the directory via Twilio. Use ONLY when the dispatcher explicitly asks to reach them, or to page on-call for a confirmed emergency. Never invent numbers.',
+    parameters: {
+      type: 'object',
+      properties: {
+        technician_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Specific technician UUIDs to contact.',
+        },
+        page_on_call: {
+          type: 'boolean',
+          description: 'Page techs flagged emergency_contact (falls back to everyone with a number).',
+        },
+        page_all_with_phone: {
+          type: 'boolean',
+          description: 'Page every tech who has a cell. Only when the user asked to notify everyone AND reason is emergency.',
+        },
+        message: {
+          type: 'string',
+          description: 'SMS or spoken message. Short, specific, under 400 characters.',
+        },
+        reason: {
+          type: 'string',
+          enum: ['emergency', 'dispatch'],
+          description: 'emergency = true after-hours / flooding page. dispatch = routine work text.',
+        },
+        channel: {
+          type: 'string',
+          enum: ['sms', 'voice'],
+          description: 'Default sms. Use voice only when they say call.',
+        },
+      },
+      required: ['message', 'reason'],
     },
   },
   {
@@ -1403,6 +1457,28 @@ async function executeTool(
       .sort((a, b) => a.load - b.load);
 
     return { result: { start_date: start, end_date: end, available }, mutated: false };
+  }
+
+  if (name === 'contact_crew') {
+    const reason = String(args.reason ?? 'dispatch');
+    const pageAll = Boolean(args.page_all_with_phone);
+    if (pageAll && reason !== 'emergency') {
+      return {
+        result: { error: 'page_all_with_phone is only allowed for reason=emergency.' },
+        mutated: false,
+      };
+    }
+    const ids = Array.isArray(args.technician_ids)
+      ? args.technician_ids.map(String).filter(Boolean)
+      : [];
+    const notified = await notifyCrew(admin, {
+      message: String(args.message ?? ''),
+      technicianIds: ids.length ? ids : undefined,
+      pageOnCall: Boolean(args.page_on_call),
+      pageAllWithPhone: pageAll,
+      channel: args.channel === 'voice' ? 'voice' : 'sms',
+    });
+    return { result: { ...notified, reason }, mutated: notified.ok };
   }
 
   if (name === 'lookup_schedule_history') {

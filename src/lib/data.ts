@@ -87,6 +87,10 @@ export interface Technician {
   role: string;
   color?: string;
   skills?: string[];
+  /** Crew cell in E.164 when on file. */
+  phone?: string | null;
+  /** When true, Twilio emergencies and AI on-call paging include this tech. */
+  emergencyContact?: boolean;
 }
 
 /** Route pins: ranked stop (1st / 2nd) per technician per calendar day. */
