@@ -36,3 +36,9 @@ entrypoint = "./functions/super-processor/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/twilio-voice/index.ts"
+
+[functions.twilio-status]
+enabled = true
+verify_jwt = true
+import_map = "./functions/twilio-status/deno.json"
+entrypoint = "./functions/twilio-status/index.ts"
