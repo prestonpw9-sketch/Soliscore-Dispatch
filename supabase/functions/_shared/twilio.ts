@@ -41,6 +41,17 @@ export interface NotifySkip {
   reason: string;
 }
 
+function resolveFromNumber(raw: string): { ok: true; from: string } | { ok: false; error: string } {
+  const from = normalizeToE164(raw);
+  if (!from) {
+    return {
+      ok: false,
+      error: 'TWILIO_PHONE_NUMBER must be E.164 (e.g. +15205551234). Update the Edge Function secret.',
+    };
+  }
+  return { ok: true, from };
+}
+
 export async function sendTwilioSms(
   to: string,
   body: string,
@@ -51,10 +62,11 @@ export async function sendTwilioSms(
   const e164 = normalizeToE164(to);
   if (!e164) return { ok: false, error: `Invalid phone number: ${to}` };
 
-  const from = normalizeToE164(loaded.creds.from) ?? loaded.creds.from;
+  const fromNum = resolveFromNumber(loaded.creds.from);
+  if (!fromNum.ok) return fromNum;
   const formData = new URLSearchParams();
   formData.append('To', e164);
-  formData.append('From', from);
+  formData.append('From', fromNum.from);
   formData.append('Body', body);
 
   const { res, data } = await twilioFetch('/Messages.json', {
@@ -80,14 +92,15 @@ export async function sendTwilioVoiceSay(
   const e164 = normalizeToE164(to);
   if (!e164) return { ok: false, error: `Invalid phone number: ${to}` };
 
-  const from = normalizeToE164(loaded.creds.from) ?? loaded.creds.from;
+  const fromNum = resolveFromNumber(loaded.creds.from);
+  if (!fromNum.ok) return fromNum;
   const spoken = sayText.replace(/\s+/g, ' ').trim().slice(0, 900);
   const twiml =
     `<Response><Say voice="Polly.Matthew">${escapeXml(spoken)}</Say></Response>`;
 
   const formData = new URLSearchParams();
   formData.append('To', e164);
-  formData.append('From', from);
+  formData.append('From', fromNum.from);
   formData.append('Twiml', twiml);
 
   const { res, data } = await twilioFetch('/Calls.json', {

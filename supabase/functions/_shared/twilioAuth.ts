@@ -27,6 +27,7 @@ export interface TwilioProbeResult {
   tokenLength?: number;
   fromConfigured?: boolean;
   fromLooksE164?: boolean;
+  fromPrefix?: string;
 }
 
 export type TwilioErrorBody = {
@@ -99,6 +100,14 @@ export function readTwilioCreds():
   }
 
   if (apiKey.startsWith('SK') && apiSecret) {
+    if (apiSecret.length < 20) {
+      return {
+        ok: false,
+        error:
+          `TWILIO_API_SECRET looks truncated (${apiSecret.length} chars; Twilio API Key secrets are 32 characters). ` +
+          'Update the Edge Function secret in the Supabase dashboard.',
+      };
+    }
     return {
       ok: true,
       creds: {
@@ -108,6 +117,17 @@ export function readTwilioCreds():
         from,
         authMode: 'api_key',
       },
+    };
+  }
+
+  // Auth Tokens are 32 chars. A short value is a placeholder/truncated secret and
+  // Twilio will only return 20003 Authenticate.
+  if (authToken.length > 0 && authToken.length < 20) {
+    return {
+      ok: false,
+      error:
+        `TWILIO_AUTH_TOKEN looks truncated (${authToken.length} chars; Twilio Auth Tokens are 32 characters). ` +
+        'Paste the live Auth Token from Twilio Console → Account → API keys & tokens into the Supabase Edge Function secret TWILIO_AUTH_TOKEN (project-wide).',
     };
   }
 
@@ -155,13 +175,21 @@ export async function twilioFetch(
 /** GET /Accounts/{Sid}.json — validates credentials without sending SMS or placing a call. */
 export async function probeTwilioAuth(): Promise<TwilioProbeResult> {
   const loaded = readTwilioCreds();
+  const fromRaw = cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER'));
+  const sidRaw = cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID'));
+  const tokenRaw = cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN'));
+  const meta = {
+    sidKind: sidRaw.slice(0, 2) || 'missing',
+    tokenLength: tokenRaw.length,
+    fromConfigured: Boolean(fromRaw),
+    fromLooksE164: Boolean(normalizeToE164(fromRaw)),
+    fromPrefix: fromRaw.slice(0, 2) || 'missing',
+  };
   if (!loaded.ok) {
     return {
       ok: false,
       error: loaded.error,
-      fromConfigured: Boolean(cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER'))),
-      sidKind: cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID')).slice(0, 2) || 'missing',
-      tokenLength: cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN')).length,
+      ...meta,
     };
   }
   const { creds } = loaded;
@@ -176,10 +204,7 @@ export async function probeTwilioAuth(): Promise<TwilioProbeResult> {
         twilioCode: data.code,
         httpStatus: res.status,
         authMode: creds.authMode,
-        sidKind: creds.accountSid.slice(0, 2),
-        tokenLength: creds.password.length,
-        fromConfigured: true,
-        fromLooksE164: Boolean(normalizeToE164(creds.from)),
+        ...meta,
       };
     }
     return {
@@ -187,13 +212,10 @@ export async function probeTwilioAuth(): Promise<TwilioProbeResult> {
       httpStatus: res.status,
       accountStatus: data.status,
       authMode: creds.authMode,
-      sidKind: creds.accountSid.slice(0, 2),
-      tokenLength: creds.password.length,
-      fromConfigured: true,
-      fromLooksE164: Boolean(normalizeToE164(creds.from)),
+      ...meta,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Twilio probe failed.';
-    return { ok: false, error: message, authMode: creds.authMode };
+    return { ok: false, error: message, authMode: creds.authMode, ...meta };
   }
 }
