@@ -9,7 +9,8 @@ import {
   resolveUserRole,
   saveTechnicianSkillsDirect,
 } from '../_shared/dispatchAi.ts';
-import { probeTwilioAuth, sendTwilioSms } from '../_shared/twilio.ts';
+import { sendTwilioSms } from '../_shared/twilio.ts';
+import { probeTwilioAuth } from '../_shared/twilioAuth.ts';
 
 function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
