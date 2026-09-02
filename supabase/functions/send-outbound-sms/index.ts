@@ -9,7 +9,7 @@ import {
   resolveUserRole,
   saveTechnicianSkillsDirect,
 } from '../_shared/dispatchAi.ts';
-import { sendTwilioSms } from '../_shared/twilio.ts';
+import { probeTwilioAuth, sendTwilioSms } from '../_shared/twilio.ts';
 
 function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
@@ -68,6 +68,19 @@ serve(async (req: Request) => {
       if (!admin) return jsonResponse({ error: 'Server misconfiguration.' }, 500);
       const memories = await loadAllMemories(admin);
       return jsonResponse({ memories });
+    }
+
+    if (body.action === 'twilio-status') {
+      const userClient = createUserClient(req);
+      if (!userClient) return jsonResponse({ error: 'Missing authorization header.' }, 401);
+      const { data: { user }, error: authError } = await userClient.auth.getUser();
+      if (authError || !user) return jsonResponse({ error: 'Unauthorized.' }, 401);
+      const role = await resolveUserRole(userClient, user.id);
+      if (role !== 'owner' && role !== 'crew') {
+        return jsonResponse({ error: 'Read-only role cannot inspect Twilio credentials.' }, 403);
+      }
+      const probed = await probeTwilioAuth();
+      return jsonResponse(probed, probed.ok ? 200 : 502);
     }
 
     if (body.action === 'save-tech-skills') {

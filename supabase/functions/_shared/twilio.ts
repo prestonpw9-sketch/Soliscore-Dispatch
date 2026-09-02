@@ -28,37 +28,224 @@ export interface NotifySkip {
   reason: string;
 }
 
+export interface TwilioCreds {
+  /** Account SID used in the REST path (always AC…). */
+  accountSid: string;
+  /** Basic-auth username: Account SID or API Key SID (SK…). */
+  username: string;
+  /** Auth Token or API Key secret. */
+  password: string;
+  from: string;
+  authMode: 'auth_token' | 'api_key';
+}
+
+export interface TwilioProbeResult {
+  ok: boolean;
+  error?: string;
+  twilioCode?: number;
+  httpStatus?: number;
+  accountStatus?: string;
+  authMode?: TwilioCreds['authMode'];
+  sidKind?: string;
+  tokenLength?: number;
+  fromConfigured?: boolean;
+  fromLooksE164?: boolean;
+}
+
+type TwilioErrorBody = {
+  sid?: string;
+  status?: string;
+  code?: number;
+  message?: string;
+  more_info?: string;
+};
+
+/** Strip BOM / wrapping quotes / newlines that break Twilio Basic auth (20003). */
+export function cleanTwilioSecret(raw: string | undefined | null): string {
+  if (!raw) return '';
+  return raw
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
+    .replace(/[\r\n\t]/g, '')
+    .trim();
+}
+
+function formatTwilioError(httpStatus: number, data: TwilioErrorBody): string {
+  const code = data.code;
+  const message = (data.message ?? '').trim() || 'Twilio request failed.';
+  if (httpStatus === 401 || code === 20003) {
+    return (
+      `Twilio authentication failed (20003): ${message}. ` +
+      'Check Edge Function secrets TWILIO_ACCOUNT_SID (must start with AC) and TWILIO_AUTH_TOKEN ' +
+      '(Twilio Console → Account → API keys & tokens). Trailing spaces/newlines in the secret will also cause this.'
+    );
+  }
+  return code ? `Twilio error ${code}: ${message}` : message;
+}
+
+export function readTwilioCreds():
+  | { ok: true; creds: TwilioCreds }
+  | { ok: false; error: string } {
+  const accountSid = cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID'));
+  const authToken = cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN'));
+  const apiKey = cleanTwilioSecret(Deno.env.get('TWILIO_API_KEY'));
+  const apiSecret = cleanTwilioSecret(Deno.env.get('TWILIO_API_SECRET'));
+  const from = cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER'));
+
+  const missing: string[] = [];
+  if (!accountSid) missing.push('TWILIO_ACCOUNT_SID');
+  if (!from) missing.push('TWILIO_PHONE_NUMBER');
+  const hasAuthToken = Boolean(authToken);
+  const hasApiKey = Boolean(apiKey && apiSecret);
+  if (!hasAuthToken && !hasApiKey) missing.push('TWILIO_AUTH_TOKEN');
+  if (missing.length) {
+    return {
+      ok: false,
+      error: `Twilio secrets are not configured (${missing.join(', ')}).`,
+    };
+  }
+
+  // API Key stored in ACCOUNT_SID (SK…) cannot be used as the /Accounts/{Sid} path.
+  if (accountSid.startsWith('SK')) {
+    return {
+      ok: false,
+      error:
+        'TWILIO_ACCOUNT_SID looks like an API Key (SK…). Put the Account SID (AC…) in TWILIO_ACCOUNT_SID and the API Key in TWILIO_API_KEY.',
+    };
+  }
+  if (!accountSid.startsWith('AC')) {
+    return {
+      ok: false,
+      error: `TWILIO_ACCOUNT_SID must start with AC (got ${accountSid.slice(0, 2) || 'empty'}…).`,
+    };
+  }
+
+  if (apiKey.startsWith('SK') && apiSecret) {
+    return {
+      ok: true,
+      creds: {
+        accountSid,
+        username: apiKey,
+        password: apiSecret,
+        from,
+        authMode: 'api_key',
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    creds: {
+      accountSid,
+      username: accountSid,
+      password: authToken,
+      from,
+      authMode: 'auth_token',
+    },
+  };
+}
+
+function twilioBasicAuth(username: string, password: string): string {
+  return `Basic ${btoa(`${username}:${password}`)}`;
+}
+
+async function twilioFetch(
+  path: string,
+  init: RequestInit,
+): Promise<{ res: Response; data: TwilioErrorBody }> {
+  const creds = readTwilioCreds();
+  if (!creds.ok) {
+    throw new Error(creds.error);
+  }
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${creds.creds.accountSid}${path}`;
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      ...(init.headers ?? {}),
+      Authorization: twilioBasicAuth(creds.creds.username, creds.creds.password),
+    },
+  });
+  let data: TwilioErrorBody = {};
+  try {
+    data = await res.json() as TwilioErrorBody;
+  } catch {
+    data = { message: `Twilio returned HTTP ${res.status}` };
+  }
+  return { res, data };
+}
+
+/** GET /Accounts/{Sid}.json — validates credentials without sending SMS or placing a call. */
+export async function probeTwilioAuth(): Promise<TwilioProbeResult> {
+  const loaded = readTwilioCreds();
+  if (!loaded.ok) {
+    return {
+      ok: false,
+      error: loaded.error,
+      fromConfigured: Boolean(cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER'))),
+      sidKind: cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID')).slice(0, 2) || 'missing',
+      tokenLength: cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN')).length,
+    };
+  }
+  const { creds } = loaded;
+  try {
+    const { res, data } = await twilioFetch('.json', { method: 'GET' });
+    if (!res.ok) {
+      const error = formatTwilioError(res.status, data);
+      console.error('Twilio auth probe failed', { httpStatus: res.status, code: data.code, message: data.message });
+      return {
+        ok: false,
+        error,
+        twilioCode: data.code,
+        httpStatus: res.status,
+        authMode: creds.authMode,
+        sidKind: creds.accountSid.slice(0, 2),
+        tokenLength: creds.password.length,
+        fromConfigured: true,
+        fromLooksE164: Boolean(normalizeToE164(creds.from)),
+      };
+    }
+    return {
+      ok: true,
+      httpStatus: res.status,
+      accountStatus: data.status,
+      authMode: creds.authMode,
+      sidKind: creds.accountSid.slice(0, 2),
+      tokenLength: creds.password.length,
+      fromConfigured: true,
+      fromLooksE164: Boolean(normalizeToE164(creds.from)),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Twilio probe failed.';
+    return { ok: false, error: message, authMode: creds.authMode };
+  }
+}
+
 export async function sendTwilioSms(
   to: string,
   body: string,
 ): Promise<{ ok: true; sid: string; status: string } | { ok: false; error: string }> {
-  const sid = Deno.env.get('TWILIO_ACCOUNT_SID');
-  const token = Deno.env.get('TWILIO_AUTH_TOKEN');
-  const from = Deno.env.get('TWILIO_PHONE_NUMBER');
-  if (!sid || !token || !from) {
-    return { ok: false, error: 'Twilio secrets are not configured (TWILIO_ACCOUNT_SID / AUTH_TOKEN / PHONE_NUMBER).' };
-  }
+  const loaded = readTwilioCreds();
+  if (!loaded.ok) return { ok: false, error: loaded.error };
 
   const e164 = normalizeToE164(to);
   if (!e164) return { ok: false, error: `Invalid phone number: ${to}` };
 
-  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
+  const from = normalizeToE164(loaded.creds.from) ?? loaded.creds.from;
   const formData = new URLSearchParams();
   formData.append('To', e164);
   formData.append('From', from);
   formData.append('Body', body);
 
-  const twilioRes = await fetch(twilioUrl, {
+  const { res, data } = await twilioFetch('/Messages.json', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `Basic ${btoa(`${sid}:${token}`)}`,
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formData,
   });
-  const data = await twilioRes.json() as { sid?: string; status?: string; message?: string };
-  if (!twilioRes.ok) {
-    return { ok: false, error: data.message ?? 'Twilio SMS request failed.' };
+  if (!res.ok) {
+    const error = formatTwilioError(res.status, data);
+    console.error('Twilio SMS failed', { httpStatus: res.status, code: data.code, message: data.message });
+    return { ok: false, error };
   }
   return { ok: true, sid: String(data.sid ?? ''), status: String(data.status ?? '') };
 }
@@ -67,37 +254,31 @@ export async function sendTwilioVoiceSay(
   to: string,
   sayText: string,
 ): Promise<{ ok: true; sid: string; status: string } | { ok: false; error: string }> {
-  const sid = Deno.env.get('TWILIO_ACCOUNT_SID');
-  const token = Deno.env.get('TWILIO_AUTH_TOKEN');
-  const from = Deno.env.get('TWILIO_PHONE_NUMBER');
-  if (!sid || !token || !from) {
-    return { ok: false, error: 'Twilio secrets are not configured (TWILIO_ACCOUNT_SID / AUTH_TOKEN / PHONE_NUMBER).' };
-  }
+  const loaded = readTwilioCreds();
+  if (!loaded.ok) return { ok: false, error: loaded.error };
 
   const e164 = normalizeToE164(to);
   if (!e164) return { ok: false, error: `Invalid phone number: ${to}` };
 
+  const from = normalizeToE164(loaded.creds.from) ?? loaded.creds.from;
   const spoken = sayText.replace(/\s+/g, ' ').trim().slice(0, 900);
   const twiml =
     `<Response><Say voice="Polly.Matthew">${escapeXml(spoken)}</Say></Response>`;
 
-  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json`;
   const formData = new URLSearchParams();
   formData.append('To', e164);
   formData.append('From', from);
   formData.append('Twiml', twiml);
 
-  const twilioRes = await fetch(twilioUrl, {
+  const { res, data } = await twilioFetch('/Calls.json', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `Basic ${btoa(`${sid}:${token}`)}`,
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formData,
   });
-  const data = await twilioRes.json() as { sid?: string; status?: string; message?: string };
-  if (!twilioRes.ok) {
-    return { ok: false, error: data.message ?? 'Twilio voice request failed.' };
+  if (!res.ok) {
+    const error = formatTwilioError(res.status, data);
+    console.error('Twilio voice failed', { httpStatus: res.status, code: data.code, message: data.message });
+    return { ok: false, error };
   }
   return { ok: true, sid: String(data.sid ?? ''), status: String(data.status ?? '') };
 }
@@ -235,7 +416,14 @@ export async function notifyCrew(
     });
   }
 
-  return { ok: sent.length > 0, channel, sent, skipped };
+  const authFail = skipped.find(s => s.reason.includes('Twilio authentication failed'));
+  return {
+    ok: sent.length > 0,
+    channel,
+    sent,
+    skipped,
+    error: sent.length > 0 ? undefined : authFail?.reason,
+  };
 }
 
 export function formatEmergencyPageMessage(opts: {

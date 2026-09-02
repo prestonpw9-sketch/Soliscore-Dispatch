@@ -24,6 +24,9 @@ export class GeminiService implements IAIProvider {
     }
 
     const { data, error } = await supabase.functions.invoke<GeminiChatResponse>('send-outbound-sms', {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
       body: {
         action: 'ai-chat',
         model:  'gemini-2.5-flash',
