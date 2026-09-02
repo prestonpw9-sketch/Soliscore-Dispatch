@@ -15,9 +15,9 @@ import EstimatorPanel from './EstimatorPanel';
 import QuickBidEstimator from './QuickBidEstimator';
 import BidEstimator from './Bidestimator';
 import SlideOutPanel from './SlideOutPanel';
-import { weekDates, todayStr } from '@/lib/data';
 import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
+import { useDispatchWeek } from '@/hooks/useDispatchToday';
 import { useAuth } from '@/lib/AuthContext';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import DispatchBanner from './DispatchBanner';
@@ -49,8 +49,8 @@ const AppLayout: React.FC = () => {
     settings:  ['owner', 'office', 'crew'],
   };
   const canSeeView = (v: string) => !!role && (viewAccess[v]?.includes(role) ?? false);
+  const { today: todayStr, weekDates } = useDispatchWeek();
   const [sidebarOpen, setSidebarOpen]       = useState(false);
-  const [taskDate, setTaskDate]             = useState(todayStr);
   const [modalOpen, setModalOpen]           = useState(false);
   const [modalDefaults, setModalDefaults]   = useState<Partial<Job> | undefined>();
   const [editingJobId, setEditingJobId]     = useState<string | null>(null);
@@ -190,7 +190,7 @@ const AppLayout: React.FC = () => {
           }
         : null,
     });
-  }, [jobs, technicians, view, selectedJob, updateContext]);
+  }, [jobs, technicians, view, selectedJob, updateContext, todayStr]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 

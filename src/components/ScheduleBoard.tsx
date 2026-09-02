@@ -7,7 +7,8 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/data';
-import { clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, isTechOffOnDay } from '@/lib/data';
+import { clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, isTechOffOnDay, addCalendarDays, dispatchToday, arizonaToday } from '@/lib/data';
+import { useDispatchToday } from '@/hooks/useDispatchToday';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
@@ -32,7 +33,7 @@ function daysBetween(a: string, b: string): number {
   // Inclusive whole-day count from a..b (b - a in days).
   return Math.round((parseYMD(b).getTime() - parseYMD(a).getTime()) / 86_400_000);
 }
-const todayYMD = () => toYMD(new Date());
+const todayYMD = () => dispatchToday();
 
 // Friendly label for the My Day header, e.g. "Today · Fri, Jul 3".
 function relativeDayLabel(ymd: string): string {
@@ -127,17 +128,21 @@ const COL_W = 36; // px per day column
 
 const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh }) => {
   const { canEdit } = useAuth();
+  const dispatchDay = useDispatchToday();
 
   const [mode, setMode] = useState<'month' | 'timeline' | 'myday'>(
     () => (typeof window !== 'undefined' && window.innerWidth < 768 ? 'myday' : 'month'),
   );
   const [anchor, setAnchor] = useState<Date>(() => {
-    const d = new Date();
+    const d = parseYMD(dispatchToday());
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
 
   // My Day (mobile-first) state: which crew member and which day we're viewing.
   const [selectedDay, setSelectedDay] = useState<string>(() => todayYMD());
+  useEffect(() => {
+    setSelectedDay(prev => (prev === addCalendarDays(dispatchDay, -1) ? dispatchDay : prev));
+  }, [dispatchDay]);
   const [viewAsTech, setViewAsTech] = useState<string>(() => {
     try { return localStorage.getItem('schedule_myday_tech') ?? ''; } catch { return ''; }
   });
@@ -477,9 +482,9 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       : parseYMD(addDays(toYMD(a), 14)));
   };
   const goToday = () => {
-    if (mode === 'myday') { setSelectedDay(todayYMD()); return; }
+    if (mode === 'myday') { setSelectedDay(dispatchDay); return; }
     setAnchor(() => {
-      const d = new Date();
+      const d = parseYMD(dispatchDay);
       return mode === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1) : d;
     });
   };
@@ -1300,7 +1305,7 @@ const LogTodayModal: React.FC<{
   onClose: () => void;
   onSubmit: (task: JobTask, updateDate: string, note: string, percent: number) => Promise<void> | void;
 }> = ({ task, techName, onClose, onSubmit }) => {
-  const [updateDate, setUpdateDate] = useState(todayYMD());
+  const [updateDate, setUpdateDate] = useState(arizonaToday());
   const [note, setNote] = useState('');
   const [percent, setPercent] = useState(task.percentComplete);
   return (

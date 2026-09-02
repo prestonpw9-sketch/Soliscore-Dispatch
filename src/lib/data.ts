@@ -134,12 +134,54 @@ export function addCalendarDays(ymd: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-/** Local calendar date as YYYY-MM-DD (not UTC — Tucson evening must stay "today"). */
+export const DISPATCH_TZ = 'America/Phoenix';
+/** After this Phoenix hour, the live board is tomorrow's schedule. */
+export const DISPATCH_ROLLOVER_HOUR = 17;
+
+export function phoenixDateTime(at: Date = new Date()): { ymd: string; hour: number; minute: number } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: DISPATCH_TZ,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(at).map(p => [p.type, p.value]),
+  );
+  return {
+    ymd: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+  };
+}
+
+/** Arizona calendar date as YYYY-MM-DD (no 5pm shift). */
+export function arizonaToday(at: Date = new Date()): string {
+  return phoenixDateTime(at).ymd;
+}
+
+/** Local/Phoenix calendar date as YYYY-MM-DD. */
 export function toLocalYMD(d: Date = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return arizonaToday(d);
+}
+
+/**
+ * Dispatch "today": the day the dashboard / My Day / crew board shows.
+ * Rolls to the next calendar day at 5:00pm America/Phoenix (end of the Four 10s).
+ */
+export function dispatchToday(at: Date = new Date()): string {
+  const { ymd, hour } = phoenixDateTime(at);
+  return hour >= DISPATCH_ROLLOVER_HOUR ? addCalendarDays(ymd, 1) : ymd;
+}
+
+/** Sunday–Saturday week containing the given YYYY-MM-DD. */
+export function weekDatesFrom(anchorYmd: string): string[] {
+  const [y, m, d] = anchorYmd.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1, 12)).getUTCDay();
+  const sunday = addCalendarDays(anchorYmd, -dow);
+  return Array.from({ length: 7 }, (_, i) => addCalendarDays(sunday, i));
 }
 
 export function formatTimeOffSpan(leave: Pick<TechTimeOff, 'startDate' | 'endDate'>): string {
@@ -232,15 +274,9 @@ export interface Customer {
   notes: string;
 }
 
-// Date Helpers — local calendar dates so evening (Tucson UTC-7) is not "tomorrow".
-const today = new Date();
-export const todayStr = toLocalYMD(today);
-
-export const weekDates = Array.from({ length: 7 }).map((_, i) => {
-  const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  d.setDate(d.getDate() - d.getDay() + i);
-  return toLocalYMD(d);
-});
+// Date helpers — dispatch day rolls at 5pm Phoenix; snapshot at module load for mocks.
+export const todayStr = dispatchToday();
+export const weekDates = weekDatesFrom(todayStr);
 
 export const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export const hours = Array.from({ length: 12 }).map((_, i) => i + 7);
