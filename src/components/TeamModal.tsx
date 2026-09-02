@@ -157,6 +157,18 @@ const TeamModal: React.FC<Props> = ({
     return () => document.removeEventListener('keydown', handleKey);
   }, [isOpen]);
 
+  const visibleTechs = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return technicians;
+    return technicians.filter(t => {
+      const phone = formatPhoneDisplay(t.phone).toLowerCase();
+      return t.name.toLowerCase().includes(q)
+        || t.role.toLowerCase().includes(q)
+        || phone.includes(q)
+        || (t.phone ?? '').toLowerCase().includes(q);
+    });
+  }, [technicians, search]);
+
   if (!isOpen) return null;
 
   const handleHire = async (e: React.FormEvent) => {
@@ -316,18 +328,6 @@ const TeamModal: React.FC<Props> = ({
     setTechnicians(prev => prev.map(t => t.id === tech.id ? { ...t, emergencyContact: next } : t));
     window.dispatchEvent(new CustomEvent('solidcore:data-refresh'));
   };
-
-  const visibleTechs = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return technicians;
-    return technicians.filter(t => {
-      const phone = formatPhoneDisplay(t.phone).toLowerCase();
-      return t.name.toLowerCase().includes(q)
-        || t.role.toLowerCase().includes(q)
-        || phone.includes(q)
-        || (t.phone ?? '').toLowerCase().includes(q);
-    });
-  }, [technicians, search]);
 
   return (
     <div
