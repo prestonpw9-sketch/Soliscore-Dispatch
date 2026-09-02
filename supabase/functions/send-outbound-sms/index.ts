@@ -9,6 +9,7 @@ import {
   resolveUserRole,
   saveTechnicianSkillsDirect,
 } from '../_shared/dispatchAi.ts';
+import { sendTwilioSms } from '../_shared/twilio.ts';
 
 function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
@@ -29,36 +30,12 @@ async function handleOutboundSms(body: Record<string, unknown>): Promise<Respons
   if (!phone)   return jsonResponse({ error: 'Missing required field: phone.'   }, 400);
   if (!message) return jsonResponse({ error: 'Missing required field: message.' }, 400);
 
-  const TWILIO_SID   = Deno.env.get('TWILIO_ACCOUNT_SID');
-  const TWILIO_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN');
-  const TWILIO_PHONE = Deno.env.get('TWILIO_PHONE_NUMBER');
-
-  if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_PHONE) {
-    return jsonResponse({ error: 'Server misconfiguration: Twilio secrets not set.' }, 500);
+  const sent = await sendTwilioSms(phone, message);
+  if (!sent.ok) {
+    return jsonResponse({ error: sent.error }, sent.error.includes('not configured') ? 500 : 400);
   }
 
-  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
-  const formData = new URLSearchParams();
-  formData.append('To',   phone);
-  formData.append('From', TWILIO_PHONE);
-  formData.append('Body', message);
-
-  const twilioRes = await fetch(twilioUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type':  'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}`,
-    },
-    body: formData,
-  });
-
-  const data = await twilioRes.json();
-
-  if (!twilioRes.ok) {
-    return jsonResponse({ error: data.message ?? 'Twilio request failed.', detail: data }, twilioRes.status);
-  }
-
-  return jsonResponse({ sid: data.sid, status: data.status }, 200);
+  return jsonResponse({ sid: sent.sid, status: sent.status }, 200);
 }
 
 serve(async (req: Request) => {

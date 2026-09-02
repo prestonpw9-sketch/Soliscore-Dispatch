@@ -152,6 +152,8 @@ const AppLayout: React.FC = () => {
       name:   t.name,
       role:   t.role,
       skills: t.skills ?? [],
+      phone:  t.phone ?? null,
+      emergencyContact: Boolean(t.emergencyContact),
     }));
 
     updateContext({

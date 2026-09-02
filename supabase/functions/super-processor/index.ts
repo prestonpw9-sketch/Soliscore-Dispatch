@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { formatEmergencyPageMessage, notifyCrew } from "../_shared/twilio.ts";
 
 // ---- SMS COMPLIANCE (Twilio / carrier required) ----------------------------
 const COMPANY = "Solidcore Plumbing, LLC";
@@ -91,7 +92,7 @@ Rule 3: Entity Filtering & Proximity
 Filter out conversational noise when extracting addresses and job details.
 
 Rule 4: Emergencies Override
-ONLY if a job is a true, un-negated Emergency (e.g., actively flooding, bursting pipes), begin your confirmation with: 'URGENT: Emergency flagged! A technician is being immediately notified.' Get the address and call log_job immediately with target_date = tomorrow (or today if they say they need someone now).
+ONLY if a job is a true, un-negated Emergency (e.g., actively flooding, bursting pipes), call log_job immediately with is_emergency=true once you have the address. The system will SMS on-call plumbers. Begin your confirmation with: 'URGENT: Emergency flagged! On-call plumbers are being notified.' Get the address and call log_job with target_date = today if they need someone now, otherwise tomorrow.
 
 Rule 5: Logging Jobs Onto The Schedule Board
 Do NOT invent a week-out booking window. Do NOT tell anyone you are booking a week out.
@@ -153,6 +154,11 @@ const tools = [
           notes: {
             type: "string",
             description: "Optional extra context (builder name, contact, special instructions).",
+          },
+          is_emergency: {
+            type: "boolean",
+            description:
+              "True only for a real emergency (flooding, burst pipe, active leak). Triggers an SMS page to on-call plumbers.",
           },
         },
         required: ["title", "job_type", "address"],
@@ -355,9 +361,34 @@ serve(async (req) => {
             console.error("log_job insert failed:", dbError);
             anyFailed = true;
           } else {
-            confirmations.push(
-              `I've put ${title} at ${address} on the schedule for ${date}. Preston will follow up if anything changes.`,
-            );
+            const isEmergency = args.is_emergency === true;
+            if (isEmergency) {
+              const page = await notifyCrew(supabase, {
+                pageOnCall: true,
+                channel: "sms",
+                message: formatEmergencyPageMessage({
+                  title,
+                  address,
+                  callerPhone: phoneNumber,
+                  notes: notes || jobType,
+                }),
+              });
+              const names = page.sent.map((s) => s.name).join(", ");
+              if (page.sent.length) {
+                confirmations.push(
+                  `URGENT: Emergency flagged! On-call notified (${names}). I've put ${title} at ${address} on the schedule for ${date}.`,
+                );
+              } else {
+                console.error("emergency page failed:", page.error, page.skipped);
+                confirmations.push(
+                  `URGENT: Emergency flagged! I logged ${title} at ${address} for ${date}, but could not reach on-call plumbers yet — Preston needs to call the crew. ${page.error ?? ""}`.trim(),
+                );
+              }
+            } else {
+              confirmations.push(
+                `I've put ${title} at ${address} on the schedule for ${date}. Preston will follow up if anything changes.`,
+              );
+            }
           }
         } else if (name === "schedule_job") {
           const jobType = String(args.job_type || "Critical phase").trim();

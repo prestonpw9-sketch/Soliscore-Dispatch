@@ -42,6 +42,8 @@ export interface CrewMemberSummary {
   name:   string;
   role:   string;
   skills: string[];
+  phone?: string | null;
+  emergencyContact?: boolean;
 }
 
 export interface ScheduleJobSummary {
