@@ -28,6 +28,7 @@ export interface TwilioProbeResult {
   fromConfigured?: boolean;
   fromLooksE164?: boolean;
   fromPrefix?: string;
+  fromDigitCount?: number;
 }
 
 export type TwilioErrorBody = {
@@ -184,6 +185,7 @@ export async function probeTwilioAuth(): Promise<TwilioProbeResult> {
     fromConfigured: Boolean(fromRaw),
     fromLooksE164: Boolean(normalizeToE164(fromRaw)),
     fromPrefix: fromRaw.slice(0, 2) || 'missing',
+    fromDigitCount: fromRaw.replace(/\D/g, '').length,
   };
   if (!loaded.ok) {
     return {

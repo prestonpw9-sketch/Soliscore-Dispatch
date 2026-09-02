@@ -249,13 +249,18 @@ export async function notifyCrew(
     });
   }
 
-  const authFail = skipped.find(s => s.reason.includes('Twilio authentication failed'));
+  const authFail = skipped.find(s =>
+    s.reason.includes('Twilio authentication failed') ||
+    s.reason.includes('TWILIO_AUTH_TOKEN') ||
+    s.reason.includes('TWILIO_API_SECRET') ||
+    s.reason.includes('Twilio secrets are not configured')
+  );
   return {
     ok: sent.length > 0,
     channel,
     sent,
     skipped,
-    error: sent.length > 0 ? undefined : authFail?.reason,
+    error: sent.length > 0 ? undefined : (authFail?.reason ?? skipped[0]?.reason),
   };
 }
 
