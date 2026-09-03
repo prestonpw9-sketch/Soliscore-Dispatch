@@ -115,7 +115,8 @@ CUSTOMER SMS:
 
 CREW DIRECTORY / CONTACT:
 - Each tech may have a cell number and an on-call (emergency_contact) flag from the Plumber Directory.
-- When the signed-in dispatcher explicitly asks you to text, page, or call a plumber, use contact_crew.
+- When the signed-in dispatcher explicitly asks you to text, page, or call a plumber, you MUST call contact_crew in that turn. Never reply with empty content.
+- Pass that plumber's UUID from CREW ROSTER in technician_ids (the name also works). Do not page on-call or everyone unless they asked for that.
 - Never contact anyone unless they asked you to (or they confirmed a true emergency to page on-call).
 - Do not invent phone numbers. If a tech has no phone, tell them to add it in the Plumber Directory.
 - Office users are read-only — they can see the directory but cannot send.
@@ -1110,7 +1111,7 @@ const TOOL_DECLARATIONS = [
         technician_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Specific technician UUIDs to contact.',
+          description: 'Technician UUIDs or names from CREW ROSTER. Use this when texting a specific person.',
         },
         page_on_call: {
           type: 'boolean',
@@ -1219,6 +1220,70 @@ async function syncJobTasks(
     if (error) return error.message;
   }
   return null;
+}
+
+function resolveTechnicianRefs(
+  snap: DispatchSnapshot,
+  rawIds: string[],
+): { ids: string[] } | { error: string } {
+  const ids: string[] = [];
+  for (const raw of rawIds) {
+    const token = String(raw ?? '').trim();
+    if (!token) continue;
+    const byId = snap.technicians.find(t => t.id === token);
+    if (byId) {
+      ids.push(byId.id);
+      continue;
+    }
+    const needle = token.toLowerCase();
+    const exact = snap.technicians.filter(t => t.name.toLowerCase() === needle);
+    const first = snap.technicians.filter(t => t.name.toLowerCase().split(/\s+/)[0] === needle);
+    const partial = snap.technicians.filter(t => {
+      const name = t.name.toLowerCase();
+      return name.includes(needle) || (needle.length >= 4 && needle.includes(name));
+    });
+    const pool = exact.length ? exact : (first.length === 1 ? first : (partial.length ? partial : first));
+    if (pool.length === 1) {
+      ids.push(pool[0].id);
+      continue;
+    }
+    if (pool.length > 1) {
+      return { error: `Ambiguous technician "${token}". Matches: ${pool.map(t => t.name).join(', ')}.` };
+    }
+    return { error: `Unknown technician "${token}". Use a name from the crew directory.` };
+  }
+  return { ids: Array.from(new Set(ids)) };
+}
+
+function summarizeToolTrace(
+  trace: Array<{ name: string; args: unknown; result: unknown }>,
+): string {
+  const lines: string[] = [];
+  for (const t of trace) {
+    if (t.name !== 'contact_crew') {
+      lines.push(`Ran ${t.name}.`);
+      continue;
+    }
+    const r = (t.result ?? {}) as {
+      ok?: boolean;
+      sent?: Array<{ name?: string }>;
+      skipped?: Array<{ name?: string; reason?: string }>;
+      error?: string;
+    };
+    if (r.ok && r.sent?.length) {
+      const names = r.sent.map(s => s.name).filter(Boolean).join(', ');
+      lines.push(`Texted ${names}.`);
+    } else if (r.error) {
+      lines.push(`Could not send the text: ${r.error}`);
+    } else if (r.skipped?.length) {
+      lines.push(
+        `Did not send: ${r.skipped.map(s => `${s.name ?? 'unknown'} (${s.reason ?? 'skipped'})`).join('; ')}.`,
+      );
+    } else {
+      lines.push('Tried to text crew but nothing was sent.');
+    }
+  }
+  return lines.join(' ').trim();
 }
 
 async function executeTool(
@@ -1469,9 +1534,17 @@ async function executeTool(
         mutated: false,
       };
     }
-    const ids = Array.isArray(args.technician_ids)
+    const rawIds = Array.isArray(args.technician_ids)
       ? args.technician_ids.map(String).filter(Boolean)
       : [];
+    let ids: string[] = [];
+    if (rawIds.length) {
+      const resolved = resolveTechnicianRefs(snap, rawIds);
+      if ('error' in resolved) {
+        return { result: { error: resolved.error }, mutated: false };
+      }
+      ids = resolved.ids;
+    }
     const notified = await notifyCrew(admin, {
       message: String(args.message ?? ''),
       technicianIds: ids.length ? ids : undefined,
@@ -1515,28 +1588,51 @@ async function callGemini(params: {
   const geminiUrl =
     `https://generativelanguage.googleapis.com/v1beta/models/${params.model}:generateContent?key=${params.apiKey}`;
 
-  const geminiRes = await fetch(geminiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: params.systemInstruction }] },
-      contents: params.contents,
-      tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
-      toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
-      generationConfig: {
-        temperature: params.temperature ?? 0.4,
-        maxOutputTokens: params.maxTokens ?? 4096,
-      },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
-      ],
-    }),
-  });
+  const generationConfig: Record<string, unknown> = {
+    temperature: params.temperature ?? 0.4,
+    maxOutputTokens: params.maxTokens ?? 8192,
+  };
+  // Gemini 2.5 thinking can return finishReason=STOP with no parts, which
+  // surfaces as "No response from Gemini" on contact_crew turns.
+  if (params.model.includes('2.5')) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
 
-  const geminiData = await geminiRes.json();
+  const body: Record<string, unknown> = {
+    system_instruction: { parts: [{ text: params.systemInstruction }] },
+    contents: params.contents,
+    tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
+    toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+    generationConfig,
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+    ],
+  };
+
+  const post = async (payload: Record<string, unknown>) => {
+    const geminiRes = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const geminiData = await geminiRes.json();
+    return { geminiRes, geminiData };
+  };
+
+  let { geminiRes, geminiData } = await post(body);
+  const errMsg = String(
+    (geminiData as { error?: { message?: string } })?.error?.message
+    ?? (geminiData as { message?: string })?.message
+    ?? '',
+  );
+  if (!geminiRes.ok && generationConfig.thinkingConfig && /thinking/i.test(errMsg)) {
+    delete generationConfig.thinkingConfig;
+    ({ geminiRes, geminiData } = await post(body));
+  }
+
   if (!geminiRes.ok) {
     const message =
       (geminiData as { error?: { message?: string }; message?: string })?.error?.message
@@ -1562,9 +1658,17 @@ function extractFinishReason(data: Record<string, unknown>): string {
 
 function extractText(parts: Array<Record<string, unknown>>): string {
   return parts
+    .filter(p => !p.thought)
     .map(p => (typeof p.text === 'string' ? p.text : ''))
     .join('')
     .trim();
+}
+
+function hasUsableModelOutput(parts: Array<Record<string, unknown>>): boolean {
+  return parts.some(p =>
+    Boolean(p.functionCall)
+    || (!p.thought && typeof p.text === 'string' && p.text.trim()),
+  );
 }
 
 export async function handleDispatchAiChat(
@@ -1627,7 +1731,7 @@ export async function handleDispatchAiChat(
   const toolTrace: Array<{ name: string; args: unknown; result: unknown }> = [];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const gemini = await callGemini({
+    let gemini = await callGemini({
       apiKey,
       model,
       systemInstruction,
@@ -1640,11 +1744,41 @@ export async function handleDispatchAiChat(
       return jsonResponse({ error: gemini.error, detail: gemini.detail }, gemini.status);
     }
 
-    const parts = extractParts(gemini.data);
+    let parts = extractParts(gemini.data);
+    let finishReason = extractFinishReason(gemini.data);
+    if (!hasUsableModelOutput(parts) && round === 0) {
+      console.error('Gemini empty candidates, retrying', {
+        finishReason,
+        promptFeedback: (gemini.data as { promptFeedback?: unknown }).promptFeedback,
+      });
+      const retry = await callGemini({
+        apiKey,
+        model,
+        systemInstruction,
+        contents: [
+          ...contents,
+          {
+            role: 'user',
+            parts: [{
+              text: 'Call the matching tool now. If the dispatcher asked to text a named plumber, call contact_crew with that person from CREW ROSTER. Do not return an empty reply.',
+            }],
+          },
+        ],
+        temperature: 0.2,
+        maxTokens: options.maxTokens,
+      });
+      if (retry.ok) {
+        gemini = retry;
+        parts = extractParts(gemini.data);
+        finishReason = extractFinishReason(gemini.data);
+      } else {
+        return jsonResponse({ error: retry.error, detail: retry.detail }, retry.status);
+      }
+    }
+
     const functionCalls = parts.filter(p => p.functionCall);
     const text = extractText(parts);
-    const finishReason = extractFinishReason(gemini.data);
-    if (!parts.length && finishReason) {
+    if (!hasUsableModelOutput(parts) && finishReason) {
       console.error('Gemini empty candidates', { finishReason });
     }
 
@@ -1706,6 +1840,10 @@ export async function handleDispatchAiChat(
     if (closing.ok) {
       finalText = extractText(extractParts(closing.data));
     }
+  }
+
+  if (!finalText && toolTrace.length) {
+    finalText = summarizeToolTrace(toolTrace);
   }
 
   if (!finalText) {
