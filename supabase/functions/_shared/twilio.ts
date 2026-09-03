@@ -7,7 +7,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { escapeXml, normalizeToE164, phonesMatch } from './phone.ts';
 import {
   formatTwilioError,
-  readTwilioCreds,
+  resolveTwilioCreds,
   twilioFetch,
 } from './twilioAuth.ts';
 
@@ -15,6 +15,7 @@ export {
   cleanTwilioSecret,
   probeTwilioAuth,
   readTwilioCreds,
+  resolveTwilioCreds,
   type TwilioCreds,
   type TwilioProbeResult,
 } from './twilioAuth.ts';
@@ -56,7 +57,7 @@ export async function sendTwilioSms(
   to: string,
   body: string,
 ): Promise<{ ok: true; sid: string; status: string } | { ok: false; error: string }> {
-  const loaded = readTwilioCreds();
+  const loaded = await resolveTwilioCreds();
   if (!loaded.ok) return { ok: false, error: loaded.error };
 
   const e164 = normalizeToE164(to);
@@ -73,7 +74,7 @@ export async function sendTwilioSms(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formData,
-  });
+  }, loaded.creds);
   if (!res.ok) {
     const error = formatTwilioError(res.status, data);
     console.error('Twilio SMS failed', { httpStatus: res.status, code: data.code, message: data.message });
@@ -86,7 +87,7 @@ export async function sendTwilioVoiceSay(
   to: string,
   sayText: string,
 ): Promise<{ ok: true; sid: string; status: string } | { ok: false; error: string }> {
-  const loaded = readTwilioCreds();
+  const loaded = await resolveTwilioCreds();
   if (!loaded.ok) return { ok: false, error: loaded.error };
 
   const e164 = normalizeToE164(to);
@@ -107,7 +108,7 @@ export async function sendTwilioVoiceSay(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formData,
-  });
+  }, loaded.creds);
   if (!res.ok) {
     const error = formatTwilioError(res.status, data);
     console.error('Twilio voice failed', { httpStatus: res.status, code: data.code, message: data.message });

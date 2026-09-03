@@ -63,14 +63,18 @@ export function formatTwilioError(httpStatus: number, data: TwilioErrorBody): st
   return code ? `Twilio error ${code}: ${message}` : message;
 }
 
-export function readTwilioCreds():
-  | { ok: true; creds: TwilioCreds }
-  | { ok: false; error: string } {
-  const accountSid = cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID'));
-  const authToken = cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN'));
-  const apiKey = cleanTwilioSecret(Deno.env.get('TWILIO_API_KEY'));
-  const apiSecret = cleanTwilioSecret(Deno.env.get('TWILIO_API_SECRET'));
-  const from = cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER'));
+function credsFromParts(parts: {
+  accountSid: string;
+  authToken: string;
+  apiKey: string;
+  apiSecret: string;
+  from: string;
+}): { ok: true; creds: TwilioCreds } | { ok: false; error: string } {
+  const accountSid = cleanTwilioSecret(parts.accountSid);
+  const authToken = cleanTwilioSecret(parts.authToken);
+  const apiKey = cleanTwilioSecret(parts.apiKey);
+  const apiSecret = cleanTwilioSecret(parts.apiSecret);
+  const from = cleanTwilioSecret(parts.from);
 
   const missing: string[] = [];
   if (!accountSid) missing.push('TWILIO_ACCOUNT_SID');
@@ -144,6 +148,89 @@ export function readTwilioCreds():
   };
 }
 
+function envTwilioParts() {
+  return {
+    accountSid: cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID')),
+    authToken: cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN')),
+    apiKey: cleanTwilioSecret(Deno.env.get('TWILIO_API_KEY')),
+    apiSecret: cleanTwilioSecret(Deno.env.get('TWILIO_API_SECRET')),
+    from: cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER')),
+  };
+}
+
+/** Env-only. Prefer `resolveTwilioCreds` so Vault can fill truncated Edge Function secrets. */
+export function readTwilioCreds():
+  | { ok: true; creds: TwilioCreds }
+  | { ok: false; error: string } {
+  return credsFromParts(envTwilioParts());
+}
+
+async function readTwilioCredsFromVault(): Promise<Partial<{
+  accountSid: string;
+  authToken: string;
+  from: string;
+}>> {
+  const url = cleanTwilioSecret(Deno.env.get('SUPABASE_URL'));
+  const key = cleanTwilioSecret(Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+  if (!url || !key) return {};
+  try {
+    const res = await fetch(`${url}/rest/v1/rpc/get_twilio_edge_secrets`, {
+      method: 'POST',
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+    if (!res.ok) {
+      console.error('get_twilio_edge_secrets failed', res.status);
+      return {};
+    }
+    const data = await res.json() as Record<string, unknown>;
+    return {
+      accountSid: typeof data.TWILIO_ACCOUNT_SID === 'string' ? data.TWILIO_ACCOUNT_SID : undefined,
+      authToken: typeof data.TWILIO_AUTH_TOKEN === 'string' ? data.TWILIO_AUTH_TOKEN : undefined,
+      from: typeof data.TWILIO_PHONE_NUMBER === 'string' ? data.TWILIO_PHONE_NUMBER : undefined,
+    };
+  } catch (err) {
+    console.error('get_twilio_edge_secrets error', err instanceof Error ? err.message : err);
+    return {};
+  }
+}
+
+function envCredsAreUsable(
+  loaded: { ok: true; creds: TwilioCreds } | { ok: false; error: string },
+): loaded is { ok: true; creds: TwilioCreds } {
+  if (!loaded.ok) return false;
+  if (loaded.creds.password.length < 20) return false;
+  if (!normalizeToE164(loaded.creds.from)) return false;
+  return true;
+}
+
+/** Edge Function env first; Vault fills in when the hosted secrets are truncated or incomplete. */
+export async function resolveTwilioCreds(): Promise<
+  | { ok: true; creds: TwilioCreds; source: 'env' | 'vault' }
+  | { ok: false; error: string }
+> {
+  const envLoaded = readTwilioCreds();
+  if (envCredsAreUsable(envLoaded)) {
+    return { ...envLoaded, source: 'env' };
+  }
+  const vault = await readTwilioCredsFromVault();
+  const env = envTwilioParts();
+  const merged = credsFromParts({
+    accountSid: vault.accountSid || env.accountSid,
+    authToken: vault.authToken || env.authToken,
+    apiKey: env.apiKey,
+    apiSecret: env.apiSecret,
+    from: vault.from || env.from,
+  });
+  if (!merged.ok) return merged;
+  if (!envCredsAreUsable(merged)) return merged;
+  return { ...merged, source: 'vault' };
+}
+
 function twilioBasicAuth(username: string, password: string): string {
   return `Basic ${btoa(`${username}:${password}`)}`;
 }
@@ -151,8 +238,11 @@ function twilioBasicAuth(username: string, password: string): string {
 export async function twilioFetch(
   path: string,
   init: RequestInit,
+  credsOverride?: TwilioCreds,
 ): Promise<{ res: Response; data: TwilioErrorBody }> {
-  const creds = readTwilioCreds();
+  const creds = credsOverride
+    ? { ok: true as const, creds: credsOverride }
+    : await resolveTwilioCreds();
   if (!creds.ok) {
     throw new Error(creds.error);
   }
@@ -175,10 +265,16 @@ export async function twilioFetch(
 
 /** GET /Accounts/{Sid}.json — validates credentials without sending SMS or placing a call. */
 export async function probeTwilioAuth(): Promise<TwilioProbeResult> {
-  const loaded = readTwilioCreds();
-  const fromRaw = cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER'));
-  const sidRaw = cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID'));
-  const tokenRaw = cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN'));
+  const loaded = await resolveTwilioCreds();
+  const fromRaw = loaded.ok
+    ? loaded.creds.from
+    : cleanTwilioSecret(Deno.env.get('TWILIO_PHONE_NUMBER'));
+  const sidRaw = loaded.ok
+    ? loaded.creds.accountSid
+    : cleanTwilioSecret(Deno.env.get('TWILIO_ACCOUNT_SID'));
+  const tokenRaw = loaded.ok
+    ? loaded.creds.password
+    : cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN'));
   const meta = {
     sidKind: sidRaw.slice(0, 2) || 'missing',
     tokenLength: tokenRaw.length,
@@ -196,7 +292,7 @@ export async function probeTwilioAuth(): Promise<TwilioProbeResult> {
   }
   const { creds } = loaded;
   try {
-    const { res, data } = await twilioFetch('.json', { method: 'GET' });
+    const { res, data } = await twilioFetch('.json', { method: 'GET' }, creds);
     if (!res.ok) {
       const error = formatTwilioError(res.status, data);
       console.error('Twilio auth probe failed', { httpStatus: res.status, code: data.code, message: data.message });
