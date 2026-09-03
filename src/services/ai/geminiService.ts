@@ -22,8 +22,15 @@ async function readFunctionsErrorPayload(error: unknown): Promise<string | null>
     }
   }
 
-  if (typeof (ctx as GeminiChatResponse).error === 'string' && (ctx as GeminiChatResponse).error?.trim()) {
-    return (ctx as GeminiChatResponse).error ?? null;
+  const rec = ctx as Record<string, unknown>;
+  const nestedError = typeof rec.error === 'string' ? rec.error.trim() : '';
+  const nestedMessage = typeof rec.message === 'string' ? rec.message.trim() : '';
+  const nestedCode = typeof rec.code === 'string' ? rec.code.trim() : '';
+  const detail = nestedError || nestedMessage;
+  if (detail) {
+    return nestedCode && !detail.toLowerCase().includes(nestedCode.toLowerCase())
+      ? `${nestedCode}: ${detail}`
+      : detail;
   }
   return null;
 }
