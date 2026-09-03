@@ -8,6 +8,26 @@ interface GeminiChatResponse {
   toolsUsed?: string[];
 }
 
+async function readFunctionsErrorPayload(error: unknown): Promise<string | null> {
+  const ctx = (error as { context?: unknown } | null)?.context;
+  if (!ctx || typeof ctx !== 'object') return null;
+
+  const jsonFn = (ctx as { json?: unknown }).json;
+  if (typeof jsonFn === 'function') {
+    try {
+      const payload = await jsonFn.call(ctx) as GeminiChatResponse;
+      if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+    } catch {
+      // Body may already have been consumed, or context is not a Response.
+    }
+  }
+
+  if (typeof (ctx as GeminiChatResponse).error === 'string' && (ctx as GeminiChatResponse).error?.trim()) {
+    return (ctx as GeminiChatResponse).error ?? null;
+  }
+  return null;
+}
+
 export class GeminiService implements IAIProvider {
   readonly provider = 'gemini' as const;
 
@@ -37,18 +57,8 @@ export class GeminiService implements IAIProvider {
     });
 
     if (error) {
-      const response = (error as { context?: Response }).context;
-      if (response) {
-        try {
-          const payload = await response.json() as GeminiChatResponse;
-          if (payload.error) throw new Error(payload.error);
-        } catch (parseErr) {
-          if (parseErr instanceof Error && parseErr.message !== error.message) {
-            throw parseErr;
-          }
-        }
-      }
-      throw new Error(error.message ?? 'AI request failed.');
+      const payload = await readFunctionsErrorPayload(error);
+      throw new Error(payload ?? error.message ?? 'AI request failed.');
     }
 
     if (data?.error) {
