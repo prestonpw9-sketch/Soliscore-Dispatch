@@ -28,6 +28,49 @@ async function readFunctionsErrorPayload(error: unknown): Promise<string | null>
   return null;
 }
 
+function isRetryableFunctionsError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const ctx = (error as { context?: unknown } | null)?.context;
+  const ctxMessage = ctx && typeof ctx === 'object' && 'message' in ctx
+    ? String((ctx as { message?: unknown }).message ?? '')
+    : '';
+  const blob = `${message} ${ctxMessage}`.toLowerCase();
+  return blob.includes('boot_error')
+    || blob.includes('failed to start')
+    || blob.includes('failed to send a request')
+    || blob.includes('failed to fetch');
+}
+
+async function invokeAiChat(
+  accessToken: string,
+  messages: AIMessage[],
+  context: SOLIDCOREContext,
+  options: AIRequestOptions,
+) {
+  const body = {
+    action: 'ai-chat' as const,
+    model: 'gemini-2.5-flash',
+    messages: messages.map(m => ({ role: m.role, content: m.content })),
+    context,
+    options,
+  };
+  let last: { data: GeminiChatResponse | null; error: unknown } = { data: null, error: null };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await supabase.functions.invoke<GeminiChatResponse>('send-outbound-sms', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body,
+    });
+    last = { data: result.data, error: result.error };
+    if (!result.error) return result;
+    if (attempt < 2 && isRetryableFunctionsError(result.error)) {
+      await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+      continue;
+    }
+    return result;
+  }
+  return last;
+}
+
 export class GeminiService implements IAIProvider {
   readonly provider = 'gemini' as const;
 
@@ -43,18 +86,7 @@ export class GeminiService implements IAIProvider {
       throw new Error('You must be signed in to use the AI assistant.');
     }
 
-    const { data, error } = await supabase.functions.invoke<GeminiChatResponse>('send-outbound-sms', {
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: {
-        action: 'ai-chat',
-        model:  'gemini-2.5-flash',
-        messages: messages.map(m => ({ role: m.role, content: m.content })),
-        context,
-        options,
-      },
-    });
+    const { data, error } = await invokeAiChat(session.access_token, messages, context, options);
 
     if (error) {
       const payload = await readFunctionsErrorPayload(error);
