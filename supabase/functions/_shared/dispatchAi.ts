@@ -1531,7 +1531,7 @@ async function callGemini(params: {
         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
         { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
         { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
       ],
     }),
   });
@@ -1550,6 +1550,14 @@ async function callGemini(params: {
 function extractParts(data: Record<string, unknown>): Array<Record<string, unknown>> {
   const candidates = data.candidates as Array<{ content?: { parts?: Array<Record<string, unknown>> } }> | undefined;
   return candidates?.[0]?.content?.parts ?? [];
+}
+
+function extractFinishReason(data: Record<string, unknown>): string {
+  const candidates = data.candidates as Array<{ finishReason?: string }> | undefined;
+  const reason = candidates?.[0]?.finishReason;
+  if (reason) return String(reason);
+  const feedback = (data as { promptFeedback?: { blockReason?: string } }).promptFeedback;
+  return feedback?.blockReason ? String(feedback.blockReason) : '';
 }
 
 function extractText(parts: Array<Record<string, unknown>>): string {
@@ -1635,6 +1643,10 @@ export async function handleDispatchAiChat(
     const parts = extractParts(gemini.data);
     const functionCalls = parts.filter(p => p.functionCall);
     const text = extractText(parts);
+    const finishReason = extractFinishReason(gemini.data);
+    if (!parts.length && finishReason) {
+      console.error('Gemini empty candidates', { finishReason });
+    }
 
     if (!functionCalls.length) {
       finalText = text;
