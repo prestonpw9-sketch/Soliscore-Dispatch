@@ -40,6 +40,8 @@ export interface PaintOpts {
 
 const CAL_COLOR = '#22d3ee';
 
+const HALO = 'rgba(255,255,255,0.92)';
+
 function drawArrowLine(
   ctx: CanvasRenderingContext2D,
   a: Pt,
@@ -49,37 +51,47 @@ function drawArrowLine(
   sizeScale: number,
   dashed = false,
 ) {
-  const head = 10 * sizeScale + width;
+  const head = 12 * sizeScale + width * 1.2;
   const angle = Math.atan2(b.y - a.y, b.x - a.x);
 
   ctx.save();
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = width;
+  ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  if (dashed) ctx.setLineDash([8 * sizeScale, 6 * sizeScale]);
 
-  // Main shaft
+  // White casing beneath the shaft so lines read on dark plan linework.
+  if (!dashed) {
+    ctx.strokeStyle = HALO;
+    ctx.lineWidth = width + 3 * sizeScale;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  // Colored shaft
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  if (dashed) ctx.setLineDash([8 * sizeScale, 6 * sizeScale]);
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Arrowheads pointing outward at each end
+  // Filled + outlined arrowheads at BOTH ends, pointing outward.
   const drawHead = (tip: Pt, dir: number) => {
+    const p1 = { x: tip.x - head * Math.cos(dir - Math.PI / 7), y: tip.y - head * Math.sin(dir - Math.PI / 7) };
+    const p2 = { x: tip.x - head * Math.cos(dir + Math.PI / 7), y: tip.y - head * Math.sin(dir + Math.PI / 7) };
     ctx.beginPath();
     ctx.moveTo(tip.x, tip.y);
-    ctx.lineTo(
-      tip.x - head * Math.cos(dir - Math.PI / 7),
-      tip.y - head * Math.sin(dir - Math.PI / 7),
-    );
-    ctx.lineTo(
-      tip.x - head * Math.cos(dir + Math.PI / 7),
-      tip.y - head * Math.sin(dir + Math.PI / 7),
-    );
+    ctx.lineTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
     ctx.closePath();
+    ctx.fillStyle = color;
     ctx.fill();
+    ctx.lineWidth = Math.max(1, sizeScale);
+    ctx.strokeStyle = HALO;
+    ctx.stroke();
   };
   drawHead(b, angle);
   drawHead(a, angle + Math.PI);
