@@ -36,6 +36,8 @@ export interface PaintOpts {
   sizeScale: number;
   /** Background fill for the whole surface. */
   background: string;
+  /** When true, draw drag handles on the selected dimension (unlocked mode). */
+  editable: boolean;
 }
 
 const CAL_COLOR = '#22d3ee';
@@ -174,6 +176,19 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
     drawArrowLine(ctx, a, b, line.color, line.width * sizeScale, sizeScale);
     if (dist(line.a, line.b) > 0) {
       drawLabel(ctx, midpoint(a, b), dimensionLabel(opts.calibration, line), line.color, sizeScale);
+    }
+    // Endpoint drag handles on the selected dimension when unlocked.
+    if (selected && opts.editable) {
+      const hs = 5 * sizeScale;
+      for (const pt of [a, b]) {
+        ctx.beginPath();
+        ctx.rect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.lineWidth = 2 * sizeScale;
+        ctx.strokeStyle = '#2563eb';
+        ctx.stroke();
+      }
     }
   }
 

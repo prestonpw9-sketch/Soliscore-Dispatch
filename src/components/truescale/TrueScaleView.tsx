@@ -4,6 +4,7 @@ import {
   Ruler, Move, Crosshair, Save, Printer, Download, Trash2, Undo2,
   ZoomIn, ZoomOut, Maximize, FileText, Loader2, ChevronDown, ChevronRight,
   Map as MapIcon, FolderOpen, RotateCcw, Check, Calculator, AlertTriangle, X,
+  Lock, Unlock,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -78,6 +79,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const [tool, setTool] = useState<Tool>('dimension');
   const [color, setColor] = useState(TRUESCALE_COLORS[0]);
   const [width, setWidth] = useState(3);
+  // Dimensions are locked by default so measuring can't nudge them; unlock to move.
+  const [locked, setLocked] = useState(true);
 
   // Calibration entry
   const [pendingCalib, setPendingCalib] = useState<{ a: Pt; b: Pt } | null>(null);
@@ -240,6 +243,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
     setDimensions(prev => [...prev, { id: makeId(), a, b, color, width }]);
     setDirty(true);
   }, [color, width]);
+
+  const moveDimension = useCallback((id: string, a: Pt, b: Pt) => {
+    setDimensions(prev => prev.map(d => (d.id === id ? { ...d, a, b } : d)));
+    setDirty(true);
+  }, []);
 
   const deleteSelected = () => {
     if (!selectedId) return;
@@ -507,6 +515,19 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
 
           <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
+          <button
+            type="button"
+            onClick={() => { setLocked(l => !l); if (locked) setTool('pan'); }}
+            title={locked ? 'Unlock dimensions to move them' : 'Lock dimensions in place'}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
+              locked
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                : 'bg-amber-500 text-white hover:bg-amber-400'
+            }`}
+          >
+            {locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+            <span className="hidden xl:inline">{locked ? 'Locked' : 'Move'}</span>
+          </button>
           <button type="button" onClick={undoLast} disabled={!dimensions.length} title="Undo last"
             className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40">
             <Undo2 className="w-4 h-4" />
@@ -621,9 +642,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
               activeColor={color}
               activeWidth={width}
               dark={dark}
+              locked={locked}
               onDrawCalibration={handleDrawCalibration}
               onAddDimension={handleAddDimension}
               onSelect={setSelectedId}
+              onMoveDimension={moveDimension}
             />
           )}
 
