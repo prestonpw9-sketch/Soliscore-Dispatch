@@ -8,6 +8,7 @@ import {
   Users,
   Calculator,
   FileSpreadsheet,
+  Ruler,
   Settings,
   LogOut,
   Moon,
@@ -31,6 +32,7 @@ export type ViewKey =
   | 'customers'
   | 'estimator'
   | 'takeoff'
+  | 'truescale'
   | 'schedule'
   | 'settings';
 
@@ -47,6 +49,8 @@ const NAV_ITEMS: { key: ViewKey; label: string; icon: typeof LayoutDashboard; ro
   { key: 'estimator', label: 'Bid Estimator',      icon: Calculator,      roles: ['owner', 'crew'] },
   // Full Bid Takeoff: OWNERS ONLY — sensitive bid pricing.
   { key: 'takeoff',   label: 'Full Bid Takeoff',   icon: FileSpreadsheet, roles: ['owner'] },
+  // TrueScale: blueprint scaling & dimensioning — owners + crew (field takeoffs).
+  { key: 'truescale', label: 'TrueScale',          icon: Ruler,           roles: ['owner', 'crew'] },
 ];
 
 

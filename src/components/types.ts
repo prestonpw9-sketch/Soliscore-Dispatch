@@ -28,5 +28,6 @@ export type ViewKey =
   | 'customers'
   | 'estimator'
   | 'takeoff'
+  | 'truescale'
   | 'schedule'
   | 'settings';
