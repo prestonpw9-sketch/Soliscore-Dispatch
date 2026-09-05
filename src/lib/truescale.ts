@@ -231,7 +231,7 @@ export async function listTrueScaleDocs(): Promise<SavedDocInfo[]> {
 export async function loadTrueScaleDoc(path: string): Promise<TrueScaleDoc | null> {
   const { data, error } = await supabase.storage.from(BUCKET).download(path);
   if (error || !data) {
-    console.error('TrueScale: load failed:', error?.message);
+    // A missing sidecar is normal (plan has no saved drawing yet) — stay quiet.
     return null;
   }
   try {

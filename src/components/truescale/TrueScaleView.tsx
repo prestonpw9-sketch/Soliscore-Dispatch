@@ -325,9 +325,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
         if (inches == null) return null;
         const feet = Math.round((inches / 12) * 100) / 100;
         const planName = source ? baseDisplayName(source.name) : 'Plan';
+        // Lead with run # + measurement so they stay visible even when the
+        // (often long) plan name gets truncated in the estimator's field.
         return {
-          size: '',
-          item: `${planName} — run ${i + 1} (${formatFeetInches(inches)})`,
+          size: `${feet} ft`,
+          item: `Run ${i + 1} · ${formatFeetInches(inches)} — ${planName}`,
           qty: feet,
           unit_price: 0,
         };
