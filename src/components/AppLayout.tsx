@@ -445,7 +445,7 @@ const AppLayout: React.FC = () => {
           ) : view === 'takeoff' ? (
             <BidEstimator />
           ) : view === 'truescale' ? (
-            <TrueScaleView jobs={jobs} />
+            <TrueScaleView jobs={jobs} onSendToEstimator={() => setView('estimator')} />
           ) : loading && customers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-slate-500">
               <Loader2 className="w-10 h-10 animate-spin text-blue-600" />

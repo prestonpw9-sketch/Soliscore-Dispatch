@@ -3,7 +3,7 @@ import { jsPDF } from 'jspdf';
 import {
   Ruler, Move, Crosshair, Save, Printer, Download, Trash2, Undo2,
   ZoomIn, ZoomOut, Maximize, FileText, Loader2, ChevronDown, ChevronRight,
-  Map as MapIcon, FolderOpen, RotateCcw, Check,
+  Map as MapIcon, FolderOpen, RotateCcw, Check, Calculator, AlertTriangle, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -13,16 +13,19 @@ import {
   groupBlueprintsByJob, parseBlueprintPath,
 } from '@/lib/blueprints';
 import {
-  ARCH_SCALES, Calibration, DimLine, LengthUnit, Pt, TrueScaleDoc, TRUESCALE_COLORS,
-  TRUESCALE_VERSION, dist, formatDecimalFeet, formatFeetInches, isTrueScaleEntry,
-  loadTrueScaleDoc, manualCalibration, presetCalibration, realInchesForPixels,
-  buildDocPath, saveTrueScaleDoc, toInches,
+  ARCH_SCALES, Calibration, DimLine, LengthUnit, Pt, SheetInfo, TrueScaleDoc,
+  TRUESCALE_COLORS, TRUESCALE_VERSION, analyzeSheet, dist, formatDecimalFeet,
+  formatFeetInches, isTrueScaleEntry, loadTrueScaleDoc, manualCalibration,
+  presetCalibration, realInchesForPixels, buildDocPath, saveTrueScaleDoc, toInches,
 } from '@/lib/truescale';
+import { stageBidLines } from '@/lib/bidHandoff';
 import { loadPdf, PdfDoc, RenderedPage, renderImage, renderPdfPage } from '@/lib/pdfjs';
 import TrueScaleCanvas, { TrueScaleCanvasHandle, Tool } from './TrueScaleCanvas';
 
 interface Props {
   jobs: Job[];
+  /** Navigate the app to the Bid Estimator after staging measured quantities. */
+  onSendToEstimator?: () => void;
 }
 
 interface BlueprintFile {
@@ -46,7 +49,7 @@ function baseDisplayName(name: string): string {
   return parseBlueprintPath(name).displayName.replace(/\.[^.]+$/, '');
 }
 
-const TrueScaleView: React.FC<Props> = ({ jobs }) => {
+const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const { canEdit, session } = useAuth();
   const { resolved } = useTheme();
   const dark = resolved === 'dark';
@@ -84,6 +87,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs }) => {
   // Save state
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [sheetDismissed, setSheetDismissed] = useState(false);
 
   const canvasRef = useRef<TrueScaleCanvasHandle>(null);
 
@@ -111,6 +115,12 @@ const TrueScaleView: React.FC<Props> = ({ jobs }) => {
   useEffect(() => { void fetchFiles(); }, [fetchFiles]);
 
   const groups = useMemo(() => groupBlueprintsByJob(files, jobs), [files, jobs]);
+
+  // Physical sheet-size check — decides whether standard presets are trustworthy.
+  const sheet: SheetInfo | null = useMemo(() => {
+    if (!render || !render.pxPerInch) return null;
+    return analyzeSheet(render.width / render.pxPerInch, render.height / render.pxPerInch);
+  }, [render]);
 
   const toggleGroup = (key: string) =>
     setExpanded(prev => {
@@ -144,6 +154,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs }) => {
     setDocLoading(true);
     setDocError(null);
     setSelectedId(null);
+    setSheetDismissed(false);
     try {
       const { data, error } = await supabase.storage.from('blueprints').download(file.name);
       if (error || !data) throw error ?? new Error('Download failed');
@@ -181,6 +192,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs }) => {
     if (!pdfDoc || !source || pageNum < 1 || pageNum > numPages) return;
     setDocLoading(true);
     setSelectedId(null);
+    setSheetDismissed(false);
     try {
       setPage(pageNum);
       await renderPdfAt(pdfDoc, pageNum);
@@ -304,6 +316,30 @@ const TrueScaleView: React.FC<Props> = ({ jobs }) => {
     pdf.addImage(img, 'JPEG', 0, 0, c.width, c.height);
     pdf.save(`${baseDisplayName(source.name)}-truescale.pdf`);
     flash('Exported PDF.');
+  };
+
+  const sendToEstimator = () => {
+    const lines = dimensions
+      .map((d, i) => {
+        const inches = realInchesForPixels(calibration, dist(d.a, d.b));
+        if (inches == null) return null;
+        const feet = Math.round((inches / 12) * 100) / 100;
+        const planName = source ? baseDisplayName(source.name) : 'Plan';
+        return {
+          size: '',
+          item: `${planName} — run ${i + 1} (${formatFeetInches(inches)})`,
+          qty: feet,
+          unit_price: 0,
+        };
+      })
+      .filter((l): l is NonNullable<typeof l> => l !== null);
+    if (!lines.length) {
+      flash('Set a scale and draw dimensions first.');
+      return;
+    }
+    stageBidLines(lines);
+    flash(`Sent ${lines.length} run${lines.length !== 1 ? 's' : ''} to Bid Estimator.`);
+    onSendToEstimator?.();
   };
 
   const printSheet = () => {
@@ -499,6 +535,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs }) => {
                   className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><RotateCcw className="w-4 h-4" /></button>
               </>
             )}
+            <button type="button" onClick={sendToEstimator} disabled={!calibration || !dimensions.length}
+              title="Send measured runs to the Bid Estimator"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 disabled:opacity-40">
+              <Calculator className="w-4 h-4" /><span className="hidden xl:inline">To Bid</span>
+            </button>
             <button type="button" onClick={exportPdf} disabled={!render} title="Export PDF"
               className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><Download className="w-4 h-4" /></button>
             <button type="button" onClick={printSheet} disabled={!render} title="Print"
@@ -551,6 +592,18 @@ const TrueScaleView: React.FC<Props> = ({ jobs }) => {
           {docLoading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/10">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+            </div>
+          )}
+          {sheet?.warning && !sheetDismissed && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 w-[min(92%,640px)]">
+              <div className="flex items-start gap-2.5 bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-xl px-3.5 py-2.5 shadow-lg">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-200 flex-1">{sheet.warning}</p>
+                <button type="button" onClick={() => setSheetDismissed(true)}
+                  className="p-0.5 text-amber-600 hover:text-amber-800 dark:hover:text-amber-100 shrink-0" aria-label="Dismiss">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
           {render && (
