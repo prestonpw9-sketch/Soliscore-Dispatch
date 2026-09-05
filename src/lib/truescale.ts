@@ -231,7 +231,7 @@ export async function listTrueScaleDocs(): Promise<SavedDocInfo[]> {
 export async function loadTrueScaleDoc(path: string): Promise<TrueScaleDoc | null> {
   const { data, error } = await supabase.storage.from(BUCKET).download(path);
   if (error || !data) {
-    console.error('TrueScale: load failed:', error?.message);
+    // A missing sidecar is normal (plan has no saved drawing yet) — stay quiet.
     return null;
   }
   try {
@@ -258,6 +258,75 @@ export async function saveTrueScaleDoc(doc: TrueScaleDoc): Promise<string> {
 export async function deleteTrueScaleDoc(path: string): Promise<void> {
   const { error } = await supabase.storage.from(BUCKET).remove([path]);
   if (error) throw error;
+}
+
+// ── Sheet-size sanity check ───────────────────────────────────────────────────
+
+interface SheetSize {
+  label: string;
+  w: number;
+  h: number;
+  /** True for real large-format plotted sheets where preset scales are trustworthy. */
+  plottable: boolean;
+}
+
+// Common page sizes in inches (orientation-independent).
+const SHEET_SIZES: SheetSize[] = [
+  { label: 'Letter (8.5×11)', w: 8.5, h: 11, plottable: false },
+  { label: 'Legal (8.5×14)', w: 8.5, h: 14, plottable: false },
+  { label: 'Tabloid (11×17)', w: 11, h: 17, plottable: false },
+  { label: 'ARCH A (9×12)', w: 9, h: 12, plottable: true },
+  { label: 'ARCH B (12×18)', w: 12, h: 18, plottable: true },
+  { label: 'ARCH C (18×24)', w: 18, h: 24, plottable: true },
+  { label: 'ARCH D (24×36)', w: 24, h: 36, plottable: true },
+  { label: 'ARCH E (36×48)', w: 36, h: 48, plottable: true },
+  { label: 'ARCH E1 (30×42)', w: 30, h: 42, plottable: true },
+  { label: 'ANSI C (17×22)', w: 17, h: 22, plottable: true },
+  { label: 'ANSI D (22×34)', w: 22, h: 34, plottable: true },
+  { label: 'ANSI E (34×44)', w: 34, h: 44, plottable: true },
+];
+
+export interface SheetInfo {
+  widthIn: number;
+  heightIn: number;
+  label: string | null;
+  /** Whether the standard-scale presets should be trusted for this page. */
+  trustworthy: boolean;
+  /** Non-null when the user should be warned before relying on preset scales. */
+  warning: string | null;
+}
+
+/**
+ * Classify a PDF page's physical size to decide whether standard-scale presets
+ * are reliable. Small office sizes (Letter/Tabloid) usually mean the plan was
+ * scaled to fit paper, so preset scales would be wrong.
+ */
+export function analyzeSheet(widthIn: number, heightIn: number): SheetInfo {
+  const lo = Math.min(widthIn, heightIn);
+  const hi = Math.max(widthIn, heightIn);
+  const tol = 0.75;
+  const match = SHEET_SIZES.find(
+    s => Math.abs(Math.min(s.w, s.h) - lo) <= tol && Math.abs(Math.max(s.w, s.h) - hi) <= tol,
+  );
+  const dims = `${widthIn.toFixed(1)}" × ${heightIn.toFixed(1)}"`;
+  if (match) {
+    return {
+      widthIn,
+      heightIn,
+      label: match.label,
+      trustworthy: match.plottable,
+      warning: match.plottable
+        ? null
+        : `This PDF is ${match.label} — likely scaled to fit paper, so standard scales may be inaccurate. Use “Set Scale” over a known dimension to be sure.`,
+    };
+  }
+  return {
+    widthIn,
+    heightIn,
+    label: null,
+    trustworthy: false,
+    warning: `Unusual page size (${dims}). If this plan isn't at its true plotted size, use “Set Scale” instead of a standard scale.`,
+  };
 }
 
 /** Default color palette for dimension lines. */

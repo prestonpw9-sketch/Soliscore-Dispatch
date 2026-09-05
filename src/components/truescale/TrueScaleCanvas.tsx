@@ -62,11 +62,18 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState<Pt>({ x: 0, y: 0 });
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [grabbing, setGrabbing] = useState(false);
+  const [spaceDown, setSpaceDown] = useState(false);
 
   // Interaction refs (avoid re-renders mid-gesture)
   const panning = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
   const drawing = useRef<{ start: Pt } | null>(null);
   const downScreen = useRef<Pt | null>(null);
+  // Edge auto-pan while drawing (so long measurements can extend past the view).
+  const autoPanRAF = useRef<number | null>(null);
+  const lastScreen = useRef<Pt | null>(null);
+  const viewRef = useRef({ scale, offset });
+  useEffect(() => { viewRef.current = { scale, offset }; }, [scale, offset]);
 
   const toImage = useCallback(
     (s: Pt): Pt => ({ x: (s.x - offset.x) / scale, y: (s.y - offset.y) / scale }),
@@ -93,6 +100,27 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     fit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, baseWidth, baseHeight]);
+
+  // Hold SPACE to grab/pan the plan regardless of the active tool (like Figma/Bluebeam).
+  useEffect(() => {
+    const isTextField = (el: EventTarget | null) => {
+      const t = el as HTMLElement | null;
+      return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+    };
+    const kd = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !isTextField(e.target)) {
+        e.preventDefault();
+        setSpaceDown(true);
+      }
+    };
+    const ku = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceDown(false); };
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    return () => {
+      window.removeEventListener('keydown', kd);
+      window.removeEventListener('keyup', ku);
+    };
+  }, []);
 
   // Track container size
   useLayoutEffect(() => {
@@ -170,12 +198,69 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  const AUTOPAN_MARGIN = 56;
+  const AUTOPAN_MAX = 16;
+
+  const stopAutoPan = () => {
+    if (autoPanRAF.current != null) {
+      cancelAnimationFrame(autoPanRAF.current);
+      autoPanRAF.current = null;
+    }
+  };
+
+  // One auto-pan frame: shift the view toward whichever edge the cursor is near,
+  // and extend the in-progress line's endpoint into the newly revealed area.
+  const autoPanStep = () => {
+    const el = containerRef.current;
+    const p = lastScreen.current;
+    if (!el || !p || !drawing.current) { stopAutoPan(); return; }
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    const clamp = (v: number) => Math.max(-AUTOPAN_MAX, Math.min(AUTOPAN_MAX, v));
+    let dx = 0;
+    let dy = 0;
+    if (p.x < AUTOPAN_MARGIN) dx = clamp(((AUTOPAN_MARGIN - p.x) / AUTOPAN_MARGIN) * AUTOPAN_MAX);
+    else if (p.x > w - AUTOPAN_MARGIN) dx = clamp(-((p.x - (w - AUTOPAN_MARGIN)) / AUTOPAN_MARGIN) * AUTOPAN_MAX);
+    if (p.y < AUTOPAN_MARGIN) dy = clamp(((AUTOPAN_MARGIN - p.y) / AUTOPAN_MARGIN) * AUTOPAN_MAX);
+    else if (p.y > h - AUTOPAN_MARGIN) dy = clamp(-((p.y - (h - AUTOPAN_MARGIN)) / AUTOPAN_MARGIN) * AUTOPAN_MAX);
+    if (dx === 0 && dy === 0) { stopAutoPan(); return; }
+
+    const cur = viewRef.current;
+    const no = { x: cur.offset.x + dx, y: cur.offset.y + dy };
+    viewRef.current = { scale: cur.scale, offset: no };
+    setOffset(no);
+    setPreview(prev =>
+      prev ? { ...prev, b: { x: (p.x - no.x) / cur.scale, y: (p.y - no.y) / cur.scale } } : prev,
+    );
+    autoPanRAF.current = requestAnimationFrame(autoPanStep);
+  };
+
+  const maybeAutoPan = (p: Pt) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    const near =
+      p.x < AUTOPAN_MARGIN || p.x > w - AUTOPAN_MARGIN ||
+      p.y < AUTOPAN_MARGIN || p.y > h - AUTOPAN_MARGIN;
+    if (near) {
+      if (autoPanRAF.current == null) autoPanRAF.current = requestAnimationFrame(autoPanStep);
+    } else {
+      stopAutoPan();
+    }
+  };
+
+  useEffect(() => () => stopAutoPan(), []);
+
   const handlePointerDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const s = getScreen(e);
     downScreen.current = s;
-    if (tool === 'pan' || e.button === 1) {
+    // Pan when the Pan tool is active, on middle-mouse, or while holding SPACE —
+    // so you can always reposition/recenter the plan even mid-measurement.
+    if (tool === 'pan' || e.button === 1 || spaceDown) {
       panning.current = { startX: s.x, startY: s.y, ox: offset.x, oy: offset.y };
+      setGrabbing(true);
     } else {
       drawing.current = { start: toImage(s) };
     }
@@ -191,6 +276,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       return;
     }
     if (drawing.current) {
+      lastScreen.current = s;
       setPreview({
         a: drawing.current.start,
         b: toImage(s),
@@ -198,6 +284,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         width: activeWidth,
         kind: tool === 'calibrate' ? 'calibrate' : 'dimension',
       });
+      maybeAutoPan(s);
     }
   };
 
@@ -208,8 +295,9 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
     if (panning.current) {
       panning.current = null;
+      setGrabbing(false);
       // A pan tool "click" (no real drag) = selection hit-test / deselect.
-      if (tool === 'pan' && moved < MIN_DRAG_PX) {
+      if (tool === 'pan' && !spaceDown && moved < MIN_DRAG_PX) {
         const hit = hitTest(s);
         onSelect(hit);
       }
@@ -218,6 +306,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     }
 
     if (drawing.current) {
+      stopAutoPan();
+      lastScreen.current = null;
       const a = drawing.current.start;
       const b = toImage(s);
       drawing.current = null;
@@ -255,7 +345,11 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     });
   };
 
-  const cursor = tool === 'pan' ? (panning.current ? 'grabbing' : 'grab') : 'crosshair';
+  const cursor = grabbing
+    ? 'grabbing'
+    : tool === 'pan' || spaceDown
+      ? 'grab'
+      : 'crosshair';
 
   return (
     <div ref={containerRef} className="relative w-full h-full overflow-hidden rounded-xl">

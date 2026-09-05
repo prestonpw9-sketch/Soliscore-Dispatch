@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { consumeBidLines } from '../lib/bidHandoff';
 import {
   Trash2, FileText, Printer, ArrowLeft, BookOpen,
   Plus, Search, X,
@@ -163,6 +164,17 @@ export default function QuickBidEstimator({
   useEffect(() => {
     if (initialBidId) void loadBid(initialBidId);
   }, [initialBidId]);
+
+  // Pick up measured quantities handed off from TrueScale (once, on mount).
+  useEffect(() => {
+    const staged = consumeBidLines();
+    if (staged?.length) {
+      setLines(prev => [
+        ...prev,
+        ...staged.map(l => ({ id: makeId(), ...l })),
+      ]);
+    }
+  }, []);
 
   async function loadBid(id: string) {
     try {
