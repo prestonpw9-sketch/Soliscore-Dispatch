@@ -14,6 +14,7 @@ import QuickAddJobModal from './QuickAddJobModal';
 import EstimatorPanel from './EstimatorPanel';
 import QuickBidEstimator from './QuickBidEstimator';
 import BidEstimator from './Bidestimator';
+import TrueScaleView from './truescale/TrueScaleView';
 import SlideOutPanel from './SlideOutPanel';
 import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
@@ -29,6 +30,7 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
   customers:  { title: 'Customers',       subtitle: 'Full customer database and history' },
   estimator:  { title: 'Bid Estimator',   subtitle: 'Quick change orders and fast job bids' },
   takeoff:    { title: 'Full Bid Takeoff', subtitle: 'Full 4-page takeoff for ground-up buildings and houses' },
+  truescale:  { title: 'TrueScale',       subtitle: 'Scale blueprints and measure critical dimensions' },
   schedule:   { title: 'Schedule',        subtitle: 'Plan crews across jobs and track daily progress' },
   settings:   { title: 'System Settings', subtitle: 'Manage profile configuration parameters' },
 };
@@ -46,6 +48,7 @@ const AppLayout: React.FC = () => {
     customers: ['owner'],
     estimator: ['owner', 'crew'],
     takeoff:   ['owner'],
+    truescale: ['owner', 'crew'],
     settings:  ['owner', 'office', 'crew'],
   };
   const canSeeView = (v: string) => !!role && (viewAccess[v]?.includes(role) ?? false);
@@ -441,6 +444,8 @@ const AppLayout: React.FC = () => {
             <QuickBidEstimator mode="standalone" />
           ) : view === 'takeoff' ? (
             <BidEstimator />
+          ) : view === 'truescale' ? (
+            <TrueScaleView jobs={jobs} />
           ) : loading && customers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-slate-500">
               <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
