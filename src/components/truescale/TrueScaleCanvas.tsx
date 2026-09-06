@@ -152,8 +152,9 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (!size.w || !size.h || !baseWidth || !baseHeight) return;
     const prev = lastBox.current;
     const flipped = prev.w > 0 && (prev.w > prev.h) !== (size.w > size.h);
+    const jumped = prev.w > 0 && (Math.abs(size.w - prev.w) > 64 || Math.abs(size.h - prev.h) > 64);
     lastBox.current = { w: size.w, h: size.h };
-    if (flipped) fit();
+    if (flipped || jumped) fit();
   }, [size.w, size.h, baseWidth, baseHeight, fit]);
 
   // Hold SPACE to grab/pan the plan regardless of the active tool (like Figma/Bluebeam).
@@ -207,7 +208,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     });
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
+    const onWinResize = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    window.addEventListener('resize', onWinResize);
+    window.addEventListener('orientationchange', onWinResize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', onWinResize);
+      window.removeEventListener('orientationchange', onWinResize);
+    };
   }, []);
 
   // Paint
@@ -217,8 +225,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(size.w * dpr);
     canvas.height = Math.round(size.h * dpr);
-    canvas.style.width = `${size.w}px`;
-    canvas.style.height = `${size.h}px`;
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -663,7 +671,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     <div ref={containerRef} className="relative w-full h-full overflow-hidden rounded-xl">
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 touch-none select-none"
+        className="absolute inset-0 w-full h-full touch-none select-none"
         style={{ cursor, touchAction: 'none' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
