@@ -8,6 +8,12 @@ import React, {
   useState,
 } from 'react';
 import { Calibration, DimLine, Pt } from '@/lib/truescale';
+import {
+  needsPdfLens,
+  pdfLensExtra,
+  startPdfLensRender,
+  type PdfLensSource,
+} from '@/lib/pdfjs';
 import { paintScene, Preview } from './scenePainter';
 
 export type Tool = 'pan' | 'calibrate' | 'dimension';
@@ -32,10 +38,24 @@ interface Props {
   dark: boolean;
   /** When false, dimensions can be dragged (moved/edited) with the Pan/Select tool. */
   locked: boolean;
+  /** Live PDF page — used to re-render the zoomed viewport at screen density. */
+  pdfLens?: PdfLensSource | null;
   onDrawCalibration: (a: Pt, b: Pt) => void;
   onAddDimension: (a: Pt, b: Pt) => void;
   onSelect: (id: string | null) => void;
   onMoveDimension: (id: string, a: Pt, b: Pt) => void;
+}
+
+interface LensTile {
+  canvas: HTMLCanvasElement;
+  pdf: PdfLensSource['pdf'];
+  pageNumber: number;
+  pdfScale: number;
+  scale: number;
+  ox: number;
+  oy: number;
+  cssW: number;
+  cssH: number;
 }
 
 function pointSegDist(p: Pt, a: Pt, b: Pt): number {
@@ -56,7 +76,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 ) {
   const {
     base, baseWidth, baseHeight, tool, calibration, dimensions, selectedId,
-    activeColor, activeWidth, dark, locked,
+    activeColor, activeWidth, dark, locked, pdfLens,
     onDrawCalibration, onAddDimension, onSelect, onMoveDimension,
   } = props;
 
@@ -69,6 +89,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const [grabbing, setGrabbing] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [lensTile, setLensTile] = useState<LensTile | null>(null);
+  const [lensPending, setLensPending] = useState(false);
 
   // Interaction refs (avoid re-renders mid-gesture)
   const panning = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
@@ -178,6 +200,18 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const lensMatches = !!(
+      lensTile &&
+      pdfLens &&
+      lensTile.pdf === pdfLens.pdf &&
+      lensTile.pageNumber === pdfLens.pageNumber &&
+      lensTile.pdfScale === pdfLens.pdfScale &&
+      Math.abs(lensTile.scale - scale) < 1e-6 &&
+      Math.abs(lensTile.ox - offset.x) < 0.5 &&
+      Math.abs(lensTile.oy - offset.y) < 0.5 &&
+      lensTile.cssW === size.w &&
+      lensTile.cssH === size.h
+    );
     paintScene(ctx, {
       base, baseWidth, baseHeight,
       project: toScreen,
@@ -186,8 +220,63 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       sizeScale: 1,
       background: dark ? '#0b1220' : '#e2e8f0',
       editable: !locked,
+      smoothPlan: scale * dpr <= 1.02,
+      lens: lensMatches && lensTile
+        ? { canvas: lensTile.canvas, cssW: size.w, cssH: size.h }
+        : null,
     });
-  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, selectedId, preview, size, dark, locked, toScreen]);
+  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, selectedId, preview, size, dark, locked, toScreen, lensTile, pdfLens]);
+
+  // Re-render the visible PDF region at screen density after zoom/pan settles.
+  useEffect(() => {
+    if (!pdfLens || !size.w || !size.h) {
+      setLensPending(false);
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    if (!needsPdfLens(scale, dpr)) {
+      setLensTile(null);
+      setLensPending(false);
+      return;
+    }
+
+    const region = {
+      x: -offset.x / scale,
+      y: -offset.y / scale,
+      w: size.w / scale,
+      h: size.h / scale,
+    };
+    const extra = pdfLensExtra(scale, dpr, region.w, region.h);
+    const view = { scale, ox: offset.x, oy: offset.y, cssW: size.w, cssH: size.h };
+
+    let cancelled = false;
+    let cleanupJob: (() => void) | null = null;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setLensPending(true);
+      const job = startPdfLensRender(pdfLens, region, extra);
+      cleanupJob = job.cancel;
+      job.promise.then(() => {
+        if (cancelled) return;
+        setLensTile({
+          canvas: job.canvas,
+          pdf: pdfLens.pdf,
+          pageNumber: pdfLens.pageNumber,
+          pdfScale: pdfLens.pdfScale,
+          ...view,
+        });
+        setLensPending(false);
+      }).catch(() => {
+        if (!cancelled) setLensPending(false);
+      });
+    }, 90);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      cleanupJob?.();
+    };
+  }, [pdfLens, scale, offset, size, base]);
 
   useImperativeHandle(ref, () => ({
     fit,
@@ -195,7 +284,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       const cx = size.w / 2;
       const cy = size.h / 2;
       setScale(prev => {
-        const ns = Math.max(0.05, Math.min(20, prev * factor));
+        const ns = Math.max(0.05, Math.min(40, prev * factor));
         setOffset(o => ({
           x: cx - ((cx - o.x) / prev) * ns,
           y: cy - ((cy - o.y) / prev) * ns,
@@ -219,6 +308,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         sizeScale: Math.max(1, baseWidth / 1100),
         background: '#ffffff',
         editable: false,
+        smoothPlan: true,
       });
       return out;
     },
@@ -472,7 +562,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const cy = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
     setScale(prev => {
-      const ns = Math.max(0.05, Math.min(20, prev * factor));
+      const ns = Math.max(0.05, Math.min(40, prev * factor));
       setOffset(o => ({
         x: cx - ((cx - o.x) / prev) * ns,
         y: cy - ((cy - o.y) / prev) * ns,
@@ -504,6 +594,11 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       {placing && (tool === 'dimension' || tool === 'calibrate') && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg">
           Click the other end · Esc to cancel
+        </div>
+      )}
+      {lensPending && !placing && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg">
+          Sharpening linework…
         </div>
       )}
     </div>

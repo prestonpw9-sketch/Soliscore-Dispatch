@@ -20,7 +20,7 @@ import {
   presetCalibration, realInchesForPixels, buildDocPath, saveTrueScaleDoc, toInches,
 } from '@/lib/truescale';
 import { stageBidLines } from '@/lib/bidHandoff';
-import { loadPdf, PdfDoc, RenderedPage, renderImage, renderPdfPage } from '@/lib/pdfjs';
+import { loadPdf, PdfDoc, PdfLensSource, RenderedPage, renderImage, renderPdfPage } from '@/lib/pdfjs';
 import TrueScaleCanvas, { TrueScaleCanvasHandle, Tool } from './TrueScaleCanvas';
 
 interface Props {
@@ -93,6 +93,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const [sheetDismissed, setSheetDismissed] = useState(false);
 
   const canvasRef = useRef<TrueScaleCanvasHandle>(null);
+
+  const pdfLens: PdfLensSource | null = useMemo(() => {
+    if (!pdfDoc || render?.pdfScale == null) return null;
+    return { pdf: pdfDoc, pageNumber: page, pdfScale: render.pdfScale };
+  }, [pdfDoc, page, render?.pdfScale]);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -542,7 +547,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
               className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomOut className="w-4 h-4" /></button>
             <button type="button" onClick={() => canvasRef.current?.fit()} title="Fit to screen"
               className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><Maximize className="w-4 h-4" /></button>
-            <button type="button" onClick={() => canvasRef.current?.zoomBy(1.2)} title="Zoom in"
+            <button type="button" onClick={() => canvasRef.current?.zoomBy(1.2)} title="Zoom in — linework re-renders sharp at this view"
               className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomIn className="w-4 h-4" /></button>
 
             <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
@@ -648,6 +653,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
               activeWidth={width}
               dark={dark}
               locked={locked}
+              pdfLens={pdfLens}
               onDrawCalibration={handleDrawCalibration}
               onAddDimension={handleAddDimension}
               onSelect={setSelectedId}
