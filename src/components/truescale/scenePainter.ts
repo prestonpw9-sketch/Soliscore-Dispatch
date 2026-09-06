@@ -36,6 +36,8 @@ export interface PaintOpts {
   sizeScale: number;
   /** Background fill for the whole surface. */
   background: string;
+  /** When true, draw drag handles on the selected dimension (unlocked mode). */
+  editable: boolean;
 }
 
 const CAL_COLOR = '#22d3ee';
@@ -175,28 +177,52 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
     if (dist(line.a, line.b) > 0) {
       drawLabel(ctx, midpoint(a, b), dimensionLabel(opts.calibration, line), line.color, sizeScale);
     }
+    // Endpoint drag handles on the selected dimension when unlocked.
+    if (selected && opts.editable) {
+      const hs = 5 * sizeScale;
+      for (const pt of [a, b]) {
+        ctx.beginPath();
+        ctx.rect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.lineWidth = 2 * sizeScale;
+        ctx.strokeStyle = '#2563eb';
+        ctx.stroke();
+      }
+    }
   }
 
-  // Live preview while dragging
-  if (opts.preview && dist(opts.preview.a, opts.preview.b) > 0) {
+  // Live preview while placing (click-move-click or press-drag).
+  if (opts.preview) {
     const a = project(opts.preview.a);
     const b = project(opts.preview.b);
     const color = opts.preview.kind === 'calibrate' ? CAL_COLOR : opts.preview.color;
-    drawArrowLine(ctx, a, b, color, opts.preview.width * sizeScale, sizeScale, opts.preview.kind === 'calibrate');
-    if (opts.preview.kind === 'dimension') {
-      drawLabel(
-        ctx,
-        midpoint(a, b),
-        dimensionLabel(opts.calibration, {
-          id: 'preview',
-          a: opts.preview.a,
-          b: opts.preview.b,
-          color: opts.preview.color,
-          width: opts.preview.width,
-        }),
-        opts.preview.color,
-        sizeScale,
-      );
+    // Always mark the first click so click-to-place is visible before the
+    // cursor moves (a === b has zero length, so the line itself is hidden).
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, 5 * sizeScale, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 2 * sizeScale;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+    if (dist(opts.preview.a, opts.preview.b) > 0) {
+      drawArrowLine(ctx, a, b, color, opts.preview.width * sizeScale, sizeScale, opts.preview.kind === 'calibrate');
+      if (opts.preview.kind === 'dimension') {
+        drawLabel(
+          ctx,
+          midpoint(a, b),
+          dimensionLabel(opts.calibration, {
+            id: 'preview',
+            a: opts.preview.a,
+            b: opts.preview.b,
+            color: opts.preview.color,
+            width: opts.preview.width,
+          }),
+          opts.preview.color,
+          sizeScale,
+        );
+      }
     }
   }
 }

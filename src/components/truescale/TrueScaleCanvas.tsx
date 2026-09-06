@@ -30,9 +30,12 @@ interface Props {
   activeColor: string;
   activeWidth: number;
   dark: boolean;
+  /** When false, dimensions can be dragged (moved/edited) with the Pan/Select tool. */
+  locked: boolean;
   onDrawCalibration: (a: Pt, b: Pt) => void;
   onAddDimension: (a: Pt, b: Pt) => void;
   onSelect: (id: string | null) => void;
+  onMoveDimension: (id: string, a: Pt, b: Pt) => void;
 }
 
 function pointSegDist(p: Pt, a: Pt, b: Pt): number {
@@ -45,7 +48,7 @@ function pointSegDist(p: Pt, a: Pt, b: Pt): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-const MIN_DRAG_PX = 6;
+const MIN_DRAG_PX = 10;
 
 const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueScaleCanvas(
   props,
@@ -53,7 +56,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 ) {
   const {
     base, baseWidth, baseHeight, tool, calibration, dimensions, selectedId,
-    activeColor, activeWidth, dark, onDrawCalibration, onAddDimension, onSelect,
+    activeColor, activeWidth, dark, locked,
+    onDrawCalibration, onAddDimension, onSelect, onMoveDimension,
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,11 +68,18 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const [preview, setPreview] = useState<Preview | null>(null);
   const [grabbing, setGrabbing] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
+  const [placing, setPlacing] = useState(false);
 
   // Interaction refs (avoid re-renders mid-gesture)
   const panning = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
   const drawing = useRef<{ start: Pt } | null>(null);
   const downScreen = useRef<Pt | null>(null);
+  // Click-to-place: first click arms this; the next click sets the far endpoint.
+  const pendingStart = useRef<Pt | null>(null);
+  // Dragging an existing dimension (endpoint or whole line) when unlocked.
+  const moving = useRef<
+    { id: string; mode: 'a' | 'b' | 'line'; startImg: Pt; origA: Pt; origB: Pt } | null
+  >(null);
   // Edge auto-pan while drawing (so long measurements can extend past the view).
   const autoPanRAF = useRef<number | null>(null);
   const lastScreen = useRef<Pt | null>(null);
@@ -114,13 +125,33 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       }
     };
     const ku = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceDown(false); };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        pendingStart.current = null;
+        drawing.current = null;
+        moving.current = null;
+        setPreview(null);
+        setPlacing(false);
+      }
+    };
     window.addEventListener('keydown', kd);
     window.addEventListener('keyup', ku);
+    window.addEventListener('keydown', esc);
     return () => {
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
+      window.removeEventListener('keydown', esc);
     };
   }, []);
+
+  // Cancel any in-progress placement when the tool changes.
+  useEffect(() => {
+    pendingStart.current = null;
+    drawing.current = null;
+    moving.current = null;
+    setPreview(null);
+    setPlacing(false);
+  }, [tool]);
 
   // Track container size
   useLayoutEffect(() => {
@@ -154,8 +185,9 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       calibration, dimensions, selectedId, preview,
       sizeScale: 1,
       background: dark ? '#0b1220' : '#e2e8f0',
+      editable: !locked,
     });
-  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, selectedId, preview, size, dark, toScreen]);
+  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, selectedId, preview, size, dark, locked, toScreen]);
 
   useImperativeHandle(ref, () => ({
     fit,
@@ -186,6 +218,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         calibration, dimensions, selectedId: null, preview: null,
         sizeScale: Math.max(1, baseWidth / 1100),
         background: '#ffffff',
+        editable: false,
       });
       return out;
     },
@@ -213,7 +246,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const autoPanStep = () => {
     const el = containerRef.current;
     const p = lastScreen.current;
-    if (!el || !p || !drawing.current) { stopAutoPan(); return; }
+    const drawingActive = drawing.current != null || pendingStart.current != null;
+    if (!el || !p || !drawingActive) { stopAutoPan(); return; }
     const w = el.clientWidth;
     const h = el.clientHeight;
     const clamp = (v: number) => Math.max(-AUTOPAN_MAX, Math.min(AUTOPAN_MAX, v));
@@ -252,22 +286,82 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   useEffect(() => () => stopAutoPan(), []);
 
+  const previewKind = () => (tool === 'calibrate' ? 'calibrate' : 'dimension');
+
+  const finalizeLine = (a: Pt, b: Pt) => {
+    const px = Math.hypot(b.x - a.x, b.y - a.y);
+    if (px < 2) return;
+    if (tool === 'calibrate') onDrawCalibration(a, b);
+    else onAddDimension(a, b);
+  };
+
+  // Pick an existing dimension (endpoint handle or body) to drag when unlocked.
+  const pickMoveTarget = (s: Pt): typeof moving.current => {
+    const HANDLE = 12;
+    for (const line of dimensions) {
+      if (Math.hypot(s.x - toScreen(line.a).x, s.y - toScreen(line.a).y) <= HANDLE)
+        return { id: line.id, mode: 'a', startImg: toImage(s), origA: line.a, origB: line.b };
+      if (Math.hypot(s.x - toScreen(line.b).x, s.y - toScreen(line.b).y) <= HANDLE)
+        return { id: line.id, mode: 'b', startImg: toImage(s), origA: line.a, origB: line.b };
+    }
+    const id = hitTest(s);
+    if (id) {
+      const line = dimensions.find(d => d.id === id)!;
+      return { id, mode: 'line', startImg: toImage(s), origA: line.a, origB: line.b };
+    }
+    return null;
+  };
+
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 && e.button !== 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const s = getScreen(e);
     downScreen.current = s;
-    // Pan when the Pan tool is active, on middle-mouse, or while holding SPACE —
-    // so you can always reposition/recenter the plan even mid-measurement.
+
+    // Pan the plan: Pan tool, middle-mouse, or SPACE held — always available.
     if (tool === 'pan' || e.button === 1 || spaceDown) {
+      // In Pan/Select while UNLOCKED, a left-press on a dimension grabs it to move.
+      if (tool === 'pan' && !spaceDown && e.button === 0 && !locked) {
+        const target = pickMoveTarget(s);
+        if (target) {
+          moving.current = target;
+          onSelect(target.id);
+          setGrabbing(true);
+          return;
+        }
+      }
       panning.current = { startX: s.x, startY: s.y, ox: offset.x, oy: offset.y };
       setGrabbing(true);
-    } else {
-      drawing.current = { start: toImage(s) };
+      return;
+    }
+
+    // Draw tools (dimension/calibrate). A first click is already armed — the
+    // next pointer-up finalizes. Do not start a new press-drag on this down.
+    if (pendingStart.current == null) {
+      const start = toImage(s);
+      drawing.current = { start };
+      setPreview({ a: start, b: start, color: activeColor, width: activeWidth, kind: previewKind() });
     }
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
     const s = getScreen(e);
+    if (moving.current) {
+      const cur = toImage(s);
+      const m = moving.current;
+      if (m.mode === 'a') onMoveDimension(m.id, cur, m.origB);
+      else if (m.mode === 'b') onMoveDimension(m.id, m.origA, cur);
+      else {
+        const dx = cur.x - m.startImg.x;
+        const dy = cur.y - m.startImg.y;
+        onMoveDimension(
+          m.id,
+          { x: m.origA.x + dx, y: m.origA.y + dy },
+          { x: m.origB.x + dx, y: m.origB.y + dy },
+        );
+      }
+      return;
+    }
     if (panning.current) {
       setOffset({
         x: panning.current.ox + (s.x - panning.current.startX),
@@ -275,15 +369,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       });
       return;
     }
-    if (drawing.current) {
+    const anchor = drawing.current?.start ?? pendingStart.current;
+    if (anchor) {
       lastScreen.current = s;
-      setPreview({
-        a: drawing.current.start,
-        b: toImage(s),
-        color: activeColor,
-        width: activeWidth,
-        kind: tool === 'calibrate' ? 'calibrate' : 'dimension',
-      });
+      setPreview({ a: anchor, b: toImage(s), color: activeColor, width: activeWidth, kind: previewKind() });
       maybeAutoPan(s);
     }
   };
@@ -293,30 +382,77 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const down = downScreen.current;
     const moved = down ? Math.hypot(s.x - down.x, s.y - down.y) : 0;
 
+    if (moving.current) {
+      moving.current = null;
+      setGrabbing(false);
+      downScreen.current = null;
+      return;
+    }
+
     if (panning.current) {
       panning.current = null;
       setGrabbing(false);
       // A pan tool "click" (no real drag) = selection hit-test / deselect.
       if (tool === 'pan' && !spaceDown && moved < MIN_DRAG_PX) {
-        const hit = hitTest(s);
-        onSelect(hit);
+        onSelect(hitTest(s));
       }
       downScreen.current = null;
       return;
     }
 
-    if (drawing.current) {
+    // Second click of a click-to-place sequence: finalize at this point.
+    // Do not treat pointerleave as this click — leaving the canvas must not
+    // cancel an armed first point (that is why click-to-place felt broken).
+    if (pendingStart.current != null) {
+      const a = pendingStart.current;
+      const b = toImage(s);
+      pendingStart.current = null;
       stopAutoPan();
       lastScreen.current = null;
+      downScreen.current = null;
+      setPreview(null);
+      setPlacing(false);
+      finalizeLine(a, b);
+      return;
+    }
+
+    if (drawing.current) {
       const a = drawing.current.start;
       const b = toImage(s);
       drawing.current = null;
-      setPreview(null);
-      downScreen.current = null;
       if (moved >= MIN_DRAG_PX) {
-        if (tool === 'calibrate') onDrawCalibration(a, b);
-        else onAddDimension(a, b);
+        // Dragged: finalize immediately (press-drag-release).
+        stopAutoPan();
+        lastScreen.current = null;
+        downScreen.current = null;
+        setPreview(null);
+        setPlacing(false);
+        finalizeLine(a, b);
+      } else {
+        // Clicked: arm the first endpoint. The rubber-band then follows the
+        // cursor on hover — no need to keep the button down.
+        pendingStart.current = a;
+        setPreview({ a, b: a, color: activeColor, width: activeWidth, kind: previewKind() });
+        setPlacing(true);
+        downScreen.current = null;
       }
+    }
+  };
+
+  /** Abort a press-drag / pan if the pointer is cancelled. Keep an armed click. */
+  const handlePointerCancel = () => {
+    drawing.current = null;
+    panning.current = null;
+    moving.current = null;
+    setGrabbing(false);
+    downScreen.current = null;
+    stopAutoPan();
+    if (pendingStart.current) {
+      const a = pendingStart.current;
+      setPreview({ a, b: a, color: activeColor, width: activeWidth, kind: previewKind() });
+    } else {
+      setPreview(null);
+      setPlacing(false);
     }
   };
 
@@ -347,9 +483,11 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const cursor = grabbing
     ? 'grabbing'
-    : tool === 'pan' || spaceDown
+    : spaceDown
       ? 'grab'
-      : 'crosshair';
+      : tool === 'pan'
+        ? (locked ? 'grab' : 'move')
+        : 'crosshair';
 
   return (
     <div ref={containerRef} className="relative w-full h-full overflow-hidden rounded-xl">
@@ -360,9 +498,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
         onWheel={handleWheel}
       />
+      {placing && (tool === 'dimension' || tool === 'calibrate') && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg">
+          Click the other end · Esc to cancel
+        </div>
+      )}
     </div>
   );
 });
