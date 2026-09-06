@@ -42,6 +42,8 @@ const AppLayout: React.FC = () => {
   const { role, canEdit } = useAuth();
   const [view, setView]                     = useState<ViewKey>(() => {
     try {
+      const q = new URLSearchParams(window.location.search).get('view');
+      if (q && q in titles) return q as ViewKey;
       const stored = sessionStorage.getItem('itdg-view');
       if (stored && stored in titles) return stored as ViewKey;
     } catch { /* private mode */ }
@@ -344,6 +346,13 @@ const AppLayout: React.FC = () => {
 
   useEffect(() => {
     try { sessionStorage.setItem('itdg-view', view); } catch { /* ignore */ }
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('view') !== view) {
+        url.searchParams.set('view', view);
+        window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      }
+    } catch { /* ignore */ }
   }, [view]);
 
   useEffect(() => {
