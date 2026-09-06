@@ -108,6 +108,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const viewRef = useRef({ scale, offset });
   useEffect(() => { viewRef.current = { scale, offset }; }, [scale, offset]);
   const needsFit = useRef(true);
+  const lastBox = useRef({ w: 0, h: 0 });
   const pointers = useRef<Map<number, Pt>>(new Map());
   const pinch = useRef<{
     startDist: number;
@@ -143,7 +144,17 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (!needsFit.current || !size.w || !size.h || !baseWidth || !baseHeight) return;
     fit();
     needsFit.current = false;
+    lastBox.current = { w: size.w, h: size.h };
   }, [base, baseWidth, baseHeight, size.w, size.h, fit]);
+
+  // Phone rotate (or a large layout change) should re-fit so the plan stays on screen.
+  useEffect(() => {
+    if (!size.w || !size.h || !baseWidth || !baseHeight) return;
+    const prev = lastBox.current;
+    const flipped = prev.w > 0 && (prev.w > prev.h) !== (size.w > size.h);
+    lastBox.current = { w: size.w, h: size.h };
+    if (flipped) fit();
+  }, [size.w, size.h, baseWidth, baseHeight, fit]);
 
   // Hold SPACE to grab/pan the plan regardless of the active tool (like Figma/Bluebeam).
   useEffect(() => {
