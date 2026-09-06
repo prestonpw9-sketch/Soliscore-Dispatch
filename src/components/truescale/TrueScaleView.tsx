@@ -490,7 +490,9 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
         <button
           type="button"
           onClick={() => setPickerOpen(true)}
-          className="lg:hidden shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-left"
+          className={`lg:hidden shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-left ${
+            source ? '[@media(max-height:500px)]:hidden' : ''
+          }`}
         >
           <MapIcon className="w-4 h-4 text-blue-500 shrink-0" />
           <span className="font-bold text-sm text-slate-800 dark:text-white truncate flex-1">
@@ -499,7 +501,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
         </button>
         {/* Toolbar */}
-        <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2.5 border-b border-slate-100 dark:border-slate-800 overflow-x-auto shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2.5 [@media(max-height:500px)]:py-1 border-b border-slate-100 dark:border-slate-800 overflow-x-auto shrink-0">
           {toolBtn('dimension', <Ruler className="w-4 h-4" />, 'Dimension')}
           {toolBtn('calibrate', <Crosshair className="w-4 h-4" />, 'Set Scale')}
           {toolBtn('pan', <Move className="w-4 h-4" />, 'Pan / Select')}
@@ -688,6 +690,16 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
                 </button>
               </div>
             </div>
+          )}
+          {source && (
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="ts-plans-fab absolute top-3 left-3 z-10 items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              Plans
+            </button>
           )}
           {render && (
             <TrueScaleCanvas

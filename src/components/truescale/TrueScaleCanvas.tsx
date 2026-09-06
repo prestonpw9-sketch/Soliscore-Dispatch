@@ -129,13 +129,17 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const fit = useCallback(() => {
     if (!baseWidth || !baseHeight || !size.w || !size.h) return;
     const contain = Math.min(size.w / baseWidth, size.h / baseHeight) * 0.95;
-    // Short landscape phones: fill the width so linework is workable; pan vertically.
     const fillWidth = (size.w / baseWidth) * 0.98;
-    const ns = (size.h < 320 ? Math.max(contain, fillWidth) : contain) || 1;
+    // Wide-and-short stage (phone landscape): a portrait sheet contain-fits to a
+    // postage stamp. Fill the width and pan vertically so linework is usable.
+    const landscapeStage = size.w > size.h * 1.15;
+    const heightConstrained = size.h / baseHeight < size.w / baseWidth;
+    const fillWide = landscapeStage && heightConstrained;
+    const ns = (fillWide ? fillWidth : contain) || 1;
     setScale(ns);
     setOffset({
       x: (size.w - baseWidth * ns) / 2,
-      y: size.h < 320 ? 8 : (size.h - baseHeight * ns) / 2,
+      y: fillWide ? 8 : (size.h - baseHeight * ns) / 2,
     });
   }, [baseWidth, baseHeight, size]);
 
@@ -210,13 +214,21 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     });
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
-    const onWinResize = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    const onWinResize = () => {
+      const apply = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+      apply();
+      // iOS often reports stale layout until the next frame after rotate.
+      requestAnimationFrame(apply);
+    };
     window.addEventListener('resize', onWinResize);
     window.addEventListener('orientationchange', onWinResize);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', onWinResize);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
       window.removeEventListener('orientationchange', onWinResize);
+      vv?.removeEventListener('resize', onWinResize);
     };
   }, []);
 

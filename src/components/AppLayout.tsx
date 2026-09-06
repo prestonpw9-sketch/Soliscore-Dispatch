@@ -359,7 +359,7 @@ const AppLayout: React.FC = () => {
         {/* Header */}
         <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-20 shrink-0">
           <div className={`flex items-center gap-2 sm:gap-3 px-3 lg:px-6 ${
-            trueScale ? 'py-2 lg:py-3' : 'py-3 px-4'
+            trueScale ? 'py-2 lg:py-3 [@media(max-height:500px)]:py-1' : 'py-3 px-4'
           }`}>
 
             <button
@@ -453,7 +453,7 @@ const AppLayout: React.FC = () => {
 
         {/* Main content */}
         <main className={trueScale
-          ? 'flex-1 min-h-0 overflow-hidden p-2 sm:p-3 lg:p-6 w-full flex flex-col'
+          ? 'flex-1 min-h-0 overflow-hidden p-2 sm:p-3 lg:p-6 [@media(max-height:500px)]:p-1 w-full flex flex-col'
           : 'flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto'
         }>
           {/* These views don't depend on dispatch data, so they render immediately
