@@ -107,6 +107,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const lastScreen = useRef<Pt | null>(null);
   const viewRef = useRef({ scale, offset });
   useEffect(() => { viewRef.current = { scale, offset }; }, [scale, offset]);
+  const needsFit = useRef(true);
+  const pointers = useRef<Map<number, Pt>>(new Map());
+  const pinch = useRef<{
+    startDist: number;
+    startScale: number;
+    startOffset: Pt;
+    startMid: Pt;
+  } | null>(null);
 
   const toImage = useCallback(
     (s: Pt): Pt => ({ x: (s.x - offset.x) / scale, y: (s.y - offset.y) / scale }),
@@ -128,11 +136,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     });
   }, [baseWidth, baseHeight, size]);
 
-  // Fit whenever a new base image is loaded or container first sizes up.
+  // Fit when a new plan loads, or the first time the canvas gets a real size
+  // (mobile layout / rotate can start at 0×0).
+  useEffect(() => { needsFit.current = true; }, [base, baseWidth, baseHeight]);
   useEffect(() => {
+    if (!needsFit.current || !size.w || !size.h || !baseWidth || !baseHeight) return;
     fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, baseWidth, baseHeight]);
+    needsFit.current = false;
+  }, [base, baseWidth, baseHeight, size.w, size.h, fit]);
 
   // Hold SPACE to grab/pan the plan regardless of the active tool (like Figma/Bluebeam).
   useEffect(() => {
@@ -405,9 +416,33 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 && e.button !== 1) return;
+    if (e.pointerType !== 'touch' && e.button !== 0 && e.button !== 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const s = getScreen(e);
+    pointers.current.set(e.pointerId, s);
+
+    if (pointers.current.size >= 2) {
+      panning.current = null;
+      drawing.current = null;
+      moving.current = null;
+      pendingStart.current = null;
+      stopAutoPan();
+      setPreview(null);
+      setPlacing(false);
+      setGrabbing(false);
+      const pts = [...pointers.current.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const cur = viewRef.current;
+      pinch.current = {
+        startDist: Math.max(dist, 1),
+        startScale: cur.scale,
+        startOffset: { ...cur.offset },
+        startMid: mid,
+      };
+      return;
+    }
+
     downScreen.current = s;
 
     // Pan the plan: Pan tool, middle-mouse, or SPACE held — always available.
@@ -438,6 +473,19 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const handlePointerMove = (e: React.PointerEvent) => {
     const s = getScreen(e);
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, s);
+    if (pinch.current && pointers.current.size >= 2) {
+      const pts = [...pointers.current.values()].slice(0, 2);
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const p = pinch.current;
+      const ns = Math.max(0.05, Math.min(40, p.startScale * (dist / p.startDist)));
+      const imgX = (p.startMid.x - p.startOffset.x) / p.startScale;
+      const imgY = (p.startMid.y - p.startOffset.y) / p.startScale;
+      setScale(ns);
+      setOffset({ x: mid.x - imgX * ns, y: mid.y - imgY * ns });
+      return;
+    }
     if (moving.current) {
       const cur = toImage(s);
       const m = moving.current;
@@ -470,6 +518,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2 && pinch.current) {
+      pinch.current = null;
+      setGrabbing(false);
+      downScreen.current = null;
+      return;
+    }
+
     const s = getScreen(e);
     const down = downScreen.current;
     const moved = down ? Math.hypot(s.x - down.x, s.y - down.y) : 0;
@@ -532,7 +588,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   /** Abort a press-drag / pan if the pointer is cancelled. Keep an armed click. */
-  const handlePointerCancel = () => {
+  const handlePointerCancel = (e?: React.PointerEvent) => {
+    if (e) pointers.current.delete(e.pointerId);
+    else pointers.current.clear();
+    pinch.current = null;
     drawing.current = null;
     panning.current = null;
     moving.current = null;
@@ -594,7 +653,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       <canvas
         ref={canvasRef}
         className="absolute inset-0 touch-none select-none"
-        style={{ cursor }}
+        style={{ cursor, touchAction: 'none' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

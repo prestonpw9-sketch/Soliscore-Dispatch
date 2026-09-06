@@ -60,6 +60,17 @@
   color: var(--text-color);
 }
 
+/* TrueScale needs a locked viewport so the plan canvas can fill the screen
+   (including landscape phones) instead of scrolling the chrome off-canvas. */
+html.truescale-active,
+html.truescale-active body,
+html.truescale-active #root {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 /* ── Card ──────────────────────────────────────────────────────────────── */
 
 .card {
