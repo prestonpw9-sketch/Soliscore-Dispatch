@@ -108,7 +108,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const viewRef = useRef({ scale, offset });
   useEffect(() => { viewRef.current = { scale, offset }; }, [scale, offset]);
   const needsFit = useRef(true);
-  const lastBox = useRef({ w: 0, h: 0 });
+  const lastFitBox = useRef({ w: 0, h: 0 });
   const pointers = useRef<Map<number, Pt>>(new Map());
   const pinch = useRef<{
     startDist: number;
@@ -141,6 +141,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       x: (size.w - baseWidth * ns) / 2,
       y: fillWide ? 8 : (size.h - baseHeight * ns) / 2,
     });
+    lastFitBox.current = { w: size.w, h: size.h };
   }, [baseWidth, baseHeight, size]);
 
   // Fit when a new plan loads, or the first time the canvas gets a real size
@@ -150,17 +151,25 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (!needsFit.current || !size.w || !size.h || !baseWidth || !baseHeight) return;
     fit();
     needsFit.current = false;
-    lastBox.current = { w: size.w, h: size.h };
   }, [base, baseWidth, baseHeight, size.w, size.h, fit]);
 
-  // Phone rotate (or a large layout change) should re-fit so the plan stays on screen.
+  // Re-fit against the last fitted box (not every observer tick). Slow window
+  // drags and phone rotates arrive as many small size changes; tracking each
+  // tick never accumulated a jump, so the plan stayed at the old zoom.
   useEffect(() => {
     if (!size.w || !size.h || !baseWidth || !baseHeight) return;
-    const prev = lastBox.current;
-    const flipped = prev.w > 0 && (prev.w > prev.h) !== (size.w > size.h);
-    const jumped = prev.w > 0 && (Math.abs(size.w - prev.w) > 64 || Math.abs(size.h - prev.h) > 64);
-    lastBox.current = { w: size.w, h: size.h };
-    if (flipped || jumped) fit();
+    const prev = lastFitBox.current;
+    if (!prev.w) return;
+    const flipped = (prev.w > prev.h) !== (size.w > size.h);
+    const dw = Math.abs(size.w - prev.w);
+    const dh = Math.abs(size.h - prev.h);
+    if (flipped || dw > 40 || dh > 40) {
+      fit();
+      return;
+    }
+    if (dw < 16 && dh < 16) return;
+    const t = window.setTimeout(() => fit(), 150);
+    return () => window.clearTimeout(t);
   }, [size.w, size.h, baseWidth, baseHeight, fit]);
 
   // Hold SPACE to grab/pan the plan regardless of the active tool (like Figma/Bluebeam).
