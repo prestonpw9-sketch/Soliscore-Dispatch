@@ -266,8 +266,12 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
           ...view,
         });
         setLensPending(false);
-      }).catch(() => {
+      }).catch((err) => {
         if (!cancelled) setLensPending(false);
+        const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+        if (name !== 'RenderingCancelledException') {
+          console.warn('TrueScale PDF lens failed', err);
+        }
       });
     }, 90);
 
@@ -601,6 +605,18 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
           Sharpening linework…
         </div>
       )}
+      <div className="pointer-events-none absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg tabular-nums">
+        {Math.round(scale * 100)}%
+        {lensTile &&
+        pdfLens &&
+        lensTile.pdf === pdfLens.pdf &&
+        lensTile.pageNumber === pdfLens.pageNumber &&
+        Math.abs(lensTile.scale - scale) < 1e-6 &&
+        Math.abs(lensTile.ox - offset.x) < 0.5 &&
+        Math.abs(lensTile.oy - offset.y) < 0.5
+          ? ' · sharp'
+          : ''}
+      </div>
     </div>
   );
 });

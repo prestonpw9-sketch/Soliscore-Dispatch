@@ -74,7 +74,7 @@ export interface PdfLensRegion {
 
 /** True when the on-screen view is stretching the overview bitmap. */
 export function needsPdfLens(viewScale: number, dpr: number): boolean {
-  return viewScale * dpr > 1.15;
+  return viewScale * dpr > 1;
 }
 
 export function pdfLensExtra(viewScale: number, dpr: number, srcW: number, srcH: number): number {
