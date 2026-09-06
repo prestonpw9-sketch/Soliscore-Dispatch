@@ -1,6 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { formatEmergencyPageMessage, notifyCrew } from "../_shared/twilio.ts";
+import { formatEmergencyPageMessage, loadCrewDirectory, notifyCrew } from "../_shared/twilio.ts";
+import { phonesMatch } from "../_shared/phone.ts";
+import { shouldSkipSuperintendentAi } from "../_shared/crewInbound.ts";
+import {
+  formatBoardSpan,
+  phoenixNowLabel,
+  phoenixYMD,
+  resolveBoardDate,
+} from "../_shared/jobDate.ts";
 
 // ---- SMS COMPLIANCE (Twilio / carrier required) ----------------------------
 const COMPANY = "Solidcore Plumbing, LLC";
@@ -45,34 +53,15 @@ function emptyTwiml() {
   });
 }
 
-/** Calendar YMD in America/Phoenix (Solidcore's local day). */
-function phoenixYMD(offsetDays = 0): string {
-  const now = new Date();
-  // Shift by offset in Phoenix-local terms: format today, then add days via UTC noon anchor.
-  const todayStr = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Phoenix",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now); // YYYY-MM-DD
-  const [y, m, d] = todayStr.split("-").map(Number);
-  const anchor = new Date(Date.UTC(y, m - 1, d + offsetDays, 12, 0, 0));
-  const yyyy = anchor.getUTCFullYear();
-  const mm = String(anchor.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(anchor.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function nextDayDate(): string {
-  return phoenixYMD(1);
-}
-
-/** Accept YYYY-MM-DD from the model; otherwise fall back to next Phoenix day. */
+/** Model date → board YYYY-MM-DD, forcing stale years (2023, etc.) onto this/next year. */
 function resolveJobDate(raw: unknown): string {
-  if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
-    return raw.trim();
-  }
-  return nextDayDate();
+  return resolveBoardDate(raw, phoenixYMD());
+}
+
+function resolveJobEndDate(rawEnd: unknown, start: string): string {
+  if (rawEnd == null || String(rawEnd).trim() === "") return start;
+  const end = resolveBoardDate(rawEnd, phoenixYMD());
+  return end < start ? start : end;
 }
 
 function normalizePhase(raw: unknown): string {
@@ -80,7 +69,14 @@ function normalizePhase(raw: unknown): string {
   return "Service Call";
 }
 
-const SYSTEM_PROMPT = `You are the automated dispatch assistant for Solidcore Plumbing. Your goal is to identify Job Requests from superintendent / customer texts and put them on the dispatch board.
+function buildSystemPrompt(today: string): string {
+  const year = today.slice(0, 4);
+  const nextYear = String(Number(year) + 1);
+  return `You are the automated dispatch assistant for Solidcore Plumbing. Your goal is to identify Job Requests from superintendent / customer texts and put them on the dispatch board.
+
+TODAY is ${phoenixNowLabel()} (${today}) in America/Phoenix. The current year is ${year}.
+When a superintendent gives a month/day with no year ("11/20", "November 20", "Thursday"), convert it using ${year} — or ${nextYear} if that month/day has already passed this year.
+NEVER use 2023, 2024, or 2025 for new bookings. Those years are in the past. Always include ${year} (or ${nextYear}) in target_date.
 
 Rule 1: Domain Boundaries (Out of Scope)
 You are a plumbing dispatcher, not a personal assistant. If a user asks for food, drinks, or non-plumbing services, gently reject the request. Do NOT log these as jobs.
@@ -98,7 +94,7 @@ Rule 5: Logging Jobs Onto The Schedule Board
 Do NOT invent a week-out booking window. Do NOT tell anyone you are booking a week out.
 
 Date rules for STANDARD jobs:
-- If the superintendent names a date or timing ("tomorrow", "Thursday", "July 25", "need it Friday", "ASAP", "needed tomorrow", "pour is Monday"), convert that to YYYY-MM-DD and pass it as target_date on log_job.
+- If the superintendent names a date or timing ("tomorrow", "Thursday", "July 25", "need it Friday", "ASAP", "needed tomorrow", "pour is Monday", "11/20-11/30"), convert that to YYYY-MM-DD and pass it as target_date on log_job. For a range, also pass target_end_date.
 - If they need it ASAP / as soon as possible / urgently / "needed" without a specific day, use tomorrow's date.
 - If they give no timing at all, omit target_date (the system defaults to tomorrow).
 - Do NOT ask them to pick a date or time — honor what they volunteer; otherwise default to next day.
@@ -106,16 +102,17 @@ Date rules for STANDARD jobs:
 - STANDARD jobs (repairs, installs, trim, toilet seats, fixtures, warranty work, etc.):
   Once you have BOTH (a) what work is needed AND (b) a location (street address OR lot + community/subdivision), you MUST call the 'log_job' tool. Saying you "logged" or "noted" a job WITHOUT calling the tool is a failure — the board will stay empty.
   A lot number plus community (e.g. "lot 415 Stone Canyon") is enough location to log. Prefer logging first; you may still ask for a full street address afterward if it would help the crew.
-  After a successful log_job call, confirm the job is on the board for the scheduled date and that Preston will follow up if needed.
+  After a successful log_job call, confirm the job is on the board for the scheduled date (include the year ${year}) and that Preston will follow up if needed.
 
-- CRITICAL construction phases (inspection, pre-slab, roof penetration):
+- CRITICAL construction phases (inspection, pre-slab, roof penetration, trim on a hard window):
   Immediately ask for their hard deadline, pour date, or crane schedule.
-  Once they provide a deadline/date, you MUST call 'schedule_job' with that date.
+  Once they provide a deadline/date, you MUST call 'schedule_job' with that date (and target_end_date when they give a range like 11/20-11/30).
 
 How to Respond:
 - If work type is missing: ask what needs to be done.
 - If location is missing: ask for address or lot/community.
-- If Everything is Complete: call the correct tool FIRST, then confirm what was added to the board and for which date.`;
+- If Everything is Complete: call the correct tool FIRST, then confirm what was added to the board and for which date (with year ${year}).`;
+}
 
 const tools = [
   {
@@ -144,7 +141,12 @@ const tools = [
           target_date: {
             type: "string",
             description:
-              "Board date YYYY-MM-DD. Use the superintendent's requested date when given; use tomorrow for ASAP/needed/urgent with no day; omit to default to tomorrow.",
+              "Board start date YYYY-MM-DD in the CURRENT year (never 2023). Use the superintendent's requested date when given; use tomorrow for ASAP/needed/urgent with no day; omit to default to tomorrow.",
+          },
+          target_end_date: {
+            type: "string",
+            description:
+              "Optional board end date YYYY-MM-DD when they give a range (e.g. 11/20-11/30). Same year rules as target_date.",
           },
           phase: {
             type: "string",
@@ -180,7 +182,13 @@ const tools = [
           },
           target_date: {
             type: "string",
-            description: "The requested date or deadline in YYYY-MM-DD format",
+            description:
+              "The requested start date or deadline in YYYY-MM-DD format using the CURRENT year (never 2023).",
+          },
+          target_end_date: {
+            type: "string",
+            description:
+              "Optional end date YYYY-MM-DD when they give a range (e.g. 11/20-11/30).",
           },
           address: {
             type: "string",
@@ -212,6 +220,28 @@ type JobInsert = {
   phase: string;
   service_type: string | null;
 };
+
+async function recordScheduleAlert(
+  supabase: ReturnType<typeof createClient>,
+  row: {
+    job_id: number | string | null;
+    title: string;
+    location: string;
+    scheduled_date: string;
+    scheduled_end_date: string;
+    phone_number: string;
+  },
+) {
+  const { error } = await supabase.from("dispatch_schedule_alerts").insert({
+    job_id: row.job_id,
+    title: row.title,
+    location: row.location,
+    scheduled_date: row.scheduled_date,
+    scheduled_end_date: row.scheduled_end_date,
+    phone_number: row.phone_number,
+  });
+  if (error) console.error("dispatch_schedule_alerts insert failed:", error);
+}
 
 serve(async (req) => {
   try {
@@ -273,6 +303,40 @@ serve(async (req) => {
       return emptyTwiml();
     }
 
+    // Same Twilio From is used by in-app Copilot contact_crew / on-call pages.
+    // Plumber replies must land in Comm Matrix, but must NOT run the job-booking AI
+    // (and must NOT send a "logged it on the board" text back to on-call).
+    const crew = await loadCrewDirectory(supabase);
+    const crewSender = crew.find((c) => c.phone && phonesMatch(c.phone, phoneNumber));
+    if (crewSender) {
+      const { data: lastOut } = await supabase
+        .from("dispatch_messages")
+        .select("created_at")
+        .eq("phone_number", phoneNumber)
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (
+        shouldSkipSuperintendentAi({
+          isDirectoryCrew: true,
+          isOnCall: crewSender.emergency_contact,
+          lastOutboundAt: lastOut?.created_at ? String(lastOut.created_at) : null,
+        })
+      ) {
+        if (incomingMessage) {
+          await supabase.from("dispatch_messages").insert([
+            { phone_number: phoneNumber, message: incomingMessage, direction: "inbound" },
+          ]);
+        }
+        console.log("crew inbound — skipping superintendent job AI", {
+          name: crewSender.name,
+          onCall: crewSender.emergency_contact,
+        });
+        return emptyTwiml();
+      }
+    }
+
     // ---- Normal AI dispatch flow -----------------------------------------
     const { data: previousMessages } = await supabase
       .from("dispatch_messages")
@@ -301,7 +365,7 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "gpt-4o",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: buildSystemPrompt(phoenixYMD()) },
           ...history,
           { role: "user", content: incomingMessage },
         ],
@@ -342,7 +406,10 @@ serve(async (req) => {
           const phase = normalizePhase(args.phase);
           const notes = typeof args.notes === "string" ? args.notes.trim() : "";
           const date = resolveJobDate(args.target_date);
+          const endDate = resolveJobEndDate(args.target_end_date, date);
+          const when = formatBoardSpan(date, endDate);
           const description = [jobType, notes].filter(Boolean).join(" — ");
+          console.log("log_job dates", { raw: args.target_date, rawEnd: args.target_end_date, date, endDate });
 
           const row: JobInsert = {
             customer_phone: phoneNumber,
@@ -351,16 +418,24 @@ serve(async (req) => {
             description,
             status: "scheduled",
             date,
-            end_date: date,
+            end_date: endDate,
             phase,
             service_type: phase === "Service Call" ? "Service Call" : null,
           };
 
-          const { error: dbError } = await supabase.from("jobs").insert([row]);
+          const { data: inserted, error: dbError } = await supabase.from("jobs").insert([row]).select("id").single();
           if (dbError) {
             console.error("log_job insert failed:", dbError);
             anyFailed = true;
           } else {
+            await recordScheduleAlert(supabase, {
+              job_id: inserted?.id ?? null,
+              title,
+              location: address,
+              scheduled_date: date,
+              scheduled_end_date: endDate,
+              phone_number: phoneNumber,
+            });
             const isEmergency = args.is_emergency === true;
             if (isEmergency) {
               const page = await notifyCrew(supabase, {
@@ -376,26 +451,29 @@ serve(async (req) => {
               const names = page.sent.map((s) => s.name).join(", ");
               if (page.sent.length) {
                 confirmations.push(
-                  `URGENT: Emergency flagged! On-call notified (${names}). I've put ${title} at ${address} on the schedule for ${date}.`,
+                  `URGENT: Emergency flagged! On-call notified (${names}). I've put ${title} at ${address} on the schedule for ${when}.`,
                 );
               } else {
                 console.error("emergency page failed:", page.error, page.skipped);
                 confirmations.push(
-                  `URGENT: Emergency flagged! I logged ${title} at ${address} for ${date}, but could not reach on-call plumbers yet — Preston needs to call the crew. ${page.error ?? ""}`.trim(),
+                  `URGENT: Emergency flagged! I logged ${title} at ${address} for ${when}, but could not reach on-call plumbers yet — Preston needs to call the crew. ${page.error ?? ""}`.trim(),
                 );
               }
             } else {
               confirmations.push(
-                `I've put ${title} at ${address} on the schedule for ${date}. Preston will follow up if anything changes.`,
+                `I've put ${title} at ${address} on the schedule for ${when}. Preston will follow up if anything changes.`,
               );
             }
           }
         } else if (name === "schedule_job") {
           const jobType = String(args.job_type || "Critical phase").trim();
           const targetDate = resolveJobDate(args.target_date);
+          const endDate = resolveJobEndDate(args.target_end_date, targetDate);
+          const when = formatBoardSpan(targetDate, endDate);
           const address = String(args.address || "Address pending").trim();
           const title = String(args.title || `${jobType} — ${address}`).trim();
           const phase = normalizePhase(args.phase ?? "Rough-In");
+          console.log("schedule_job dates", { raw: args.target_date, rawEnd: args.target_end_date, targetDate, endDate });
 
           const row: JobInsert = {
             customer_phone: phoneNumber,
@@ -404,18 +482,26 @@ serve(async (req) => {
             description: jobType,
             status: "scheduled",
             date: targetDate,
-            end_date: targetDate,
+            end_date: endDate,
             phase,
             service_type: null,
           };
 
-          const { error: dbError } = await supabase.from("jobs").insert([row]);
+          const { data: inserted, error: dbError } = await supabase.from("jobs").insert([row]).select("id").single();
           if (dbError) {
             console.error("schedule_job insert failed:", dbError);
             anyFailed = true;
           } else {
+            await recordScheduleAlert(supabase, {
+              job_id: inserted?.id ?? null,
+              title,
+              location: address,
+              scheduled_date: targetDate,
+              scheduled_end_date: endDate,
+              phone_number: phoneNumber,
+            });
             confirmations.push(
-              `Perfect. I've locked in the ${jobType} for ${targetDate} on the board. Preston will review it and confirm the specific time slot with you.`,
+              `Perfect. I've locked in the ${jobType} for ${when} on the board. Preston will review it and confirm the specific time slot with you.`,
             );
           }
         } else {

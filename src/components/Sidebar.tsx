@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { clsx } from 'clsx';
 import {
   Sparkles,
+  CalendarPlus,
   MessageSquare,
   LayoutDashboard,
   CalendarRange,
@@ -18,7 +19,7 @@ import {
 import { AIAssistantPanel } from '@/components/AIAssistant/AIAssistantPanel';
 import SMSPanel from '@/components/SMSPanel';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
-import { useTwilioMessages } from '@/hooks/useTwilioMessages';
+import { useDispatchInbox } from '@/hooks/useDispatchInbox';
 import { AI_PROVIDER_CONFIGS } from '@/services/ai/types';
 import { useAuth } from '@/lib/AuthContext';
 import { useTheme } from '@/lib/ThemeContext';
@@ -75,7 +76,13 @@ export default function Sidebar({
   const [smsOpen, setSmsOpen] = useState(false);
 
   const { activeProvider } = useAIProviderContext();
-  const { unreadCount }    = useTwilioMessages();
+  const {
+    unreadCount,
+    scheduledAlerts,
+    scheduledAlertCount,
+    markInboxSeen,
+    markAlertsSeen,
+  } = useDispatchInbox();
   const { session, signOut, role } = useAuth();
   const { resolved, setMode } = useTheme();
   const config             = AI_PROVIDER_CONFIGS[activeProvider];
@@ -84,14 +91,24 @@ export default function Sidebar({
   // ── Handlers ─────────────────────────────────────────────────────────────
 
 
+  const closeSms = () => {
+    void markAlertsSeen();
+    setSmsOpen(false);
+  };
+
   const handleSmsOpen = () => {
-    setSmsOpen(prev => !prev);
+    setSmsOpen(prev => {
+      const next = !prev;
+      if (next) void markInboxSeen();
+      else void markAlertsSeen();
+      return next;
+    });
     if (aiOpen) setAiOpen(false);
   };
 
   const handleAiOpen = () => {
     setAiOpen(prev => !prev);
-    if (smsOpen) setSmsOpen(false);
+    if (smsOpen) closeSms();
   };
 
   const handleNavClick = (viewTarget: ViewKey) => {
@@ -185,17 +202,28 @@ export default function Sidebar({
             type="button"
             onClick={handleSmsOpen}
             className={clsx(
-              'w-full flex items-center px-3 py-2 rounded-xl text-xs transition-colors font-bold',
+              'w-full flex flex-col items-stretch px-3 py-2 rounded-xl text-xs transition-colors font-bold',
               smsOpen
                 ? 'bg-emerald-600/10 text-emerald-400 border border-emerald-500/20'
                 : 'hover:bg-slate-800/80 hover:text-white text-slate-400'
             )}
           >
-            <MessageSquare className="w-4 h-4 mr-3 shrink-0" />
-            <span>Messaging Matrix</span>
-            {unreadCount > 0 && (
-              <span className="ml-auto text-[10px] font-black bg-emerald-500 text-white rounded-full min-w-5 h-5 px-1 flex items-center justify-center animate-pulse">
-                {unreadCount > 9 ? '9+' : unreadCount}
+            <span className="flex items-center w-full">
+              <MessageSquare className="w-4 h-4 mr-3 shrink-0" />
+              <span>Messaging Matrix</span>
+              {unreadCount > 0 && (
+                <span className="ml-auto text-[10px] font-black bg-emerald-500 text-white rounded-full min-w-5 h-5 px-1 flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </span>
+            {scheduledAlertCount > 0 && (
+              <span
+                className="ml-7 mt-1.5 inline-flex items-center gap-1 self-start text-[10px] font-black uppercase tracking-wide bg-amber-500 text-slate-950 rounded-md px-2 py-0.5 animate-pulse"
+                title={`${scheduledAlertCount} job${scheduledAlertCount === 1 ? '' : 's'} just booked on the schedule`}
+              >
+                <CalendarPlus className="w-3 h-3" />
+                Job booked{scheduledAlertCount > 1 ? ` · ${scheduledAlertCount}` : ''}
               </span>
             )}
           </button>
@@ -269,9 +297,13 @@ export default function Sidebar({
       {smsOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-6 overflow-y-auto"
-          onClick={e => { if (e.target === e.currentTarget) setSmsOpen(false); }}
+          onClick={e => { if (e.target === e.currentTarget) closeSms(); }}
         >
-          <SMSPanel onClose={() => setSmsOpen(false)} />
+          <SMSPanel
+            onClose={closeSms}
+            scheduledAlerts={scheduledAlerts}
+            onSelectThread={() => void markInboxSeen()}
+          />
         </div>
       )}
     </>

@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/AuthContext';
-import { X, Send, Bot, Smartphone, MessageSquare, Trash2, Phone } from 'lucide-react';
+import { X, Send, Bot, Smartphone, MessageSquare, Trash2, Phone, CalendarPlus } from 'lucide-react';
 import { formatPhoneDisplay, phonesMatch } from '@/lib/phone';
+import { formatBoardSpan } from '@/lib/jobDate';
+import type { ScheduleAlert } from '@/hooks/useDispatchInbox';
 
 /** ITDG dispatch line — shown in Comm Matrix so the team always has it handy. */
 export const DISPATCH_PHONE = '(520) 650-6100';
@@ -24,9 +26,11 @@ interface DirectoryTech {
 
 interface SMSPanelProps {
   onClose: () => void;
+  scheduledAlerts?: ScheduleAlert[];
+  onSelectThread?: () => void;
 }
 
-export default function SMSPanel({ onClose }: SMSPanelProps) {
+export default function SMSPanel({ onClose, scheduledAlerts = [], onSelectThread }: SMSPanelProps) {
   const { isOwner } = useAuth();
   const [messages, setMessages] = useState<DispatchMessage[]>([]);
   const [activePhone, setActivePhone] = useState<string | null>(null);
@@ -218,6 +222,38 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
           </a>
         </div>
 
+        {scheduledAlerts.length > 0 && (
+          <div className="p-3 space-y-2 bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
+            <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">
+              <CalendarPlus className="w-3.5 h-3.5" />
+              Just booked on the schedule
+            </div>
+            {scheduledAlerts.map(alert => (
+              <button
+                key={alert.id}
+                type="button"
+                onClick={() => {
+                  if (alert.phoneNumber) {
+                    setActivePhone(alert.phoneNumber);
+                    onSelectThread?.();
+                  }
+                }}
+                className="w-full text-left rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-500/30 px-3 py-2 shadow-sm hover:border-amber-400 transition-colors"
+              >
+                <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                  {alert.title}
+                </div>
+                <div className="text-xs font-semibold text-amber-800 dark:text-amber-300 mt-0.5">
+                  {formatBoardSpan(alert.scheduledDate, alert.scheduledEndDate)}
+                </div>
+                {alert.location && (
+                  <div className="text-[11px] text-slate-500 truncate mt-0.5">{alert.location}</div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           {uniquePhones.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-sm font-medium">
@@ -232,7 +268,10 @@ export default function SMSPanel({ onClose }: SMSPanelProps) {
                 <button
                   key={phone}
                   type="button"
-                  onClick={() => setActivePhone(phone)}
+                  onClick={() => {
+                    setActivePhone(phone);
+                    onSelectThread?.();
+                  }}
                   className={`w-full text-left p-4 border-b border-slate-200 dark:border-slate-800/50 transition-all flex gap-3 ${
                     isActive
                       ? 'bg-white dark:bg-slate-800 border-l-4 border-l-indigo-600 shadow-sm'
