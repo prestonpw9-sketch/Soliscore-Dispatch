@@ -57,20 +57,21 @@ export function useDispatchInbox() {
       };
       return data as InboxStateRow;
     }
+    const alertsEpoch = '1970-01-01T00:00:00.000Z';
     const { data: inserted, error: insertError } = await supabase
       .from('dispatch_inbox_state')
       .insert({
         user_id: userId,
         messages_seen_at: now,
-        alerts_seen_at: now,
+        alerts_seen_at: alertsEpoch,
         updated_at: now,
       })
       .select('messages_seen_at, alerts_seen_at')
       .single();
     if (insertError) {
       console.error('Failed to initialize inbox state:', insertError);
-      seenRef.current = { messages: now, alerts: now };
-      return { messages_seen_at: now, alerts_seen_at: now };
+      seenRef.current = { messages: now, alerts: alertsEpoch };
+      return { messages_seen_at: now, alerts_seen_at: alertsEpoch };
     }
     seenRef.current = {
       messages: String(inserted.messages_seen_at),
