@@ -393,6 +393,26 @@ export const useDispatchData = () => {
     return () => window.removeEventListener('solidcore:data-refresh', onRefresh);
   }, [refresh]);
 
+  // SMS AI (and anyone else) writing jobs should update the board without a manual refresh.
+  useEffect(() => {
+    if (!session) return;
+    const channel = supabase
+      .channel('jobs_live_board')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'jobs' },
+        () => { void refresh(); },
+      )
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('Realtime jobs channel error:', status, err);
+        }
+      });
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [session, refresh]);
+
   // Freeze today's board so the AI can recall assignments after jobs move.
   useEffect(() => {
     if (!session || loading || !canEdit || !jobsFetchOkRef.current) return;
