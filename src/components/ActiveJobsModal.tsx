@@ -94,7 +94,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       .neq('status', 'completed')
       .order('date', { ascending: true });
     if (fetchError) { setError(fetchError.message); }
-    else { setJobs(data ?? []); }
+    else { setJobs((data ?? []).map(j => ({ ...j, phase: normalizePhase(j.phase) }))); }
     setLoading(false);
   };
 
@@ -116,7 +116,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       .single();
     if (insertError) { setError(insertError.message); }
     else if (data) {
-      setJobs(prev => [...prev, data]);
+      setJobs(prev => [...prev, { ...data, phase: normalizePhase(data.phase) }]);
       setNewCustomer('');
       setNewAddress('');
       await onJobsChanged?.();
@@ -160,7 +160,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
     if (updateError) {
       setError(updateError.message);
     } else if (data) {
-      setJobs(prev => prev.map(j => (j.id === id ? data : j)));
+      setJobs(prev => prev.map(j => (j.id === id ? { ...data, phase: normalizePhase(data.phase) } : j)));
       cancelEditing();
       await onJobsChanged?.();
     }
@@ -186,7 +186,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
     if (updateError) {
       setError(updateError.message);
     } else if (data) {
-      setJobs(prev => prev.map(j => (j.id === id ? data : j)));
+      setJobs(prev => prev.map(j => (j.id === id ? { ...data, phase: normalizePhase(data.phase) } : j)));
       await onJobsChanged?.();
     }
     setSaving(false);
