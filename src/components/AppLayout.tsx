@@ -20,6 +20,7 @@ import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
 import { useDispatchWeek } from '@/hooks/useDispatchToday';
 import { useAuth } from '@/lib/AuthContext';
+import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import DispatchBanner from './DispatchBanner';
 
@@ -309,9 +310,17 @@ const AppLayout: React.FC = () => {
 
   const handlePhaseChange = (jobId: string, newPhase: string) => {
     void (async () => {
+      const current = jobs.find(j => j.id === jobId);
+      const gate = canChangePhase(current?.phase, newPhase, { inspectionPassed: true });
+      const blocked = phaseBlockedMessage(gate);
+      if (blocked) {
+        showToast(blocked, 'error');
+        return;
+      }
+      const phase = normalizePhase(newPhase);
       const { error: updateError } = await supabase
         .from('jobs')
-        .update({ phase: newPhase })
+        .update({ phase })
         .eq('id', jobId);
 
       if (updateError) {
