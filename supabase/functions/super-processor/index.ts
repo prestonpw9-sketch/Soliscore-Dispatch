@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { formatEmergencyPageMessage, notifyCrew } from "../_shared/twilio.ts";
+import { formatEmergencyPageMessage, loadCrewDirectory, notifyCrew } from "../_shared/twilio.ts";
+import { phonesMatch } from "../_shared/phone.ts";
+import { shouldSkipSuperintendentAi } from "../_shared/crewInbound.ts";
 import {
   formatBoardSpan,
   phoenixNowLabel,
@@ -299,6 +301,40 @@ serve(async (req) => {
         ]);
       }
       return emptyTwiml();
+    }
+
+    // Same Twilio From is used by in-app Copilot contact_crew / on-call pages.
+    // Plumber replies must land in Comm Matrix, but must NOT run the job-booking AI
+    // (and must NOT send a "logged it on the board" text back to on-call).
+    const crew = await loadCrewDirectory(supabase);
+    const crewSender = crew.find((c) => c.phone && phonesMatch(c.phone, phoneNumber));
+    if (crewSender) {
+      const { data: lastOut } = await supabase
+        .from("dispatch_messages")
+        .select("created_at")
+        .eq("phone_number", phoneNumber)
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (
+        shouldSkipSuperintendentAi({
+          isDirectoryCrew: true,
+          isOnCall: crewSender.emergency_contact,
+          lastOutboundAt: lastOut?.created_at ? String(lastOut.created_at) : null,
+        })
+      ) {
+        if (incomingMessage) {
+          await supabase.from("dispatch_messages").insert([
+            { phone_number: phoneNumber, message: incomingMessage, direction: "inbound" },
+          ]);
+        }
+        console.log("crew inbound — skipping superintendent job AI", {
+          name: crewSender.name,
+          onCall: crewSender.emergency_contact,
+        });
+        return emptyTwiml();
+      }
     }
 
     // ---- Normal AI dispatch flow -----------------------------------------
