@@ -3,7 +3,8 @@ import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check } from 'lucide-react
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
-import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
+import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext } from '@/lib/phases';
+import InspectionPassedToggle from './InspectionPassedToggle';
 import { dispatchToday } from '@/lib/data';
 
 interface Job {
@@ -16,6 +17,7 @@ interface Job {
   phase: string;
   date: string;
   description: string | null;
+  inspectionPassed?: boolean;
 }
 
 function jobDisplayName(job: Job): string {
@@ -90,11 +92,17 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
     setError(null);
     const { data, error: fetchError } = await supabase
       .from('jobs')
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .neq('status', 'completed')
       .order('date', { ascending: true });
     if (fetchError) { setError(fetchError.message); }
-    else { setJobs((data ?? []).map(j => ({ ...j, phase: normalizePhase(j.phase) }))); }
+    else {
+      setJobs((data ?? []).map(j => ({
+        ...j,
+        phase: normalizePhase(j.phase),
+        inspectionPassed: Boolean(j.inspection_passed),
+      })));
+    }
     setLoading(false);
   };
 
@@ -112,11 +120,15 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
         date: newDate,
         status: 'scheduled',
       })
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .single();
     if (insertError) { setError(insertError.message); }
     else if (data) {
-      setJobs(prev => [...prev, { ...data, phase: normalizePhase(data.phase) }]);
+      setJobs(prev => [...prev, {
+        ...data,
+        phase: normalizePhase(data.phase),
+        inspectionPassed: Boolean(data.inspection_passed),
+      }]);
       setNewCustomer('');
       setNewAddress('');
       await onJobsChanged?.();
@@ -143,7 +155,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       return;
     }
     const currentJob = jobs.find(j => j.id === id);
-    const editGate = canChangePhase(currentJob?.phase, editPhase, { inspectionPassed: true });
+    const editGate = canChangePhase(currentJob?.phase, editPhase, phaseGateContext(currentJob));
     const editBlocked = phaseBlockedMessage(editGate);
     if (editBlocked) {
       setError(editBlocked);
@@ -155,12 +167,16 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       .from('jobs')
       .update({ title: trimmed, phase: normalizePhase(editPhase) })
       .eq('id', id)
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .single();
     if (updateError) {
       setError(updateError.message);
     } else if (data) {
-      setJobs(prev => prev.map(j => (j.id === id ? { ...data, phase: normalizePhase(data.phase) } : j)));
+      setJobs(prev => prev.map(j => (j.id === id ? {
+        ...data,
+        phase: normalizePhase(data.phase),
+        inspectionPassed: Boolean(data.inspection_passed),
+      } : j)));
       cancelEditing();
       await onJobsChanged?.();
     }
@@ -169,7 +185,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
 
   const handlePhaseChange = async (id: number, phase: string) => {
     const currentJob = jobs.find(j => j.id === id);
-    const gate = canChangePhase(currentJob?.phase, phase, { inspectionPassed: true });
+    const gate = canChangePhase(currentJob?.phase, phase, phaseGateContext(currentJob));
     const blocked = phaseBlockedMessage(gate);
     if (blocked) {
       setError(blocked);
@@ -181,12 +197,34 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       .from('jobs')
       .update({ phase: normalizePhase(phase) })
       .eq('id', id)
-      .select('id, title, customerName, location, address, status, phase, date, description')
+      .select('id, title, customerName, location, address, status, phase, date, description, inspection_passed')
       .single();
     if (updateError) {
       setError(updateError.message);
     } else if (data) {
-      setJobs(prev => prev.map(j => (j.id === id ? { ...data, phase: normalizePhase(data.phase) } : j)));
+      setJobs(prev => prev.map(j => (j.id === id ? {
+        ...data,
+        phase: normalizePhase(data.phase),
+        inspectionPassed: Boolean(data.inspection_passed),
+      } : j)));
+      await onJobsChanged?.();
+    }
+    setSaving(false);
+  };
+
+  const handleInspectionChange = async (id: number, passed: boolean) => {
+    const previous = jobs.find(j => j.id === id)?.inspectionPassed;
+    setJobs(prev => prev.map(j => (j.id === id ? { ...j, inspectionPassed: passed } : j)));
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase
+      .from('jobs')
+      .update({ inspection_passed: passed })
+      .eq('id', id);
+    if (updateError) {
+      setError(updateError.message);
+      setJobs(prev => prev.map(j => (j.id === id ? { ...j, inspectionPassed: previous } : j)));
+    } else {
       await onJobsChanged?.();
     }
     setSaving(false);
@@ -347,6 +385,16 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
                   </div>
                   {displayAddress && <p className="text-sm text-slate-500 mt-1">{displayAddress}</p>}
                   <p className="text-xs text-slate-400 mt-0.5">{job.date}</p>
+                  {canEdit && (
+                    <div className="mt-2">
+                      <InspectionPassedToggle
+                        compact
+                        checked={Boolean(job.inspectionPassed)}
+                        disabled={saving}
+                        onChange={passed => void handleInspectionChange(job.id, passed)}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="shrink-0 self-start md:self-center">
                   {canEdit && (isDeleting ? (

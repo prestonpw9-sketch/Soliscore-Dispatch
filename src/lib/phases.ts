@@ -68,6 +68,12 @@ export type PhaseGateContext = {
   inspectionPassed: boolean;
 };
 
+export function phaseGateContext(
+  job: { inspectionPassed?: boolean } | null | undefined,
+): PhaseGateContext {
+  return { inspectionPassed: Boolean(job?.inspectionPassed) };
+}
+
 export type PhaseGateResult =
   | { ok: true; message?: undefined }
   | { ok: false; message: string };

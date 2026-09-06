@@ -34,6 +34,8 @@ export interface Job {
   endTime: string;
   description: string;
   phase: string;
+  /** Rough-in / top-out inspection passed — required before advancing to Trim. */
+  inspectionPassed?: boolean;
   serviceType?: string;
   estimatedDuration: number;
   /** T&M log — only used when tmEnabled is true / phase is T&M. */
