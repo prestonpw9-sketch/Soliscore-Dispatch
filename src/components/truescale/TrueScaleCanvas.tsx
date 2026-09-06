@@ -128,12 +128,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const fit = useCallback(() => {
     if (!baseWidth || !baseHeight || !size.w || !size.h) return;
-    const s = Math.min(size.w / baseWidth, size.h / baseHeight) * 0.95;
-    const ns = s > 0 ? s : 1;
+    const contain = Math.min(size.w / baseWidth, size.h / baseHeight) * 0.95;
+    // Short landscape phones: fill the width so linework is workable; pan vertically.
+    const fillWidth = (size.w / baseWidth) * 0.98;
+    const ns = (size.h < 320 ? Math.max(contain, fillWidth) : contain) || 1;
     setScale(ns);
     setOffset({
       x: (size.w - baseWidth * ns) / 2,
-      y: (size.h - baseHeight * ns) / 2,
+      y: size.h < 320 ? 8 : (size.h - baseHeight * ns) / 2,
     });
   }, [baseWidth, baseHeight, size]);
 
