@@ -86,6 +86,12 @@ html.truescale-active #root {
   }
 }
 
+@media (max-height: 500px) {
+  .ts-hide-on-short {
+    display: none !important;
+  }
+}
+
 /* ── Card ──────────────────────────────────────────────────────────────── */
 
 .card {
