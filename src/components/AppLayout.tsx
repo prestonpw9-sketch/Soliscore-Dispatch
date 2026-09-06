@@ -343,7 +343,9 @@ const AppLayout: React.FC = () => {
 
   return (
     <div className={`bg-slate-50 dark:bg-slate-950 flex font-sans w-full ${
-      trueScale ? 'h-dvh max-h-dvh overflow-hidden' : 'min-h-screen'
+      trueScale
+        ? 'h-dvh max-h-dvh overflow-hidden pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]'
+        : 'min-h-screen'
     }`}>
       <Sidebar
         activeView={view}

@@ -621,7 +621,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
         </div>
 
         {/* Status bar */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 shrink-0">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 shrink-0 [@media(max-height:500px)]:hidden">
           {calibration ? (
             <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
               <Check className="w-3.5 h-3.5" /> Scale: {calibration.label}
