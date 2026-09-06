@@ -20,7 +20,7 @@ import type { Job, Customer } from '@/lib/data';
 import { useDispatchData } from '@/hooks/useDispatchData';
 import { useDispatchWeek } from '@/hooks/useDispatchToday';
 import { useAuth } from '@/lib/AuthContext';
-import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
+import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext } from '@/lib/phases';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import DispatchBanner from './DispatchBanner';
 
@@ -96,6 +96,7 @@ const AppLayout: React.FC = () => {
     addTimeOff,
     deleteTimeOff,
     updateAnnouncement,
+    setInspectionPassed,
   } = useDispatchData();
 
   const { updateContext } = useAIProviderContext();
@@ -311,7 +312,7 @@ const AppLayout: React.FC = () => {
   const handlePhaseChange = (jobId: string, newPhase: string) => {
     void (async () => {
       const current = jobs.find(j => j.id === jobId);
-      const gate = canChangePhase(current?.phase, newPhase, { inspectionPassed: true });
+      const gate = canChangePhase(current?.phase, newPhase, phaseGateContext(current));
       const blocked = phaseBlockedMessage(gate);
       if (blocked) {
         showToast(blocked, 'error');
@@ -504,6 +505,7 @@ const AppLayout: React.FC = () => {
                   onViewCalendar={() => setView('schedule')}
                   onOpenEstimator={() => setEstimatorOpen(true)}
                   onPhaseChange={handlePhaseChange}
+                  onInspectionChange={canEdit ? setInspectionPassed : undefined}
                   onHire={hireTechnician}
                   onFire={fireTechnician}
                   onJobClick={openJobForEdit}
@@ -519,6 +521,7 @@ const AppLayout: React.FC = () => {
                   technicians={technicians}
                   techTimeOff={techTimeOff}
                   onRefresh={refresh}
+                  onInspectionChange={canEdit ? setInspectionPassed : undefined}
                 />
               )}
 

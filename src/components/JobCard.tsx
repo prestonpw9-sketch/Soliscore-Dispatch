@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import type { Job } from '@/lib/data';
 import { PLUMBING_PHASES, type PlumbingPhase } from '@/components/PhaseDropdown';
-import { normalizePhase } from '@/lib/phases';
+import { canChangePhase, normalizePhase, phaseGateContext } from '@/lib/phases';
 import { avatarGradientClass } from '@/lib/avatarStyle';
+import InspectionPassedToggle from './InspectionPassedToggle';
 
 // ── Phase colors ───────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ interface JobCardProps {
   technicianName?: string;
   onClick?: () => void;
   onPhaseChange?: (jobId: string, newPhase: PlumbingPhase) => void;
+  onInspectionChange?: (jobId: string, passed: boolean) => void;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -45,6 +47,7 @@ const JobCard: React.FC<JobCardProps> = ({
   technicianName = 'Unassigned',
   onClick,
   onPhaseChange,
+  onInspectionChange,
 }) => {
   const [phase, setPhase] = useState<PlumbingPhase>(() => normalizePhase(job?.phase));
 
@@ -55,7 +58,8 @@ const JobCard: React.FC<JobCardProps> = ({
 
   const handlePhaseChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newPhase = normalizePhase(e.target.value);
-    setPhase(newPhase);
+    const gate = canChangePhase(phase, newPhase, phaseGateContext(job));
+    if (gate.ok) setPhase(newPhase);
     if (onPhaseChange && job?.id) {
       onPhaseChange(job.id, newPhase);
     }
@@ -126,6 +130,14 @@ const JobCard: React.FC<JobCardProps> = ({
           ))}
         </select>
       </div>
+
+      {onInspectionChange && job?.id && (
+        <InspectionPassedToggle
+          compact
+          checked={Boolean(job.inspectionPassed)}
+          onChange={passed => onInspectionChange(job.id, passed)}
+        />
+      )}
     </div>
   );
 };

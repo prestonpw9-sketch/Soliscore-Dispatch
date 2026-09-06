@@ -99,6 +99,7 @@ export const useDispatchData = () => {
         address:           j.location ?? j.address ?? 'Tucson, AZ',
         description:       j.description ?? '',
         phase:             normalizePhase(j.phase),
+        inspectionPassed:  Boolean(j.inspection_passed),
         status:            normalizeJobStatus(j.status),
         startTime:         j.startTime ?? '08:00',
         endTime:           j.endTime ?? '10:00',
@@ -672,6 +673,16 @@ export const useDispatchData = () => {
     }
   }, [refresh]);
 
+  const setInspectionPassed = useCallback(async (jobId: string, passed: boolean) => {
+    setJobs(prev => prev.map(j => j.id === jobId ? { ...j, inspectionPassed: passed } : j));
+    const { error: sbError } = await supabase
+      .from('jobs').update({ inspection_passed: passed }).eq('id', jobId);
+    if (sbError) {
+      console.error('Failed to update inspection status:', sbError);
+      await refresh();
+    }
+  }, [refresh]);
+
   const hireTechnician = useCallback(async (name: string, role: string, phone?: string) => {
     const row: Record<string, unknown> = { name, role };
     const trimmedPhone = phone?.trim();
@@ -880,6 +891,7 @@ export const useDispatchData = () => {
     assignTechnician,
     assignTechnicians,
     updateJobPhase,
+    setInspectionPassed,
     hireTechnician,
     fireTechnician,
     createCustomer,

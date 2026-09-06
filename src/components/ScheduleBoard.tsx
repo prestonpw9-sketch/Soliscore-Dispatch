@@ -10,7 +10,8 @@ import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/da
 import { clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, isTechOffOnDay, addCalendarDays, dispatchToday, arizonaToday } from '@/lib/data';
 import { useDispatchToday } from '@/hooks/useDispatchToday';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
-import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
+import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext } from '@/lib/phases';
+import InspectionPassedToggle from './InspectionPassedToggle';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
 
@@ -121,13 +122,14 @@ interface Props {
   technicians: Technician[];
   techTimeOff?: TechTimeOff[];
   onRefresh: () => Promise<void> | void;
+  onInspectionChange?: (jobId: string, passed: boolean) => Promise<void> | void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 const COL_W = 36; // px per day column
 
-const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh }) => {
+const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh, onInspectionChange }) => {
   const { canEdit } = useAuth();
   const dispatchDay = useDispatchToday();
 
@@ -344,6 +346,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     end: string,
     phase: string,
     tm?: { enabled: boolean; approvedBy: string; workDescription: string; hours: number | null },
+    inspectionPassed?: boolean,
   ) => {
     const safeEnd = end < start ? start : end;
     const oldStart = job.date;
@@ -351,7 +354,8 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     const tmEnabled = tm?.enabled ?? (phase === 'T&M' || Boolean(job.tmEnabled));
 
     const targetPhase = tmEnabled ? 'T&M' : phase;
-    const gate = canChangePhase(job.phase, targetPhase, { inspectionPassed: true });
+    const passed = inspectionPassed ?? Boolean(job.inspectionPassed);
+    const gate = canChangePhase(job.phase, targetPhase, { inspectionPassed: passed });
     const blocked = phaseBlockedMessage(gate);
     if (blocked) { setError(blocked); return; }
 
@@ -361,6 +365,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
         date: start,
         end_date: safeEnd,
         phase: tmEnabled ? 'T&M' : normalizePhase(phase),
+        inspection_passed: passed,
         tm_enabled: tmEnabled,
         tm_approved_by: tmEnabled ? (tm?.approvedBy?.trim() || job.tmApprovedBy || null) : null,
         tm_work_description: tmEnabled ? (tm?.workDescription?.trim() || job.tmWorkDescription || null) : null,
@@ -418,7 +423,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode, techTimeOff]);
 
   const saveJobPhase = useCallback(async (job: Job, phase: string) => {
-    const gate = canChangePhase(job.phase, phase, { inspectionPassed: true });
+    const gate = canChangePhase(job.phase, phase, phaseGateContext(job));
     const blocked = phaseBlockedMessage(gate);
     if (blocked) { setError(blocked); return; }
     const tmEnabled = phase === 'T&M';
@@ -684,6 +689,23 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                                 {job.phase || 'Rough-In'}
                               </span>
                             )}
+                            {canEdit && (
+                              <InspectionPassedToggle
+                                compact
+                                checked={Boolean(job.inspectionPassed)}
+                                onChange={passed => {
+                                  if (onInspectionChange) {
+                                    void onInspectionChange(job.id, passed);
+                                    return;
+                                  }
+                                  void supabase.from('jobs').update({ inspection_passed: passed }).eq('id', job.id)
+                                    .then(({ error: err }) => {
+                                      if (err) setError(err.message);
+                                      else void onRefresh();
+                                    });
+                                }}
+                              />
+                            )}
                             {canEdit ? (
                               <button
                                 type="button"
@@ -873,7 +895,12 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
 
       {/* Modals */}
       {editJob && (
-        <EditJobDatesModal job={editJob} onClose={() => setEditJob(null)} onSave={saveJobDates} />
+        <EditJobDatesModal
+          job={editJob}
+          onClose={() => setEditJob(null)}
+          onSave={saveJobDates}
+          onInspectionChange={onInspectionChange}
+        />
       )}
 
       {logTask && (
@@ -1164,11 +1191,14 @@ const EditJobDatesModal: React.FC<{
     end: string,
     phase: string,
     tm?: { enabled: boolean; approvedBy: string; workDescription: string; hours: number | null },
+    inspectionPassed?: boolean,
   ) => Promise<void> | void;
-}> = ({ job, onClose, onSave }) => {
+  onInspectionChange?: (jobId: string, passed: boolean) => Promise<void> | void;
+}> = ({ job, onClose, onSave, onInspectionChange }) => {
   const [start, setStart] = useState(job.date);
   const [end, setEnd] = useState(job.endDate ?? job.date);
   const [phase, setPhase] = useState(job.phase || 'Rough-In');
+  const [inspectionPassed, setInspectionPassed] = useState(Boolean(job.inspectionPassed));
   const [tmEnabled, setTmEnabled] = useState(Boolean(job.tmEnabled) || job.phase === 'T&M');
   const [tmApprovedBy, setTmApprovedBy] = useState(job.tmApprovedBy ?? '');
   const [tmWorkDescription, setTmWorkDescription] = useState(job.tmWorkDescription ?? '');
@@ -1196,6 +1226,7 @@ const EditJobDatesModal: React.FC<{
           workDescription: tmWorkDescription,
           hours: tmHours.trim() === '' ? null : Number(tmHours),
         },
+        inspectionPassed,
       );
     } finally {
       setSaving(false);
@@ -1239,6 +1270,17 @@ const EditJobDatesModal: React.FC<{
           )}
         </select>
       </label>
+
+      <div className="mt-3">
+        <InspectionPassedToggle
+          checked={inspectionPassed}
+          disabled={saving}
+          onChange={passed => {
+            setInspectionPassed(passed);
+            if (onInspectionChange) void onInspectionChange(job.id, passed);
+          }}
+        />
+      </div>
 
       <label className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
         <input
