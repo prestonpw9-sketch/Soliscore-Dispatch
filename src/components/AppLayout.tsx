@@ -40,7 +40,13 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
 
 const AppLayout: React.FC = () => {
   const { role, canEdit } = useAuth();
-  const [view, setView]                     = useState<ViewKey>('dashboard');
+  const [view, setView]                     = useState<ViewKey>(() => {
+    try {
+      const stored = sessionStorage.getItem('itdg-view');
+      if (stored && stored in titles) return stored as ViewKey;
+    } catch { /* private mode */ }
+    return 'dashboard';
+  });
 
   // Which views each role may open (must mirror the Sidebar's NAV_ITEMS).
   const viewAccess: Record<string, string[]> = {
@@ -335,6 +341,10 @@ const AppLayout: React.FC = () => {
 
   const isInitialLoad = (loading || !!error) && customers.length === 0;
   const trueScale = view === 'truescale';
+
+  useEffect(() => {
+    try { sessionStorage.setItem('itdg-view', view); } catch { /* ignore */ }
+  }, [view]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('truescale-active', trueScale);
