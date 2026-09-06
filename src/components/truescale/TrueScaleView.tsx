@@ -588,6 +588,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
             </span>
           )}
           <span className="text-slate-400">{dimensions.length} dimension{dimensions.length !== 1 ? 's' : ''}</span>
+          {(tool === 'dimension' || tool === 'calibrate') && (
+            <span className="text-slate-500 dark:text-slate-400">
+              Click two points — or click-and-drag. Esc cancels.
+            </span>
+          )}
           {pdfDoc && numPages > 1 && (
             <span className="ml-auto flex items-center gap-2">
               <button type="button" onClick={() => void goToPage(page - 1)} disabled={page <= 1}

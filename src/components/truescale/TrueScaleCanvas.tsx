@@ -48,7 +48,7 @@ function pointSegDist(p: Pt, a: Pt, b: Pt): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-const MIN_DRAG_PX = 6;
+const MIN_DRAG_PX = 10;
 
 const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueScaleCanvas(
   props,
@@ -68,6 +68,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const [preview, setPreview] = useState<Preview | null>(null);
   const [grabbing, setGrabbing] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
+  const [placing, setPlacing] = useState(false);
 
   // Interaction refs (avoid re-renders mid-gesture)
   const panning = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
@@ -127,8 +128,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const esc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         pendingStart.current = null;
+        drawing.current = null;
         moving.current = null;
         setPreview(null);
+        setPlacing(false);
       }
     };
     window.addEventListener('keydown', kd);
@@ -144,8 +147,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   // Cancel any in-progress placement when the tool changes.
   useEffect(() => {
     pendingStart.current = null;
+    drawing.current = null;
     moving.current = null;
     setPreview(null);
+    setPlacing(false);
   }, [tool]);
 
   // Track container size
@@ -308,6 +313,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 && e.button !== 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const s = getScreen(e);
     downScreen.current = s;
@@ -329,8 +335,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       return;
     }
 
-    // Draw tools (dimension/calibrate). If a first click is armed, the next
-    // press just finalizes on release; otherwise begin a drag-or-click.
+    // Draw tools (dimension/calibrate). A first click is already armed — the
+    // next pointer-up finalizes. Do not start a new press-drag on this down.
     if (pendingStart.current == null) {
       const start = toImage(s);
       drawing.current = { start };
@@ -395,6 +401,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     }
 
     // Second click of a click-to-place sequence: finalize at this point.
+    // Do not treat pointerleave as this click — leaving the canvas must not
+    // cancel an armed first point (that is why click-to-place felt broken).
     if (pendingStart.current != null) {
       const a = pendingStart.current;
       const b = toImage(s);
@@ -403,6 +411,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       lastScreen.current = null;
       downScreen.current = null;
       setPreview(null);
+      setPlacing(false);
       finalizeLine(a, b);
       return;
     }
@@ -417,13 +426,33 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         lastScreen.current = null;
         downScreen.current = null;
         setPreview(null);
+        setPlacing(false);
         finalizeLine(a, b);
       } else {
-        // Clicked: arm the first endpoint and wait for the second click.
+        // Clicked: arm the first endpoint. The rubber-band then follows the
+        // cursor on hover — no need to keep the button down.
         pendingStart.current = a;
         setPreview({ a, b: a, color: activeColor, width: activeWidth, kind: previewKind() });
+        setPlacing(true);
         downScreen.current = null;
       }
+    }
+  };
+
+  /** Abort a press-drag / pan if the pointer is cancelled. Keep an armed click. */
+  const handlePointerCancel = () => {
+    drawing.current = null;
+    panning.current = null;
+    moving.current = null;
+    setGrabbing(false);
+    downScreen.current = null;
+    stopAutoPan();
+    if (pendingStart.current) {
+      const a = pendingStart.current;
+      setPreview({ a, b: a, color: activeColor, width: activeWidth, kind: previewKind() });
+    } else {
+      setPreview(null);
+      setPlacing(false);
     }
   };
 
@@ -469,9 +498,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
         onWheel={handleWheel}
       />
+      {placing && (tool === 'dimension' || tool === 'calibrate') && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg">
+          Click the other end · Esc to cancel
+        </div>
+      )}
     </div>
   );
 });
