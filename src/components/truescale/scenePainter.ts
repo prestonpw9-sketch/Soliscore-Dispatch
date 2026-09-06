@@ -38,6 +38,13 @@ export interface PaintOpts {
   background: string;
   /** When true, draw drag handles on the selected dimension (unlocked mode). */
   editable: boolean;
+  /** When false, blit the overview bitmap with nearest-neighbor (crisp zoom). */
+  smoothPlan?: boolean;
+  /**
+   * Vector-sharp PDF tile for the current viewport, blitted 1:1 onto the
+   * device-pixel canvas (identity transform).
+   */
+  lens?: HTMLCanvasElement | null;
 }
 
 const CAL_COLOR = '#22d3ee';
@@ -151,9 +158,18 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
     ctx.save();
     ctx.translate(offset.x, offset.y);
     ctx.scale(scale, scale);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    const smooth = opts.smoothPlan !== false;
+    ctx.imageSmoothingEnabled = smooth;
+    if (smooth) ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(base, 0, 0);
+    ctx.restore();
+  }
+
+  if (opts.lens) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(opts.lens, 0, 0, ctx.canvas.width, ctx.canvas.height);
     ctx.restore();
   }
 
