@@ -10,6 +10,7 @@ import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/da
 import { clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, isTechOffOnDay, addCalendarDays, dispatchToday, arizonaToday } from '@/lib/data';
 import { useDispatchToday } from '@/hooks/useDispatchToday';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
+import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
 
@@ -349,12 +350,17 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     const shiftDays = daysBetween(oldStart, start);
     const tmEnabled = tm?.enabled ?? (phase === 'T&M' || Boolean(job.tmEnabled));
 
+    const targetPhase = tmEnabled ? 'T&M' : phase;
+    const gate = canChangePhase(job.phase, targetPhase, { inspectionPassed: true });
+    const blocked = phaseBlockedMessage(gate);
+    if (blocked) { setError(blocked); return; }
+
     const { error: err } = await supabase
       .from('jobs')
       .update({
         date: start,
         end_date: safeEnd,
-        phase: tmEnabled ? 'T&M' : phase,
+        phase: tmEnabled ? 'T&M' : normalizePhase(phase),
         tm_enabled: tmEnabled,
         tm_approved_by: tmEnabled ? (tm?.approvedBy?.trim() || job.tmApprovedBy || null) : null,
         tm_work_description: tmEnabled ? (tm?.workDescription?.trim() || job.tmWorkDescription || null) : null,
@@ -412,9 +418,12 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
   }, [onRefresh, tasks, fetchTasks, rangeStart, rangeEnd, mode, techTimeOff]);
 
   const saveJobPhase = useCallback(async (job: Job, phase: string) => {
+    const gate = canChangePhase(job.phase, phase, { inspectionPassed: true });
+    const blocked = phaseBlockedMessage(gate);
+    if (blocked) { setError(blocked); return; }
     const tmEnabled = phase === 'T&M';
     const { error: err } = await supabase.from('jobs').update({
-      phase,
+      phase: normalizePhase(phase),
       tm_enabled: tmEnabled,
     }).eq('id', job.id);
     if (err) { setError(err.message); return; }

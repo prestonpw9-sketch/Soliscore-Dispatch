@@ -1,21 +1,8 @@
 // ── Plumbing phases ────────────────────────────────────────────────────────
 
-// FIX: `as const` narrows the type to readonly string literals instead of
-// a plain mutable `string[]`, which lets you derive PlumbingPhase below
-// and catches typos when phase values are compared anywhere in the codebase.
-export const PLUMBING_PHASES = [
-  'Underground',
-  'Rough-In',
-  'Top-Out',
-  'Trim/Finish',
-  'Service Call',
-  'T&M',
-] as const;
-
-// Derive the union type from the array — single source of truth.
-// If you add or rename a phase in the array, this type updates automatically.
-export type PlumbingPhase = (typeof PLUMBING_PHASES)[number];
-// → 'Underground' | 'Rough-In' | 'Top-Out' | 'Trim/Finish' | 'Service Call' | 'T&M'
+// Phase pipeline + dependency rules live in one place now (@/lib/phases):
+// Rough-In → Top-Out → Trim → Final → Punch, plus Service Call & T&M side lanes.
+export { PLUMBING_PHASES, type PlumbingPhase } from '@/lib/phases';
 
 
 // ── Navigation view keys ───────────────────────────────────────────────────

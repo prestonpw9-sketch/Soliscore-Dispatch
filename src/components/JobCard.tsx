@@ -1,24 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import type { Job } from '@/lib/data';
 import { PLUMBING_PHASES, type PlumbingPhase } from '@/components/PhaseDropdown';
+import { normalizePhase } from '@/lib/phases';
 import { avatarGradientClass } from '@/lib/avatarStyle';
 
 // ── Phase colors ───────────────────────────────────────────────────────────
 
 const PHASE_COLORS: Record<PlumbingPhase, string> = {
-  'Underground':  'bg-amber-100  text-amber-800  border-amber-300  dark:bg-amber-400/35  dark:text-amber-100  dark:border-amber-300/50',
   'Rough-In':     'bg-sky-100    text-sky-800    border-sky-300    dark:bg-sky-400/35    dark:text-sky-50    dark:border-sky-300/50',
   'Top-Out':      'bg-violet-100 text-violet-800 border-violet-300 dark:bg-violet-400/35 dark:text-violet-50 dark:border-violet-300/50',
-  'Trim/Finish':  'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-400/35 dark:text-emerald-50 dark:border-emerald-300/50',
+  'Trim':         'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-400/35 dark:text-emerald-50 dark:border-emerald-300/50',
+  'Final':        'bg-teal-100   text-teal-800   border-teal-300   dark:bg-teal-400/35   dark:text-teal-50   dark:border-teal-300/50',
+  'Punch':        'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-400/35 dark:text-orange-50 dark:border-orange-300/50',
   'Service Call': 'bg-rose-100   text-rose-800   border-rose-300   dark:bg-rose-500/45   dark:text-rose-50   dark:border-rose-300/55',
   'T&M':          'bg-slate-200  text-slate-800  border-slate-300  dark:bg-slate-400/35  dark:text-white     dark:border-slate-200/40',
 };
 
 const PHASE_ACCENT: Record<PlumbingPhase, string> = {
-  'Underground':  'bg-amber-400',
   'Rough-In':     'bg-sky-400',
   'Top-Out':      'bg-violet-500',
-  'Trim/Finish':  'bg-emerald-400',
+  'Trim':         'bg-emerald-400',
+  'Final':        'bg-teal-400',
+  'Punch':        'bg-orange-400',
   'Service Call': 'bg-rose-500',
   'T&M':          'bg-slate-400',
 };
@@ -43,17 +46,15 @@ const JobCard: React.FC<JobCardProps> = ({
   onClick,
   onPhaseChange,
 }) => {
-  const [phase, setPhase] = useState<PlumbingPhase>(
-    (job?.phase as PlumbingPhase) ?? 'Rough-In'
-  );
+  const [phase, setPhase] = useState<PlumbingPhase>(() => normalizePhase(job?.phase));
 
   // Sync if upstream data changes
   useEffect(() => {
-    if (job?.phase) setPhase(job.phase as PlumbingPhase);
+    setPhase(normalizePhase(job?.phase));
   }, [job?.phase]);
 
   const handlePhaseChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newPhase = e.target.value as PlumbingPhase;
+    const newPhase = normalizePhase(e.target.value);
     setPhase(newPhase);
     if (onPhaseChange && job?.id) {
       onPhaseChange(job.id, newPhase);

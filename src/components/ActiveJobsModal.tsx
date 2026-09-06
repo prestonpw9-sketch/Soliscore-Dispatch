@@ -3,6 +3,7 @@ import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check } from 'lucide-react
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
+import { canChangePhase, phaseBlockedMessage, normalizePhase } from '@/lib/phases';
 import { dispatchToday } from '@/lib/data';
 
 interface Job {
@@ -93,7 +94,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       .neq('status', 'completed')
       .order('date', { ascending: true });
     if (fetchError) { setError(fetchError.message); }
-    else { setJobs(data ?? []); }
+    else { setJobs((data ?? []).map(j => ({ ...j, phase: normalizePhase(j.phase) }))); }
     setLoading(false);
   };
 
@@ -115,7 +116,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       .single();
     if (insertError) { setError(insertError.message); }
     else if (data) {
-      setJobs(prev => [...prev, data]);
+      setJobs(prev => [...prev, { ...data, phase: normalizePhase(data.phase) }]);
       setNewCustomer('');
       setNewAddress('');
       await onJobsChanged?.();
@@ -126,7 +127,7 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
   const startEditing = (job: Job) => {
     setEditingId(job.id);
     setEditTitle(jobDisplayName(job) === 'Untitled Job' ? '' : jobDisplayName(job));
-    setEditPhase(job.phase || 'Rough-In');
+    setEditPhase(normalizePhase(job.phase));
   };
 
   const cancelEditing = () => {
@@ -141,18 +142,25 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       setError('Job name cannot be empty.');
       return;
     }
+    const currentJob = jobs.find(j => j.id === id);
+    const editGate = canChangePhase(currentJob?.phase, editPhase, { inspectionPassed: true });
+    const editBlocked = phaseBlockedMessage(editGate);
+    if (editBlocked) {
+      setError(editBlocked);
+      return;
+    }
     setSaving(true);
     setError(null);
     const { data, error: updateError } = await supabase
       .from('jobs')
-      .update({ title: trimmed, phase: editPhase })
+      .update({ title: trimmed, phase: normalizePhase(editPhase) })
       .eq('id', id)
       .select('id, title, customerName, location, address, status, phase, date, description')
       .single();
     if (updateError) {
       setError(updateError.message);
     } else if (data) {
-      setJobs(prev => prev.map(j => (j.id === id ? data : j)));
+      setJobs(prev => prev.map(j => (j.id === id ? { ...data, phase: normalizePhase(data.phase) } : j)));
       cancelEditing();
       await onJobsChanged?.();
     }
@@ -160,18 +168,25 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
   };
 
   const handlePhaseChange = async (id: number, phase: string) => {
+    const currentJob = jobs.find(j => j.id === id);
+    const gate = canChangePhase(currentJob?.phase, phase, { inspectionPassed: true });
+    const blocked = phaseBlockedMessage(gate);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
     setSaving(true);
     setError(null);
     const { data, error: updateError } = await supabase
       .from('jobs')
-      .update({ phase })
+      .update({ phase: normalizePhase(phase) })
       .eq('id', id)
       .select('id, title, customerName, location, address, status, phase, date, description')
       .single();
     if (updateError) {
       setError(updateError.message);
     } else if (data) {
-      setJobs(prev => prev.map(j => (j.id === id ? data : j)));
+      setJobs(prev => prev.map(j => (j.id === id ? { ...data, phase: normalizePhase(data.phase) } : j)));
       await onJobsChanged?.();
     }
     setSaving(false);

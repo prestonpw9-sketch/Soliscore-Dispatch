@@ -1,44 +1,33 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { PHASE_COLORS, normalizePhase } from '@/lib/phases';
 
-// ── Phase config ───────────────────────────────────────────────────────────
-
-export const PLUMBING_PHASES = [
-  'Underground',
-  'Rough-In',
-  'Top-Out',
-  'Trim/Finish',
-  'Service Call',
-  'T&M',
-] as const;
-
-export type PlumbingPhase = typeof PLUMBING_PHASES[number];
-
-const PHASE_COLORS: Record<PlumbingPhase, string> = {
-  'Underground':  'bg-amber-100  text-amber-800  border-amber-200',
-  'Rough-In':     'bg-blue-100   text-blue-800   border-blue-200',
-  'Top-Out':      'bg-purple-100 text-purple-800 border-purple-200',
-  'Trim/Finish':  'bg-green-100  text-green-800  border-green-200',
-  'Service Call': 'bg-red-100    text-red-800    border-red-200',
-  'T&M':          'bg-slate-100  text-slate-800  border-slate-200',
-};
+// Phase list + type now live in one place (@/lib/phases); re-export so existing
+// importers of PhaseDropdown keep working.
+export { PLUMBING_PHASES, type PlumbingPhase } from '@/lib/phases';
+import type { PlumbingPhase } from '@/lib/phases';
+import { PLUMBING_PHASES } from '@/lib/phases';
 
 const DEFAULT_COLORS = 'bg-slate-100 text-slate-800 border-slate-200';
 
 // ── Component ──────────────────────────────────────────────────────────────
 
 interface PhaseDropdownProps {
-  initialPhase?: PlumbingPhase;
+  initialPhase?: string;
   onChange?: (phase: PlumbingPhase) => void;
 }
 
 export default function PhaseDropdown({
-  initialPhase = 'Underground',
+  initialPhase = 'Rough-In',
   onChange,
 }: PhaseDropdownProps) {
-  const [phase, setPhase] = useState<PlumbingPhase>(initialPhase);
+  const [phase, setPhase] = useState<PlumbingPhase>(() => normalizePhase(initialPhase));
+
+  useEffect(() => {
+    setPhase(normalizePhase(initialPhase));
+  }, [initialPhase]);
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value as PlumbingPhase;
+    const value = normalizePhase(e.target.value);
     setPhase(value);
     onChange?.(value);
   };
