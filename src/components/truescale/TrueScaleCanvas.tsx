@@ -221,9 +221,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       background: dark ? '#0b1220' : '#e2e8f0',
       editable: !locked,
       smoothPlan: scale * dpr <= 1.02,
-      lens: lensMatches && lensTile
-        ? { canvas: lensTile.canvas, cssW: size.w, cssH: size.h }
-        : null,
+      lens: lensMatches && lensTile ? lensTile.canvas : null,
     });
   }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, selectedId, preview, size, dark, locked, toScreen, lensTile, pdfLens]);
 
@@ -273,7 +271,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
           console.warn('TrueScale PDF lens failed', err);
         }
       });
-    }, 90);
+    }, 180);
 
     return () => {
       cancelled = true;
@@ -559,21 +557,29 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     return best?.id ?? null;
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    setScale(prev => {
-      const ns = Math.max(0.05, Math.min(40, prev * factor));
-      setOffset(o => ({
-        x: cx - ((cx - o.x) / prev) * ns,
-        y: cy - ((cy - o.y) / prev) * ns,
-      }));
-      return ns;
-    });
-  };
+  // Native wheel listener so preventDefault actually stops page scroll (React's
+  // onWheel is passive in modern Chrome).
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setScale(prev => {
+        const ns = Math.max(0.05, Math.min(40, prev * factor));
+        setOffset(o => ({
+          x: cx - ((cx - o.x) / prev) * ns,
+          y: cy - ((cy - o.y) / prev) * ns,
+        }));
+        return ns;
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const cursor = grabbing
     ? 'grabbing'
@@ -593,7 +599,6 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
-        onWheel={handleWheel}
       />
       {placing && (tool === 'dimension' || tool === 'calibrate') && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg">
@@ -607,15 +612,17 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       )}
       <div className="pointer-events-none absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg tabular-nums">
         {Math.round(scale * 100)}%
-        {lensTile &&
-        pdfLens &&
-        lensTile.pdf === pdfLens.pdf &&
-        lensTile.pageNumber === pdfLens.pageNumber &&
-        Math.abs(lensTile.scale - scale) < 1e-6 &&
-        Math.abs(lensTile.ox - offset.x) < 0.5 &&
-        Math.abs(lensTile.oy - offset.y) < 0.5
-          ? ' · sharp'
-          : ''}
+        {lensPending
+          ? ' · …'
+          : lensTile &&
+              pdfLens &&
+              lensTile.pdf === pdfLens.pdf &&
+              lensTile.pageNumber === pdfLens.pageNumber &&
+              Math.abs(lensTile.scale - scale) < 1e-6 &&
+              Math.abs(lensTile.ox - offset.x) < 0.5 &&
+              Math.abs(lensTile.oy - offset.y) < 0.5
+            ? ' · sharp'
+            : ''}
       </div>
     </div>
   );

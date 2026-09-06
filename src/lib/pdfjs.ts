@@ -28,6 +28,8 @@ const MAX_IMAGE_PIXELS = 16_000_000;
 const MAX_PDF_BASE_SCALE = 5;
 /** Longest edge of a zoomed PDF lens tile (memory bound). */
 const MAX_LENS_EDGE = 4096;
+/** Cap device-pixels-per-overview-pixel so a 36" sheet can finish in time. */
+const MAX_LENS_EXTRA = 4;
 
 /** Load a PDF from raw bytes. Caller keeps the doc for page navigation. */
 export async function loadPdf(data: ArrayBuffer): Promise<PdfDoc> {
@@ -78,10 +80,10 @@ export function needsPdfLens(viewScale: number, dpr: number): boolean {
 }
 
 export function pdfLensExtra(viewScale: number, dpr: number, srcW: number, srcH: number): number {
-  let extra = viewScale * dpr;
+  let extra = Math.min(viewScale * dpr, MAX_LENS_EXTRA);
   const edge = Math.max(srcW * extra, srcH * extra);
   if (edge > MAX_LENS_EDGE) extra *= MAX_LENS_EDGE / edge;
-  return extra;
+  return Math.max(extra, 1);
 }
 
 /**
@@ -96,7 +98,7 @@ export function startPdfLensRender(
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.ceil(region.w * extra));
   canvas.height = Math.max(1, Math.ceil(region.h * extra));
-  const ctx = canvas.getContext('2d', { alpha: true });
+  const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) throw new Error('Could not get 2D context for PDF lens');
 
   let cancelled = false;
@@ -114,7 +116,6 @@ export function startPdfLensRender(
       canvasContext: ctx,
       viewport,
       transform,
-      background: 'rgba(0,0,0,0)',
     });
     task = renderTask;
     await renderTask.promise;

@@ -41,10 +41,10 @@ export interface PaintOpts {
   /** When false, blit the overview bitmap with nearest-neighbor (crisp zoom). */
   smoothPlan?: boolean;
   /**
-   * Vector-sharp PDF tile for the current viewport, already aligned to the
-   * display canvas (CSS pixels from 0,0).
+   * Vector-sharp PDF tile for the current viewport, blitted 1:1 onto the
+   * device-pixel canvas (identity transform).
    */
-  lens?: { canvas: HTMLCanvasElement; cssW: number; cssH: number } | null;
+  lens?: HTMLCanvasElement | null;
 }
 
 const CAL_COLOR = '#22d3ee';
@@ -167,8 +167,9 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
 
   if (opts.lens) {
     ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(opts.lens.canvas, 0, 0, opts.lens.cssW, opts.lens.cssH);
+    ctx.drawImage(opts.lens, 0, 0, ctx.canvas.width, ctx.canvas.height);
     ctx.restore();
   }
 
