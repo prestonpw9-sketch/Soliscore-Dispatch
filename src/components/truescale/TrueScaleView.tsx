@@ -4,7 +4,7 @@ import {
   Ruler, Move, Crosshair, Save, Printer, Download, Trash2, Undo2,
   ZoomIn, ZoomOut, Maximize, FileText, Loader2, ChevronDown, ChevronRight,
   Map as MapIcon, FolderOpen, RotateCcw, Check, Calculator, AlertTriangle, X,
-  Lock, Unlock,
+  Lock, Unlock, Wrench,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -157,6 +157,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const [toast, setToast] = useState<string | null>(null);
   const [sheetDismissed, setSheetDismissed] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   const canvasRef = useRef<TrueScaleCanvasHandle>(null);
 
@@ -264,6 +265,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
 
   const pickBlueprint = useCallback((file: BlueprintFile) => {
     setPickerOpen(false);
+    setToolsOpen(false);
     void openBlueprint(file);
   }, [openBlueprint]);
 
@@ -458,9 +460,130 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
       }`}
     >
-      {icon}<span className="hidden xl:inline">{label}</span>
+      {icon}<span className="lg:hidden xl:inline">{label}</span>
     </button>
   );
+
+  const closeSheets = () => {
+    setPickerOpen(false);
+    setToolsOpen(false);
+  };
+
+  const toolbar = (
+    <>
+          {toolBtn('dimension', <Ruler className="w-4 h-4" />, 'Dimension')}
+          {toolBtn('calibrate', <Crosshair className="w-4 h-4" />, 'Set Scale')}
+          {toolBtn('pan', <Move className="w-4 h-4" />, 'Pan / Select')}
+
+          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1 hidden lg:block" />
+
+          <select
+            value={calibration?.source === 'preset' ? calibration.label : ''}
+            onChange={e => applyPreset(e.target.value)}
+            disabled={!render || !render.pxPerInch}
+            title={render && !render.pxPerInch
+              ? 'Standard scales require a PDF at true page size (images have no physical size). Use Set Scale.'
+              : 'Apply a standard architectural drawing scale'}
+            className="px-2.5 py-2 rounded-lg text-sm font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40"
+          >
+            <option value="">Standard scale…</option>
+            {ARCH_SCALES.map(s => (
+              <option key={s.label} value={s.label}>{s.label}</option>
+            ))}
+          </select>
+
+          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1 hidden lg:block" />
+
+          <div className="flex items-center gap-1">
+            {TRUESCALE_COLORS.map(c => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => {
+                  setColor(c);
+                  if (selectedId) {
+                    setDimensions(prev => prev.map(d => d.id === selectedId ? { ...d, color: c } : d));
+                    setDirty(true);
+                  }
+                }}
+                title={c}
+                className={`w-5 h-5 rounded-full border-2 transition-transform ${color === c ? 'scale-115 border-slate-900 dark:border-white' : 'border-slate-200 dark:border-slate-700'}`}
+                style={{ backgroundColor: c }}
+              />
+            ))}
+          </div>
+
+          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+            Weight
+            <input
+              type="range" min={1} max={8} value={width}
+              onChange={e => {
+                const w = Number(e.target.value);
+                setWidth(w);
+                if (selectedId) {
+                  setDimensions(prev => prev.map(d => d.id === selectedId ? { ...d, width: w } : d));
+                  setDirty(true);
+                }
+              }}
+              className="w-16 accent-blue-600"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => { setLocked(l => !l); if (locked) setTool('pan'); }}
+            title={locked ? 'Unlock dimensions to move them' : 'Lock dimensions in place'}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
+              locked
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                : 'bg-amber-500 text-white hover:bg-amber-400'
+            }`}
+          >
+            {locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+            <span className="lg:hidden xl:inline">{locked ? 'Locked' : 'Move'}</span>
+          </button>
+          <button type="button" onClick={undoLast} disabled={!dimensions.length} title="Undo last"
+            className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40">
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button type="button" onClick={deleteSelected} disabled={!selectedId} title="Delete selected"
+            className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40">
+            <Trash2 className="w-4 h-4" />
+          </button>
+
+          <div className="lg:ml-auto flex items-center gap-1.5 flex-wrap">
+            <button type="button" onClick={() => canvasRef.current?.zoomBy(1 / 1.2)} title="Zoom out"
+              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomOut className="w-4 h-4" /></button>
+            <button type="button" onClick={() => canvasRef.current?.fit()} title="Fit to screen"
+              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><Maximize className="w-4 h-4" /></button>
+            <button type="button" onClick={() => canvasRef.current?.zoomBy(1.2)} title="Zoom in — linework re-renders sharp at this view"
+              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomIn className="w-4 h-4" /></button>
+
+            {canEdit && (
+              <>
+                <button type="button" onClick={() => void handleSave()} disabled={!source || saving || !dirty} title="Save to cloud"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-500 disabled:opacity-40">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  <span className="lg:hidden xl:inline">{dirty ? 'Save' : 'Saved'}</span>
+                </button>
+                <button type="button" onClick={() => void revert()} disabled={!source || !dirty} title="Revert to saved"
+                  className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><RotateCcw className="w-4 h-4" /></button>
+              </>
+            )}
+            <button type="button" onClick={sendToEstimator} disabled={!calibration || !dimensions.length}
+              title="Send measured runs to the Bid Estimator"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 disabled:opacity-40">
+              <Calculator className="w-4 h-4" /><span className="lg:hidden xl:inline">To Bid</span>
+            </button>
+            <button type="button" onClick={exportPdf} disabled={!render} title="Export PDF"
+              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><Download className="w-4 h-4" /></button>
+            <button type="button" onClick={printSheet} disabled={!render} title="Print"
+              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><Printer className="w-4 h-4" /></button>
+          </div>
+    </>
+  );
+
+  const toolLabel = tool === 'calibrate' ? 'Set Scale' : tool === 'pan' ? 'Pan' : 'Dimension';
 
   return (
     <div className="flex flex-col lg:flex-row gap-2 lg:gap-4 flex-1 min-h-0 h-full">
@@ -487,143 +610,86 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
 
       {/* ── Main stage ── */}
       <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setPickerOpen(true)}
-          className={`lg:hidden shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-left ${
-            source ? 'ts-hide-on-short' : ''
-          }`}
-        >
-          <MapIcon className="w-4 h-4 text-blue-500 shrink-0" />
-          <span className="font-bold text-sm text-slate-800 dark:text-white truncate flex-1">
-            {source ? baseDisplayName(source.name) : 'Choose a blueprint'}
-          </span>
-          <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
-        </button>
-        {/* Toolbar */}
-        <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2.5 [@media(max-height:500px)]:py-1 border-b border-slate-100 dark:border-slate-800 overflow-x-auto shrink-0">
-          {toolBtn('dimension', <Ruler className="w-4 h-4" />, 'Dimension')}
-          {toolBtn('calibrate', <Crosshair className="w-4 h-4" />, 'Set Scale')}
-          {toolBtn('pan', <Move className="w-4 h-4" />, 'Pan / Select')}
-
-          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
-
-          {/* Standard architectural scale preset */}
-          <select
-            value={calibration?.source === 'preset' ? calibration.label : ''}
-            onChange={e => applyPreset(e.target.value)}
-            disabled={!render || !render.pxPerInch}
-            title={render && !render.pxPerInch
-              ? 'Standard scales require a PDF at true page size (images have no physical size). Use Set Scale.'
-              : 'Apply a standard architectural drawing scale'}
-            className="px-2.5 py-2 rounded-lg text-sm font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40"
-          >
-            <option value="">Standard scale…</option>
-            {ARCH_SCALES.map(s => (
-              <option key={s.label} value={s.label}>{s.label}</option>
-            ))}
-          </select>
-
-          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
-
-          {/* Color palette */}
-          <div className="flex items-center gap-1">
-            {TRUESCALE_COLORS.map(c => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => {
-                  setColor(c);
-                  if (selectedId) {
-                    setDimensions(prev => prev.map(d => d.id === selectedId ? { ...d, color: c } : d));
-                    setDirty(true);
-                  }
-                }}
-                title={c}
-                className={`w-5 h-5 rounded-full border-2 transition-transform ${color === c ? 'scale-115 border-slate-900 dark:border-white' : 'border-slate-200 dark:border-slate-700'}`}
-                style={{ backgroundColor: c }}
-              />
-            ))}
-          </div>
-
-          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
-
-          {/* Line weight */}
-          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-            Weight
-            <input
-              type="range" min={1} max={8} value={width}
-              onChange={e => {
-                const w = Number(e.target.value);
-                setWidth(w);
-                if (selectedId) {
-                  setDimensions(prev => prev.map(d => d.id === selectedId ? { ...d, width: w } : d));
-                  setDirty(true);
-                }
-              }}
-              className="w-16 accent-blue-600"
-            />
-          </label>
-
-          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
-
-          <button
-            type="button"
-            onClick={() => { setLocked(l => !l); if (locked) setTool('pan'); }}
-            title={locked ? 'Unlock dimensions to move them' : 'Lock dimensions in place'}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
-              locked
-                ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                : 'bg-amber-500 text-white hover:bg-amber-400'
-            }`}
-          >
-            {locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-            <span className="hidden xl:inline">{locked ? 'Locked' : 'Move'}</span>
-          </button>
-          <button type="button" onClick={undoLast} disabled={!dimensions.length} title="Undo last"
-            className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40">
-            <Undo2 className="w-4 h-4" />
-          </button>
-          <button type="button" onClick={deleteSelected} disabled={!selectedId} title="Delete selected"
-            className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40">
-            <Trash2 className="w-4 h-4" />
-          </button>
-
-          <div className="ml-auto flex items-center gap-1.5">
-            <button type="button" onClick={() => canvasRef.current?.zoomBy(1 / 1.2)} title="Zoom out"
-              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomOut className="w-4 h-4" /></button>
-            <button type="button" onClick={() => canvasRef.current?.fit()} title="Fit to screen"
-              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><Maximize className="w-4 h-4" /></button>
-            <button type="button" onClick={() => canvasRef.current?.zoomBy(1.2)} title="Zoom in — linework re-renders sharp at this view"
-              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomIn className="w-4 h-4" /></button>
-
-            <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
-
-            {canEdit && (
-              <>
-                <button type="button" onClick={() => void handleSave()} disabled={!source || saving || !dirty} title="Save to cloud"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-500 disabled:opacity-40">
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  <span className="hidden xl:inline">{dirty ? 'Save' : 'Saved'}</span>
-                </button>
-                <button type="button" onClick={() => void revert()} disabled={!source || !dirty} title="Revert to saved"
-                  className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><RotateCcw className="w-4 h-4" /></button>
-              </>
-            )}
-            <button type="button" onClick={sendToEstimator} disabled={!calibration || !dimensions.length}
-              title="Send measured runs to the Bid Estimator"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 disabled:opacity-40">
-              <Calculator className="w-4 h-4" /><span className="hidden xl:inline">To Bid</span>
+        {/* Mobile: one thin row; lists/tools slide down over the canvas */}
+        <div className="lg:hidden relative z-40 shrink-0 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex">
+            <button
+              type="button"
+              onClick={() => { setToolsOpen(false); setPickerOpen(o => !o); }}
+              className={`flex-1 min-w-0 flex items-center gap-1.5 px-3 py-2 text-left ${
+                pickerOpen ? 'bg-slate-100 dark:bg-slate-800' : ''
+              }`}
+            >
+              <MapIcon className="w-4 h-4 text-blue-500 shrink-0" />
+              <span className="font-bold text-sm text-slate-800 dark:text-white truncate flex-1">
+                {source ? baseDisplayName(source.name) : 'Blueprints'}
+              </span>
+              {pickerOpen ? <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />}
             </button>
-            <button type="button" onClick={exportPdf} disabled={!render} title="Export PDF"
-              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><Download className="w-4 h-4" /></button>
-            <button type="button" onClick={printSheet} disabled={!render} title="Print"
-              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40"><Printer className="w-4 h-4" /></button>
+            <div className="w-px bg-slate-200 dark:bg-slate-700" />
+            <button
+              type="button"
+              onClick={() => { setPickerOpen(false); setToolsOpen(o => !o); }}
+              className={`flex-1 min-w-0 flex items-center gap-1.5 px-3 py-2 text-left ${
+                toolsOpen ? 'bg-slate-100 dark:bg-slate-800' : ''
+              }`}
+            >
+              <Wrench className="w-4 h-4 text-blue-500 shrink-0" />
+              <span className="font-bold text-sm text-slate-800 dark:text-white truncate flex-1">
+                {toolLabel}
+              </span>
+              {toolsOpen ? <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />}
+            </button>
           </div>
+          {pickerOpen && (
+            <div className="absolute left-0 right-0 top-full z-40 max-h-[min(65dvh,24rem)] flex flex-col bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shadow-xl">
+              <div className="overflow-y-auto flex-1 min-h-0">
+                {listLoading ? (
+                  <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
+                ) : (
+                  <BlueprintList
+                    groups={groups}
+                    expanded={expanded}
+                    activePath={source?.path}
+                    onToggle={toggleGroup}
+                    onPick={pickBlueprint}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+          {toolsOpen && (
+            <div className="absolute left-0 right-0 top-full z-40 max-h-[min(65dvh,24rem)] overflow-y-auto bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shadow-xl">
+              <div className="flex flex-wrap items-center gap-2 p-3">
+                {toolbar}
+              </div>
+              <div className="px-3 pb-3 text-xs text-slate-500 space-y-1">
+                {calibration ? (
+                  <p className="font-semibold text-emerald-600 dark:text-emerald-400">Scale: {calibration.label}</p>
+                ) : (
+                  <p className="font-semibold text-amber-600 dark:text-amber-400">Not calibrated — open Set Scale over a known dimension.</p>
+                )}
+                {pdfDoc && numPages > 1 && (
+                  <p className="flex items-center gap-2">
+                    <button type="button" onClick={() => void goToPage(page - 1)} disabled={page <= 1}
+                      className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 disabled:opacity-40">Prev</button>
+                    Page {page} / {numPages}
+                    <button type="button" onClick={() => void goToPage(page + 1)} disabled={page >= numPages}
+                      className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 disabled:opacity-40">Next</button>
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Status bar */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 shrink-0 [@media(max-height:500px)]:hidden">
+        {/* Desktop toolbar */}
+        <div className="hidden lg:flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2.5 border-b border-slate-100 dark:border-slate-800 overflow-x-auto shrink-0">
+          {toolbar}
+        </div>
+
+        {/* Desktop status bar */}
+        <div className="hidden lg:flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 shrink-0">
           {calibration ? (
             <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
               <Check className="w-3.5 h-3.5" /> Scale: {calibration.label}
@@ -658,15 +724,23 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
 
         {/* Canvas area */}
         <div className="relative flex-1 min-h-0 bg-slate-200 dark:bg-slate-950">
+          {(pickerOpen || toolsOpen) && (
+            <button
+              type="button"
+              className="lg:hidden absolute inset-0 z-30 bg-slate-950/30"
+              aria-label="Close panel"
+              onClick={closeSheets}
+            />
+          )}
           {!source && !docLoading && (
             <button
               type="button"
-              onClick={() => setPickerOpen(true)}
+              onClick={() => { setToolsOpen(false); setPickerOpen(true); }}
               className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 gap-3 lg:pointer-events-none"
             >
               <FolderOpen className="w-12 h-12 opacity-30" />
               <p className="text-sm font-medium px-6 text-center">Choose a blueprint to start measuring.</p>
-              <span className="lg:hidden text-xs font-semibold text-blue-600">Tap to open plans</span>
+              <span className="lg:hidden text-xs font-semibold text-blue-600">Tap Blueprints above</span>
             </button>
           )}
           {docError && (
@@ -690,16 +764,6 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
                 </button>
               </div>
             </div>
-          )}
-          {source && (
-            <button
-              type="button"
-              onClick={() => setPickerOpen(true)}
-              className="ts-plans-fab absolute top-3 left-3 z-10 items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg"
-            >
-              <FolderOpen className="w-3.5 h-3.5" />
-              Plans
-            </button>
           )}
           {render && (
             <TrueScaleCanvas
@@ -771,44 +835,6 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           )}
         </div>
       </section>
-
-      {pickerOpen && (
-        <div className="lg:hidden fixed inset-0 z-40 flex flex-col justify-end">
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-950/50"
-            aria-label="Close blueprints"
-            onClick={() => setPickerOpen(false)}
-          />
-          <div className="relative z-10 max-h-[80dvh] flex flex-col rounded-t-2xl bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]">
-            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
-              <MapIcon className="w-4 h-4 text-blue-500" />
-              <h2 className="font-black text-slate-900 dark:text-white text-sm flex-1">Blueprints</h2>
-              <button
-                type="button"
-                onClick={() => setPickerOpen(false)}
-                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                aria-label="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="overflow-y-auto flex-1 min-h-0">
-              {listLoading ? (
-                <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
-              ) : (
-                <BlueprintList
-                  groups={groups}
-                  expanded={expanded}
-                  activePath={source?.path}
-                  onToggle={toggleGroup}
-                  onPick={pickBlueprint}
-                />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
