@@ -12,6 +12,7 @@ import { useTheme } from '@/lib/ThemeContext';
 import type { Job } from '@/lib/data';
 import {
   groupBlueprintsByJob, parseBlueprintPath,
+  type BlueprintGroup,
 } from '@/lib/blueprints';
 import {
   ARCH_SCALES, Calibration, DimLine, LengthUnit, Pt, SheetInfo, TrueScaleDoc,
@@ -37,6 +38,70 @@ interface BlueprintFile {
 interface ActiveSource {
   path: string;      // storage object name in the blueprints bucket
   name: string;      // display name
+}
+
+function BlueprintList({
+  groups,
+  expanded,
+  activePath,
+  onToggle,
+  onPick,
+}: {
+  groups: BlueprintGroup<BlueprintFile>[];
+  expanded: Set<string>;
+  activePath: string | undefined;
+  onToggle: (key: string) => void;
+  onPick: (file: BlueprintFile) => void;
+}) {
+  if (groups.length === 0) {
+    return (
+      <p className="text-xs text-slate-400 text-center px-4 py-10">
+        No blueprints found. Upload plans from the Dispatch board first.
+      </p>
+    );
+  }
+  return (
+    <div className="divide-y divide-slate-100 dark:divide-slate-800">
+      {groups.map(group => {
+        const open = expanded.has(group.key);
+        return (
+          <div key={group.key || 'unassigned'}>
+            <button
+              type="button"
+              onClick={() => onToggle(group.key)}
+              className="w-full flex items-center gap-1.5 px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50"
+            >
+              {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+              <span className="font-bold text-xs text-slate-800 dark:text-white truncate flex-1">{group.label}</span>
+              <span className="text-[10px] text-slate-400">{group.files.length}</span>
+            </button>
+            {open && (
+              <div className="pb-1">
+                {group.files.map(file => {
+                  const active = activePath === file.name;
+                  return (
+                    <button
+                      key={file.id || file.name}
+                      type="button"
+                      onClick={() => onPick(file)}
+                      className={`w-full flex items-center gap-2 pl-9 pr-3 py-2 text-left text-xs transition-colors ${
+                        active
+                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{parseBlueprintPath(file.name).displayName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 const PLACEHOLDER = '.emptyFolderPlaceholder';
@@ -91,6 +156,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [sheetDismissed, setSheetDismissed] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const canvasRef = useRef<TrueScaleCanvasHandle>(null);
 
@@ -195,6 +261,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
       setDocLoading(false);
     }
   }, [renderPdfAt, tryLoadSaved]);
+
+  const pickBlueprint = useCallback((file: BlueprintFile) => {
+    setPickerOpen(false);
+    void openBlueprint(file);
+  }, [openBlueprint]);
 
   const goToPage = useCallback(async (pageNum: number) => {
     if (!pdfDoc || !source || pageNum < 1 || pageNum > numPages) return;
@@ -392,9 +463,9 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   );
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 h-[calc(100vh-8.5rem)] min-h-[520px]">
-      {/* ── Sidebar: blueprint picker ── */}
-      <aside className="lg:w-72 shrink-0 flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+    <div className="flex flex-col lg:flex-row gap-2 lg:gap-4 flex-1 min-h-0 h-full">
+      {/* ── Desktop blueprint picker ── */}
+      <aside className="hidden lg:flex lg:w-72 shrink-0 flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
           <MapIcon className="w-4 h-4 text-blue-500" />
           <h2 className="font-black text-slate-900 dark:text-white text-sm">Blueprints</h2>
@@ -402,59 +473,35 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
         <div className="flex-1 overflow-y-auto">
           {listLoading ? (
             <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
-          ) : groups.length === 0 ? (
-            <p className="text-xs text-slate-400 text-center px-4 py-10">
-              No blueprints found. Upload plans from the Dispatch board first.
-            </p>
           ) : (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {groups.map(group => {
-                const open = expanded.has(group.key);
-                return (
-                  <div key={group.key || 'unassigned'}>
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(group.key)}
-                      className="w-full flex items-center gap-1.5 px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    >
-                      {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-                      <span className="font-bold text-xs text-slate-800 dark:text-white truncate flex-1">{group.label}</span>
-                      <span className="text-[10px] text-slate-400">{group.files.length}</span>
-                    </button>
-                    {open && (
-                      <div className="pb-1">
-                        {group.files.map(file => {
-                          const active = source?.path === file.name;
-                          return (
-                            <button
-                              key={file.id || file.name}
-                              type="button"
-                              onClick={() => void openBlueprint(file)}
-                              className={`w-full flex items-center gap-2 pl-9 pr-3 py-2 text-left text-xs transition-colors ${
-                                active
-                                  ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold'
-                                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                              }`}
-                            >
-                              <FileText className="w-3.5 h-3.5 shrink-0" />
-                              <span className="truncate">{parseBlueprintPath(file.name).displayName}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <BlueprintList
+              groups={groups}
+              expanded={expanded}
+              activePath={source?.path}
+              onToggle={toggleGroup}
+              onPick={pickBlueprint}
+            />
           )}
         </div>
       </aside>
 
       {/* ── Main stage ── */}
-      <section className="flex-1 flex flex-col min-w-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+      <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className={`lg:hidden shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-left ${
+            source ? 'ts-hide-on-short' : ''
+          }`}
+        >
+          <MapIcon className="w-4 h-4 text-blue-500 shrink-0" />
+          <span className="font-bold text-sm text-slate-800 dark:text-white truncate flex-1">
+            {source ? baseDisplayName(source.name) : 'Choose a blueprint'}
+          </span>
+          <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+        </button>
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2.5 [@media(max-height:500px)]:py-1 border-b border-slate-100 dark:border-slate-800 overflow-x-auto shrink-0">
           {toolBtn('dimension', <Ruler className="w-4 h-4" />, 'Dimension')}
           {toolBtn('calibrate', <Crosshair className="w-4 h-4" />, 'Set Scale')}
           {toolBtn('pan', <Move className="w-4 h-4" />, 'Pan / Select')}
@@ -576,7 +623,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
         </div>
 
         {/* Status bar */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 shrink-0 [@media(max-height:500px)]:hidden">
           {calibration ? (
             <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
               <Check className="w-3.5 h-3.5" /> Scale: {calibration.label}
@@ -594,7 +641,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           )}
           <span className="text-slate-400">{dimensions.length} dimension{dimensions.length !== 1 ? 's' : ''}</span>
           {(tool === 'dimension' || tool === 'calibrate') && (
-            <span className="text-slate-500 dark:text-slate-400">
+            <span className="hidden sm:inline text-slate-500 dark:text-slate-400">
               Click two points — or click-and-drag. Esc cancels.
             </span>
           )}
@@ -612,10 +659,15 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
         {/* Canvas area */}
         <div className="relative flex-1 min-h-0 bg-slate-200 dark:bg-slate-950">
           {!source && !docLoading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 gap-3">
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 gap-3 lg:pointer-events-none"
+            >
               <FolderOpen className="w-12 h-12 opacity-30" />
-              <p className="text-sm font-medium">Select a blueprint from the left to start measuring.</p>
-            </div>
+              <p className="text-sm font-medium px-6 text-center">Choose a blueprint to start measuring.</p>
+              <span className="lg:hidden text-xs font-semibold text-blue-600">Tap to open plans</span>
+            </button>
           )}
           {docError && (
             <div className="absolute inset-0 flex items-center justify-center p-6">
@@ -638,6 +690,16 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
                 </button>
               </div>
             </div>
+          )}
+          {source && (
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="ts-plans-fab absolute top-3 left-3 z-10 items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              Plans
+            </button>
           )}
           {render && (
             <TrueScaleCanvas
@@ -709,6 +771,44 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           )}
         </div>
       </section>
+
+      {pickerOpen && (
+        <div className="lg:hidden fixed inset-0 z-40 flex flex-col justify-end">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/50"
+            aria-label="Close blueprints"
+            onClick={() => setPickerOpen(false)}
+          />
+          <div className="relative z-10 max-h-[80dvh] flex flex-col rounded-t-2xl bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]">
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+              <MapIcon className="w-4 h-4 text-blue-500" />
+              <h2 className="font-black text-slate-900 dark:text-white text-sm flex-1">Blueprints</h2>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(false)}
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 min-h-0">
+              {listLoading ? (
+                <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
+              ) : (
+                <BlueprintList
+                  groups={groups}
+                  expanded={expanded}
+                  activePath={source?.path}
+                  onToggle={toggleGroup}
+                  onPick={pickBlueprint}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

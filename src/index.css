@@ -60,6 +60,38 @@
   color: var(--text-color);
 }
 
+/* TrueScale needs a locked viewport so the plan canvas can fill the screen
+   (including landscape phones) instead of scrolling the chrome off-canvas. */
+html.truescale-active,
+html.truescale-active body,
+html.truescale-active #root {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Short landscape: file bar is hidden; keep a way to switch plans. */
+.ts-plans-fab {
+  display: none;
+}
+@media (max-height: 500px) {
+  .ts-plans-fab {
+    display: flex;
+  }
+}
+@media (min-width: 1024px) {
+  .ts-plans-fab {
+    display: none !important;
+  }
+}
+
+@media (max-height: 500px) {
+  .ts-hide-on-short {
+    display: none !important;
+  }
+}
+
 /* ── Card ──────────────────────────────────────────────────────────────── */
 
 .card {

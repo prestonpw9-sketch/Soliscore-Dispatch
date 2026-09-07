@@ -133,7 +133,7 @@ export default function Sidebar({
       {/* Sidebar panel */}
       <div
         className={clsx(
-          'bg-slate-900 h-screen w-64 flex flex-col text-slate-300 font-medium border-r border-slate-800',
+          'bg-slate-900 h-dvh max-h-dvh w-64 flex flex-col text-slate-300 font-medium border-r border-slate-800',
           'transition-transform duration-300 ease-in-out',
           'fixed inset-y-0 left-0 z-50 lg:static lg:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full'
@@ -160,7 +160,7 @@ export default function Sidebar({
         </div>
 
         {/* Main nav — filtered by the signed-in user's role */}
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 min-h-0 px-3 py-4 space-y-1 overflow-y-auto">
           {NAV_ITEMS.filter(item => role && item.roles.includes(role)).map(item => {
             const Icon = item.icon;
             const isActive = activeView === item.key;
@@ -183,7 +183,7 @@ export default function Sidebar({
         </nav>
 
         {/* Bottom actions */}
-        <div className="p-3 border-t border-slate-800 bg-slate-950/20 space-y-1 shrink-0">
+        <div className="p-3 border-t border-slate-800 bg-slate-950/20 space-y-1 shrink-0 [@media(max-height:500px)]:p-1.5 [@media(max-height:500px)]:space-y-0.5">
           <button
             type="button"
             onClick={() => handleNavClick('settings')}
@@ -248,7 +248,7 @@ export default function Sidebar({
           {/* Signed-in user + sign out */}
           <div className="pt-2 mt-1 border-t border-slate-800">
             {session?.user?.email && (
-              <div className="px-3 pt-1 pb-1.5">
+              <div className="px-3 pt-1 pb-1.5 [@media(max-height:500px)]:hidden">
                 <p className="text-[10px] text-slate-500 truncate" title={session.user.email}>
                   Signed in as {session.user.email}
                 </p>

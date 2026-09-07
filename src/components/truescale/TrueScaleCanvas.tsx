@@ -107,6 +107,15 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const lastScreen = useRef<Pt | null>(null);
   const viewRef = useRef({ scale, offset });
   useEffect(() => { viewRef.current = { scale, offset }; }, [scale, offset]);
+  const needsFit = useRef(true);
+  const lastFitBox = useRef({ w: 0, h: 0 });
+  const pointers = useRef<Map<number, Pt>>(new Map());
+  const pinch = useRef<{
+    startDist: number;
+    startScale: number;
+    startOffset: Pt;
+    startMid: Pt;
+  } | null>(null);
 
   const toImage = useCallback(
     (s: Pt): Pt => ({ x: (s.x - offset.x) / scale, y: (s.y - offset.y) / scale }),
@@ -119,20 +128,49 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const fit = useCallback(() => {
     if (!baseWidth || !baseHeight || !size.w || !size.h) return;
-    const s = Math.min(size.w / baseWidth, size.h / baseHeight) * 0.95;
-    const ns = s > 0 ? s : 1;
+    const contain = Math.min(size.w / baseWidth, size.h / baseHeight) * 0.95;
+    const fillWidth = (size.w / baseWidth) * 0.98;
+    // Wide-and-short stage (phone landscape): a portrait sheet contain-fits to a
+    // postage stamp. Fill the width and pan vertically so linework is usable.
+    const landscapeStage = size.w > size.h * 1.15;
+    const heightConstrained = size.h / baseHeight < size.w / baseWidth;
+    const fillWide = landscapeStage && heightConstrained;
+    const ns = (fillWide ? fillWidth : contain) || 1;
     setScale(ns);
     setOffset({
       x: (size.w - baseWidth * ns) / 2,
-      y: (size.h - baseHeight * ns) / 2,
+      y: fillWide ? 8 : (size.h - baseHeight * ns) / 2,
     });
+    lastFitBox.current = { w: size.w, h: size.h };
   }, [baseWidth, baseHeight, size]);
 
-  // Fit whenever a new base image is loaded or container first sizes up.
+  // Fit when a new plan loads, or the first time the canvas gets a real size
+  // (mobile layout / rotate can start at 0×0).
+  useEffect(() => { needsFit.current = true; }, [base, baseWidth, baseHeight]);
   useEffect(() => {
+    if (!needsFit.current || !size.w || !size.h || !baseWidth || !baseHeight) return;
     fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, baseWidth, baseHeight]);
+    needsFit.current = false;
+  }, [base, baseWidth, baseHeight, size.w, size.h, fit]);
+
+  // Re-fit against the last fitted box (not every observer tick). Slow window
+  // drags and phone rotates arrive as many small size changes; tracking each
+  // tick never accumulated a jump, so the plan stayed at the old zoom.
+  useEffect(() => {
+    if (!size.w || !size.h || !baseWidth || !baseHeight) return;
+    const prev = lastFitBox.current;
+    if (!prev.w) return;
+    const flipped = (prev.w > prev.h) !== (size.w > size.h);
+    const dw = Math.abs(size.w - prev.w);
+    const dh = Math.abs(size.h - prev.h);
+    if (flipped || dw > 40 || dh > 40) {
+      fit();
+      return;
+    }
+    if (dw < 16 && dh < 16) return;
+    const t = window.setTimeout(() => fit(), 150);
+    return () => window.clearTimeout(t);
+  }, [size.w, size.h, baseWidth, baseHeight, fit]);
 
   // Hold SPACE to grab/pan the plan regardless of the active tool (like Figma/Bluebeam).
   useEffect(() => {
@@ -185,7 +223,22 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     });
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
+    const onWinResize = () => {
+      const apply = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+      apply();
+      // iOS often reports stale layout until the next frame after rotate.
+      requestAnimationFrame(apply);
+    };
+    window.addEventListener('resize', onWinResize);
+    window.addEventListener('orientationchange', onWinResize);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', onWinResize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', onWinResize);
+      window.removeEventListener('orientationchange', onWinResize);
+      vv?.removeEventListener('resize', onWinResize);
+    };
   }, []);
 
   // Paint
@@ -195,8 +248,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(size.w * dpr);
     canvas.height = Math.round(size.h * dpr);
-    canvas.style.width = `${size.w}px`;
-    canvas.style.height = `${size.h}px`;
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -405,9 +458,33 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 && e.button !== 1) return;
+    if (e.pointerType !== 'touch' && e.button !== 0 && e.button !== 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const s = getScreen(e);
+    pointers.current.set(e.pointerId, s);
+
+    if (pointers.current.size >= 2) {
+      panning.current = null;
+      drawing.current = null;
+      moving.current = null;
+      pendingStart.current = null;
+      stopAutoPan();
+      setPreview(null);
+      setPlacing(false);
+      setGrabbing(false);
+      const pts = [...pointers.current.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const cur = viewRef.current;
+      pinch.current = {
+        startDist: Math.max(dist, 1),
+        startScale: cur.scale,
+        startOffset: { ...cur.offset },
+        startMid: mid,
+      };
+      return;
+    }
+
     downScreen.current = s;
 
     // Pan the plan: Pan tool, middle-mouse, or SPACE held — always available.
@@ -438,6 +515,19 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const handlePointerMove = (e: React.PointerEvent) => {
     const s = getScreen(e);
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, s);
+    if (pinch.current && pointers.current.size >= 2) {
+      const pts = [...pointers.current.values()].slice(0, 2);
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const p = pinch.current;
+      const ns = Math.max(0.05, Math.min(40, p.startScale * (dist / p.startDist)));
+      const imgX = (p.startMid.x - p.startOffset.x) / p.startScale;
+      const imgY = (p.startMid.y - p.startOffset.y) / p.startScale;
+      setScale(ns);
+      setOffset({ x: mid.x - imgX * ns, y: mid.y - imgY * ns });
+      return;
+    }
     if (moving.current) {
       const cur = toImage(s);
       const m = moving.current;
@@ -470,6 +560,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2 && pinch.current) {
+      pinch.current = null;
+      setGrabbing(false);
+      downScreen.current = null;
+      return;
+    }
+
     const s = getScreen(e);
     const down = downScreen.current;
     const moved = down ? Math.hypot(s.x - down.x, s.y - down.y) : 0;
@@ -532,7 +630,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   /** Abort a press-drag / pan if the pointer is cancelled. Keep an armed click. */
-  const handlePointerCancel = () => {
+  const handlePointerCancel = (e?: React.PointerEvent) => {
+    if (e) pointers.current.delete(e.pointerId);
+    else pointers.current.clear();
+    pinch.current = null;
     drawing.current = null;
     panning.current = null;
     moving.current = null;
@@ -593,8 +694,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     <div ref={containerRef} className="relative w-full h-full overflow-hidden rounded-xl">
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 touch-none select-none"
-        style={{ cursor }}
+        className="absolute inset-0 w-full h-full touch-none select-none"
+        style={{ cursor, touchAction: 'none' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
