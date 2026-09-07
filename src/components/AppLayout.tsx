@@ -40,7 +40,15 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
 
 const AppLayout: React.FC = () => {
   const { role, canEdit } = useAuth();
-  const [view, setView]                     = useState<ViewKey>('dashboard');
+  const [view, setView]                     = useState<ViewKey>(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get('view');
+      if (q && q in titles) return q as ViewKey;
+      const stored = sessionStorage.getItem('itdg-view');
+      if (stored && stored in titles) return stored as ViewKey;
+    } catch { /* private mode */ }
+    return 'dashboard';
+  });
 
   // Which views each role may open (must mirror the Sidebar's NAV_ITEMS).
   const viewAccess: Record<string, string[]> = {
@@ -334,9 +342,33 @@ const AppLayout: React.FC = () => {
   };
 
   const isInitialLoad = (loading || !!error) && customers.length === 0;
+  const trueScale = view === 'truescale';
+
+  useEffect(() => {
+    try { sessionStorage.setItem('itdg-view', view); } catch { /* ignore */ }
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('view') !== view) {
+        url.searchParams.set('view', view);
+        window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      }
+    } catch { /* ignore */ }
+  }, [view]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('truescale-active', trueScale);
+    try {
+      if (trueScale) screen.orientation?.unlock?.();
+    } catch { /* unsupported or already unlocked */ }
+    return () => document.documentElement.classList.remove('truescale-active');
+  }, [trueScale]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex font-sans w-full">
+    <div className={`bg-slate-50 dark:bg-slate-950 flex font-sans w-full ${
+      trueScale
+        ? 'h-dvh max-h-dvh overflow-hidden pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]'
+        : 'min-h-screen'
+    }`}>
       <Sidebar
         activeView={view}
         onChange={setView}
@@ -344,11 +376,13 @@ const AppLayout: React.FC = () => {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 ${trueScale ? 'min-h-0' : ''}`}>
 
         {/* Header */}
-        <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-20">
-          <div className="flex items-center gap-3 px-4 lg:px-6 py-3">
+        <header className="ts-app-header bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-20 shrink-0">
+          <div className={`flex items-center gap-2 sm:gap-3 px-3 lg:px-6 ${
+            trueScale ? 'py-1.5 lg:py-3' : 'py-3 px-4'
+          }`}>
 
             <button
               type="button"
@@ -363,7 +397,9 @@ const AppLayout: React.FC = () => {
               <h1 className="text-lg md:text-xl font-bold text-slate-900 dark:text-white truncate">
                 {titles[view].title}
               </h1>
-              <p className="text-xs text-slate-500 truncate hidden sm:block">
+              <p className={`text-xs text-slate-500 truncate ${
+                trueScale ? 'hidden xl:block' : 'hidden sm:block'
+              }`}>
                 {titles[view].subtitle}
               </p>
             </div>
@@ -394,7 +430,7 @@ const AppLayout: React.FC = () => {
               type="button"
               onClick={handleRefresh}
               aria-label="Refresh data"
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+              className={`${trueScale ? 'hidden lg:inline-flex' : ''} p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg`}
             >
               {loading
                 ? <Loader2 className="w-5 h-5 text-slate-600 animate-spin" />
@@ -406,7 +442,7 @@ const AppLayout: React.FC = () => {
               type="button"
               onClick={() => setNotificationsOpen(v => !v)}
               aria-label="Notifications"
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+              className={`${trueScale ? 'hidden lg:inline-flex' : ''} p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg`}
             >
               <Bell className="w-5 h-5 text-slate-600" />
             </button>
@@ -416,7 +452,7 @@ const AppLayout: React.FC = () => {
               type="button"
               onClick={() => setEstimatorOpen(true)}
               aria-label="Open Quick Bid panel"
-              className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium px-3 sm:px-4 py-2 rounded-lg shadow-sm transition-colors"
+              className={`${trueScale ? 'hidden lg:inline-flex' : 'inline-flex'} items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium px-3 sm:px-4 py-2 rounded-lg shadow-sm transition-colors`}
             >
               <Calculator className="w-4 h-4" />
               <span className="hidden sm:inline">Quick Bid</span>
@@ -429,7 +465,7 @@ const AppLayout: React.FC = () => {
                 setModalDefaults(undefined);
                 setModalOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 sm:px-4 py-2 rounded-lg shadow-sm transition-colors"
+              className={`${trueScale ? 'hidden lg:inline-flex' : 'inline-flex'} items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 sm:px-4 py-2 rounded-lg shadow-sm transition-colors`}
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">New Job</span>
@@ -438,7 +474,10 @@ const AppLayout: React.FC = () => {
         </header>
 
         {/* Main content */}
-        <main className="flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">
+        <main className={trueScale
+          ? 'flex-1 min-h-0 overflow-hidden p-0 lg:p-6 w-full flex flex-col'
+          : 'flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto'
+        }>
           {/* These views don't depend on dispatch data, so they render immediately
               and are never blocked by the "Loading dispatch data" gate. */}
           {!canSeeView(view) ? (
