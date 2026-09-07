@@ -637,7 +637,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
               className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomOut className="w-4 h-4" /></button>
             <button type="button" onClick={() => canvasRef.current?.fit()} title="Fit to screen"
               className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><Maximize className="w-4 h-4" /></button>
-            <button type="button" onClick={() => canvasRef.current?.zoomBy(1.2)} title="Zoom in — linework re-renders sharp at this view"
+            <button type="button" onClick={() => canvasRef.current?.zoomBy(1.2)} title="Zoom in — vector PDFs re-render at screen sharpness"
               className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"><ZoomIn className="w-4 h-4" /></button>
 
             {canEdit && (
@@ -802,6 +802,11 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           <span className="text-slate-400">
             {dimensions.length} dim · {lines.length} line{lines.length !== 1 ? 's' : ''} · {callouts.length} note{callouts.length !== 1 ? 's' : ''}
           </span>
+          {pdfDoc && (
+            <span className="hidden sm:inline text-slate-500 dark:text-slate-400">
+              Vector PDF — zoom redraws linework at screen sharpness
+            </span>
+          )}
           {(tool === 'dimension' || tool === 'calibrate') && (
             <span className="hidden sm:inline text-slate-500 dark:text-slate-400">
               Click two points — or click-and-drag. Esc cancels.

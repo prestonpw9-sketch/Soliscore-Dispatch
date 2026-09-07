@@ -45,10 +45,17 @@ export interface PaintOpts {
   /** When false, blit the overview bitmap with nearest-neighbor (crisp zoom). */
   smoothPlan?: boolean;
   /**
-   * Vector-sharp PDF tile for the current viewport, blitted 1:1 onto the
-   * device-pixel canvas (identity transform).
+   * Vector-sharp PDF tile drawn in the same CSS-pixel space as annotations.
+   * When `exact`, it matches the current view 1:1 and replaces the overview.
    */
-  lens?: HTMLCanvasElement | null;
+  lens?: {
+    canvas: HTMLCanvasElement;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    exact?: boolean;
+  } | null;
 }
 
 const CAL_COLOR = '#22d3ee';
@@ -308,14 +315,14 @@ function drawLabel(
 }
 
 export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
-  const { base, project, scale, offset, sizeScale } = opts;
+  const { base, baseWidth, baseHeight, project, scale, offset, sizeScale } = opts;
 
   // Surface background
   ctx.fillStyle = opts.background;
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-  // Base plan image (zoom/pan transform)
-  if (base) {
+  // Overview bitmap — skipped when a 1:1 vector tile covers the view.
+  if (base && !opts.lens?.exact) {
     ctx.save();
     ctx.translate(offset.x, offset.y);
     ctx.scale(scale, scale);
@@ -328,9 +335,13 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
 
   if (opts.lens) {
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(opts.lens, 0, 0, ctx.canvas.width, ctx.canvas.height);
+    if (base) {
+      ctx.beginPath();
+      ctx.rect(offset.x, offset.y, baseWidth * scale, baseHeight * scale);
+      ctx.clip();
+    }
+    ctx.imageSmoothingEnabled = !opts.lens.exact;
+    ctx.drawImage(opts.lens.canvas, opts.lens.x, opts.lens.y, opts.lens.w, opts.lens.h);
     ctx.restore();
   }
 

@@ -26,16 +26,19 @@ const MAX_BASE_WIDTH = 4096;
 const MAX_IMAGE_PIXELS = 16_000_000;
 /** pdf.js scale ceiling for the overview bitmap (letter at 5× ≈ 3000px). */
 const MAX_PDF_BASE_SCALE = 5;
-/** Longest edge of a zoomed PDF lens tile (memory bound). */
-const MAX_LENS_EDGE = 4096;
-/** Cap device-pixels-per-overview-pixel so a 36" sheet can finish in time. */
-const MAX_LENS_EXTRA = 4;
+/** Longest edge of a zoomed PDF viewport tile (GPU/canvas bound). */
+const MAX_LENS_EDGE = 8192;
+/** Area cap so a 5K retina viewport still renders. */
+const MAX_LENS_PIXELS = 16_777_216;
+/** Hairlines shorter than this many device pixels get boosted (Revu-style). */
+const MIN_STROKE_DEVICE_PX = 1.25;
 
 /** Load a PDF from raw bytes. Caller keeps the doc for page navigation. */
 export async function loadPdf(data: ArrayBuffer): Promise<PdfDoc> {
   // Copy into a fresh Uint8Array — pdf.js detaches the buffer it's given.
   const bytes = new Uint8Array(data.slice(0));
-  return pdfjsLib.getDocument({ data: bytes }).promise;
+  // enableHWA: GPU-backed 2D canvases for image masks / extra buffers (Chromium).
+  return pdfjsLib.getDocument({ data: bytes, enableHWA: true }).promise;
 }
 
 export function pdfOverviewScale(unscaledWidth: number): number {
@@ -52,10 +55,10 @@ export async function renderPdfPage(pdf: PdfDoc, pageNumber: number): Promise<Re
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   if (!ctx) throw new Error('Could not get 2D context for PDF render');
 
-  await page.render({ canvasContext: ctx, viewport }).promise;
+  await page.render({ canvasContext: ctx, viewport, background: '#ffffff' }).promise;
   // PDF user space is 1/72". At `scale`, base px per point = scale → px/inch = scale*72.
   return { canvas, width: canvas.width, height: canvas.height, pxPerInch: scale * 72, pdfScale: scale };
 }
@@ -79,27 +82,67 @@ export function needsPdfLens(viewScale: number, dpr: number): boolean {
   return viewScale * dpr > 1;
 }
 
-export function pdfLensExtra(viewScale: number, dpr: number, srcW: number, srcH: number): number {
-  let extra = Math.min(viewScale * dpr, MAX_LENS_EXTRA);
-  const edge = Math.max(srcW * extra, srcH * extra);
-  if (edge > MAX_LENS_EDGE) extra *= MAX_LENS_EDGE / edge;
-  return Math.max(extra, 1);
+/**
+ * Device-pixel size of the vector tile for the current CSS viewport.
+ * Matches the on-screen canvas so zoomed paths rasterize 1:1 (no stretch).
+ */
+export function pdfLensOutputSize(cssW: number, cssH: number, dpr: number): { w: number; h: number } {
+  let w = Math.max(1, Math.round(cssW * dpr));
+  let h = Math.max(1, Math.round(cssH * dpr));
+  const edge = Math.max(w, h);
+  if (edge > MAX_LENS_EDGE) {
+    const k = MAX_LENS_EDGE / edge;
+    w = Math.max(1, Math.round(w * k));
+    h = Math.max(1, Math.round(h * k));
+  }
+  if (w * h > MAX_LENS_PIXELS) {
+    const k = Math.sqrt(MAX_LENS_PIXELS / (w * h));
+    w = Math.max(1, Math.round(w * k));
+    h = Math.max(1, Math.round(h * k));
+  }
+  return { w, h };
 }
 
 /**
- * Re-render the visible PDF region at screen density so zoomed linework stays
- * vector-sharp. Coordinates stay in overview-canvas space; this is display only.
+ * Boost hairline strokes to at least `minDevicePx` after the current transform,
+ * similar to Revu's "Enhance Thin Lines".
+ */
+function installThinLineBoost(ctx: CanvasRenderingContext2D, minDevicePx: number): void {
+  const stroke = ctx.stroke.bind(ctx);
+  ctx.stroke = ((path?: Path2D) => {
+    const t = ctx.getTransform();
+    const s = Math.min(Math.hypot(t.a, t.b) || 1, Math.hypot(t.c, t.d) || 1);
+    const prev = ctx.lineWidth;
+    if (prev * s < minDevicePx) ctx.lineWidth = minDevicePx / s;
+    try {
+      return path ? stroke(path) : stroke();
+    } finally {
+      ctx.lineWidth = prev;
+    }
+  }) as CanvasRenderingContext2D['stroke'];
+}
+
+/**
+ * Re-rasterize the visible PDF region into a viewport-sized tile at screen
+ * density. Vector paths are recalculated at this zoom (not a stretched JPEG).
  */
 export function startPdfLensRender(
   source: PdfLensSource,
   region: PdfLensRegion,
-  extra: number,
+  outW: number,
+  outH: number,
 ): { canvas: HTMLCanvasElement; promise: Promise<void>; cancel: () => void } {
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.ceil(region.w * extra));
-  canvas.height = Math.max(1, Math.ceil(region.h * extra));
-  const ctx = canvas.getContext('2d', { alpha: false });
+  canvas.width = Math.max(1, Math.round(outW));
+  canvas.height = Math.max(1, Math.round(outH));
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   if (!ctx) throw new Error('Could not get 2D context for PDF lens');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  installThinLineBoost(ctx, MIN_STROKE_DEVICE_PX);
+
+  const extraX = canvas.width / Math.max(region.w, 1e-6);
+  const extraY = canvas.height / Math.max(region.h, 1e-6);
 
   let cancelled = false;
   let task: { cancel: () => void } | null = null;
@@ -108,14 +151,16 @@ export function startPdfLensRender(
     if (cancelled) return;
     const viewport = page.getViewport({ scale: source.pdfScale });
     const transform = [
-      extra, 0, 0, extra,
-      -region.x * extra,
-      -region.y * extra,
+      extraX, 0, 0, extraY,
+      -region.x * extraX,
+      -region.y * extraY,
     ];
     const renderTask = page.render({
       canvasContext: ctx,
       viewport,
       transform,
+      background: '#ffffff',
+      intent: 'display',
     });
     task = renderTask;
     await renderTask.promise;
