@@ -585,30 +585,20 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
 
   const toolLabel = tool === 'calibrate' ? 'Set Scale' : tool === 'pan' ? 'Pan' : 'Dimension';
 
-  return (
-    <div className="flex flex-col lg:flex-row gap-2 lg:gap-4 flex-1 min-h-0 h-full">
-      {/* ── Desktop blueprint picker ── */}
-      <aside className="hidden lg:flex lg:w-72 shrink-0 flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
-          <MapIcon className="w-4 h-4 text-blue-500" />
-          <h2 className="font-black text-slate-900 dark:text-white text-sm">Blueprints</h2>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {listLoading ? (
-            <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
-          ) : (
-            <BlueprintList
-              groups={groups}
-              expanded={expanded}
-              activePath={source?.path}
-              onToggle={toggleGroup}
-              onPick={pickBlueprint}
-            />
-          )}
-        </div>
-      </aside>
+  const blueprintList = listLoading ? (
+    <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
+  ) : (
+    <BlueprintList
+      groups={groups}
+      expanded={expanded}
+      activePath={source?.path}
+      onToggle={toggleGroup}
+      onPick={pickBlueprint}
+    />
+  );
 
-      {/* ── Main stage ── */}
+  return (
+    <div className="flex flex-col gap-2 lg:gap-4 flex-1 min-h-0 h-full">
       <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
         {/* Mobile: one thin row; lists/tools slide down over the canvas */}
         <div className="lg:hidden relative z-40 shrink-0 border-b border-slate-100 dark:border-slate-800">
@@ -644,17 +634,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           {pickerOpen && (
             <div className="absolute left-0 right-0 top-full z-40 max-h-[min(65dvh,24rem)] flex flex-col bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shadow-xl">
               <div className="overflow-y-auto flex-1 min-h-0">
-                {listLoading ? (
-                  <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
-                ) : (
-                  <BlueprintList
-                    groups={groups}
-                    expanded={expanded}
-                    activePath={source?.path}
-                    onToggle={toggleGroup}
-                    onPick={pickBlueprint}
-                  />
-                )}
+                {blueprintList}
               </div>
             </div>
           )}
@@ -685,6 +665,21 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
 
         {/* Desktop toolbar */}
         <div className="hidden lg:flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2.5 border-b border-slate-100 dark:border-slate-800 overflow-x-auto shrink-0">
+          <button
+            type="button"
+            onClick={() => setPickerOpen(o => !o)}
+            title="Open blueprints"
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold shrink-0 ${
+              pickerOpen
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <MapIcon className="w-4 h-4" />
+            <span className="max-w-[10rem] truncate">{source ? baseDisplayName(source.name) : 'Blueprints'}</span>
+            {pickerOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
           {toolbar}
         </div>
 
@@ -727,20 +722,41 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           {(pickerOpen || toolsOpen) && (
             <button
               type="button"
-              className="lg:hidden absolute inset-0 z-30 bg-slate-950/30"
+              className="absolute inset-0 z-30 bg-slate-950/30"
               aria-label="Close panel"
               onClick={closeSheets}
             />
           )}
+          <aside
+            className={`hidden lg:flex absolute inset-y-0 left-0 z-40 w-72 flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-xl transition-transform duration-200 ${
+              pickerOpen ? 'translate-x-0' : '-translate-x-full pointer-events-none'
+            }`}
+          >
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 shrink-0">
+              <MapIcon className="w-4 h-4 text-blue-500" />
+              <h2 className="font-black text-slate-900 dark:text-white text-sm flex-1">Blueprints</h2>
+              <button
+                type="button"
+                onClick={closeSheets}
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label="Close blueprints"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {blueprintList}
+            </div>
+          </aside>
           {!source && !docLoading && (
             <button
               type="button"
               onClick={() => { setToolsOpen(false); setPickerOpen(true); }}
-              className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 gap-3 lg:pointer-events-none"
+              className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 gap-3"
             >
               <FolderOpen className="w-12 h-12 opacity-30" />
               <p className="text-sm font-medium px-6 text-center">Choose a blueprint to start measuring.</p>
-              <span className="lg:hidden text-xs font-semibold text-blue-600">Tap Blueprints above</span>
+              <span className="text-xs font-semibold text-blue-600">Open Blueprints to pick a plan</span>
             </button>
           )}
           {docError && (
