@@ -7,10 +7,16 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Calibration, DimLine, Pt } from '@/lib/truescale';
-import { paintScene, Preview } from './scenePainter';
+import { Calibration, Callout, DimLine, DrawLine, Pt } from '@/lib/truescale';
+import {
+  needsPdfLens,
+  pdfLensOutputSize,
+  startPdfLensRender,
+  type PdfLensSource,
+} from '@/lib/pdfjs';
+import { calloutBubbleRect, paintScene, Preview } from './scenePainter';
 
-export type Tool = 'pan' | 'calibrate' | 'dimension';
+export type Tool = 'pan' | 'calibrate' | 'dimension' | 'line' | 'callout';
 
 export interface TrueScaleCanvasHandle {
   /** Composite the plan + annotations to a base-resolution canvas (for export/print). */
@@ -26,16 +32,36 @@ interface Props {
   tool: Tool;
   calibration: Calibration | null;
   dimensions: DimLine[];
+  lines: DrawLine[];
+  callouts: Callout[];
   selectedId: string | null;
   activeColor: string;
   activeWidth: number;
   dark: boolean;
   /** When false, dimensions can be dragged (moved/edited) with the Pan/Select tool. */
   locked: boolean;
+  /** Live PDF page — used to re-render the zoomed viewport at screen density. */
+  pdfLens?: PdfLensSource | null;
   onDrawCalibration: (a: Pt, b: Pt) => void;
   onAddDimension: (a: Pt, b: Pt) => void;
+  onAddLine: (a: Pt, b: Pt) => void;
+  onAddCallout: (tip: Pt, bubble: Pt) => void;
   onSelect: (id: string | null) => void;
   onMoveDimension: (id: string, a: Pt, b: Pt) => void;
+  onMoveLine: (id: string, a: Pt, b: Pt) => void;
+  onMoveCallout: (id: string, tip: Pt, bubble: Pt) => void;
+}
+
+interface LensTile {
+  canvas: HTMLCanvasElement;
+  pdf: PdfLensSource['pdf'];
+  pageNumber: number;
+  pdfScale: number;
+  scale: number;
+  ox: number;
+  oy: number;
+  cssW: number;
+  cssH: number;
 }
 
 function pointSegDist(p: Pt, a: Pt, b: Pt): number {
@@ -55,9 +81,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   ref,
 ) {
   const {
-    base, baseWidth, baseHeight, tool, calibration, dimensions, selectedId,
-    activeColor, activeWidth, dark, locked,
-    onDrawCalibration, onAddDimension, onSelect, onMoveDimension,
+    base, baseWidth, baseHeight, tool, calibration, dimensions, lines, callouts, selectedId,
+    activeColor, activeWidth, dark, locked, pdfLens,
+    onDrawCalibration, onAddDimension, onAddLine, onAddCallout, onSelect,
+    onMoveDimension, onMoveLine, onMoveCallout,
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -69,6 +96,8 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const [grabbing, setGrabbing] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [lensTile, setLensTile] = useState<LensTile | null>(null);
+  const [lensPending, setLensPending] = useState(false);
 
   // Interaction refs (avoid re-renders mid-gesture)
   const panning = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
@@ -78,13 +107,24 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const pendingStart = useRef<Pt | null>(null);
   // Dragging an existing dimension (endpoint or whole line) when unlocked.
   const moving = useRef<
-    { id: string; mode: 'a' | 'b' | 'line'; startImg: Pt; origA: Pt; origB: Pt } | null
+    | { kind: 'seg'; which: 'dimension' | 'line'; id: string; mode: 'a' | 'b' | 'line'; startImg: Pt; origA: Pt; origB: Pt }
+    | { kind: 'callout'; id: string; mode: 'tip' | 'bubble' | 'line'; startImg: Pt; origTip: Pt; origBubble: Pt }
+    | null
   >(null);
   // Edge auto-pan while drawing (so long measurements can extend past the view).
   const autoPanRAF = useRef<number | null>(null);
   const lastScreen = useRef<Pt | null>(null);
   const viewRef = useRef({ scale, offset });
   useEffect(() => { viewRef.current = { scale, offset }; }, [scale, offset]);
+  const needsFit = useRef(true);
+  const lastFitBox = useRef({ w: 0, h: 0 });
+  const pointers = useRef<Map<number, Pt>>(new Map());
+  const pinch = useRef<{
+    startDist: number;
+    startScale: number;
+    startOffset: Pt;
+    startMid: Pt;
+  } | null>(null);
 
   const toImage = useCallback(
     (s: Pt): Pt => ({ x: (s.x - offset.x) / scale, y: (s.y - offset.y) / scale }),
@@ -97,20 +137,49 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const fit = useCallback(() => {
     if (!baseWidth || !baseHeight || !size.w || !size.h) return;
-    const s = Math.min(size.w / baseWidth, size.h / baseHeight) * 0.95;
-    const ns = s > 0 ? s : 1;
+    const contain = Math.min(size.w / baseWidth, size.h / baseHeight) * 0.95;
+    const fillWidth = (size.w / baseWidth) * 0.98;
+    // Wide-and-short stage (phone landscape): a portrait sheet contain-fits to a
+    // postage stamp. Fill the width and pan vertically so linework is usable.
+    const landscapeStage = size.w > size.h * 1.15;
+    const heightConstrained = size.h / baseHeight < size.w / baseWidth;
+    const fillWide = landscapeStage && heightConstrained;
+    const ns = (fillWide ? fillWidth : contain) || 1;
     setScale(ns);
     setOffset({
       x: (size.w - baseWidth * ns) / 2,
-      y: (size.h - baseHeight * ns) / 2,
+      y: fillWide ? 8 : (size.h - baseHeight * ns) / 2,
     });
+    lastFitBox.current = { w: size.w, h: size.h };
   }, [baseWidth, baseHeight, size]);
 
-  // Fit whenever a new base image is loaded or container first sizes up.
+  // Fit when a new plan loads, or the first time the canvas gets a real size
+  // (mobile layout / rotate can start at 0×0).
+  useEffect(() => { needsFit.current = true; }, [base, baseWidth, baseHeight]);
   useEffect(() => {
+    if (!needsFit.current || !size.w || !size.h || !baseWidth || !baseHeight) return;
     fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, baseWidth, baseHeight]);
+    needsFit.current = false;
+  }, [base, baseWidth, baseHeight, size.w, size.h, fit]);
+
+  // Re-fit against the last fitted box (not every observer tick). Slow window
+  // drags and phone rotates arrive as many small size changes; tracking each
+  // tick never accumulated a jump, so the plan stayed at the old zoom.
+  useEffect(() => {
+    if (!size.w || !size.h || !baseWidth || !baseHeight) return;
+    const prev = lastFitBox.current;
+    if (!prev.w) return;
+    const flipped = (prev.w > prev.h) !== (size.w > size.h);
+    const dw = Math.abs(size.w - prev.w);
+    const dh = Math.abs(size.h - prev.h);
+    if (flipped || dw > 40 || dh > 40) {
+      fit();
+      return;
+    }
+    if (dw < 16 && dh < 16) return;
+    const t = window.setTimeout(() => fit(), 150);
+    return () => window.clearTimeout(t);
+  }, [size.w, size.h, baseWidth, baseHeight, fit]);
 
   // Hold SPACE to grab/pan the plan regardless of the active tool (like Figma/Bluebeam).
   useEffect(() => {
@@ -159,11 +228,26 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       const cr = entries[0].contentRect;
-      setSize({ w: cr.width, h: cr.height });
+      setSize({ w: Math.round(cr.width), h: Math.round(cr.height) });
     });
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
+    const onWinResize = () => {
+      const apply = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+      apply();
+      // iOS often reports stale layout until the next frame after rotate.
+      requestAnimationFrame(apply);
+    };
+    window.addEventListener('resize', onWinResize);
+    window.addEventListener('orientationchange', onWinResize);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', onWinResize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', onWinResize);
+      window.removeEventListener('orientationchange', onWinResize);
+      vv?.removeEventListener('resize', onWinResize);
+    };
   }, []);
 
   // Paint
@@ -173,21 +257,122 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(size.w * dpr);
     canvas.height = Math.round(size.h * dpr);
-    canvas.style.width = `${size.w}px`;
-    canvas.style.height = `${size.h}px`;
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const lensSamePage = !!(
+      lensTile &&
+      pdfLens &&
+      lensTile.pdf === pdfLens.pdf &&
+      lensTile.pageNumber === pdfLens.pageNumber &&
+      lensTile.pdfScale === pdfLens.pdfScale
+    );
+    const lensExact = !!(
+      lensSamePage &&
+      lensTile &&
+      Math.abs(lensTile.scale - scale) < 1e-6 &&
+      Math.abs(lensTile.ox - offset.x) < 0.5 &&
+      Math.abs(lensTile.oy - offset.y) < 0.5 &&
+      lensTile.cssW === size.w &&
+      lensTile.cssH === size.h
+    );
+    let lensBlit: { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number; exact: boolean } | null = null;
+    if (lensSamePage && lensTile) {
+      const k = scale / lensTile.scale;
+      lensBlit = {
+        canvas: lensTile.canvas,
+        x: offset.x - lensTile.ox * k,
+        y: offset.y - lensTile.oy * k,
+        w: lensTile.cssW * k,
+        h: lensTile.cssH * k,
+        exact: lensExact,
+      };
+    }
     paintScene(ctx, {
       base, baseWidth, baseHeight,
       project: toScreen,
       scale, offset,
-      calibration, dimensions, selectedId, preview,
+      calibration, dimensions, lines, callouts, selectedId, preview,
       sizeScale: 1,
       background: dark ? '#0b1220' : '#e2e8f0',
       editable: !locked,
+      smoothPlan: scale * dpr <= 1.02,
+      lens: lensBlit,
     });
-  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, selectedId, preview, size, dark, locked, toScreen]);
+  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, lines, callouts, selectedId, preview, size, dark, locked, toScreen, lensTile, pdfLens]);
+
+  // Re-rasterize visible PDF vectors at device pixels after zoom/pan settles.
+  useEffect(() => {
+    if (!pdfLens || !size.w || !size.h) {
+      setLensPending(false);
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    if (!needsPdfLens(scale, dpr)) {
+      setLensTile(null);
+      setLensPending(false);
+      return;
+    }
+
+    const region = {
+      x: -offset.x / scale,
+      y: -offset.y / scale,
+      w: size.w / scale,
+      h: size.h / scale,
+    };
+    const out = pdfLensOutputSize(size.w, size.h, dpr);
+    const view = { scale, ox: offset.x, oy: offset.y, cssW: size.w, cssH: size.h };
+    const alreadyExact = !!(
+      lensTile &&
+      lensTile.pdf === pdfLens.pdf &&
+      lensTile.pageNumber === pdfLens.pageNumber &&
+      lensTile.pdfScale === pdfLens.pdfScale &&
+      Math.abs(lensTile.scale - scale) < 1e-6 &&
+      Math.abs(lensTile.ox - offset.x) < 0.5 &&
+      Math.abs(lensTile.oy - offset.y) < 0.5 &&
+      lensTile.cssW === size.w &&
+      lensTile.cssH === size.h
+    );
+    if (alreadyExact) {
+      setLensPending(false);
+      return;
+    }
+
+    let cancelled = false;
+    let cleanupJob: (() => void) | null = null;
+    const delay = lensTile ? 48 : 16;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setLensPending(true);
+      const job = startPdfLensRender(pdfLens, region, out.w, out.h);
+      cleanupJob = job.cancel;
+      job.promise.then(() => {
+        if (cancelled) return;
+        setLensTile({
+          canvas: job.canvas,
+          pdf: pdfLens.pdf,
+          pageNumber: pdfLens.pageNumber,
+          pdfScale: pdfLens.pdfScale,
+          ...view,
+        });
+        setLensPending(false);
+      }).catch((err) => {
+        if (!cancelled) setLensPending(false);
+        const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+        if (name !== 'RenderingCancelledException') {
+          console.warn('TrueScale PDF lens failed', err);
+        }
+      });
+    }, delay);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      cleanupJob?.();
+    };
+  }, [pdfLens, scale, offset, size, base, lensTile]);
 
   useImperativeHandle(ref, () => ({
     fit,
@@ -195,7 +380,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       const cx = size.w / 2;
       const cy = size.h / 2;
       setScale(prev => {
-        const ns = Math.max(0.05, Math.min(20, prev * factor));
+        const ns = Math.max(0.05, Math.min(40, prev * factor));
         setOffset(o => ({
           x: cx - ((cx - o.x) / prev) * ns,
           y: cy - ((cy - o.y) / prev) * ns,
@@ -215,14 +400,15 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         project: (p: Pt) => p,
         scale: 1,
         offset: { x: 0, y: 0 },
-        calibration, dimensions, selectedId: null, preview: null,
+        calibration, dimensions, lines, callouts, selectedId: null, preview: null,
         sizeScale: Math.max(1, baseWidth / 1100),
         background: '#ffffff',
         editable: false,
+        smoothPlan: true,
       });
       return out;
     },
-  }), [base, baseWidth, baseHeight, calibration, dimensions, fit, size]);
+  }), [base, baseWidth, baseHeight, calibration, dimensions, lines, callouts, fit, size]);
 
   // ── Pointer handlers ───────────────────────────────────────────────────────
 
@@ -286,36 +472,89 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   useEffect(() => () => stopAutoPan(), []);
 
-  const previewKind = () => (tool === 'calibrate' ? 'calibrate' : 'dimension');
+  const previewKind = (): Preview['kind'] => {
+    if (tool === 'calibrate') return 'calibrate';
+    if (tool === 'line') return 'line';
+    if (tool === 'callout') return 'callout';
+    return 'dimension';
+  };
 
   const finalizeLine = (a: Pt, b: Pt) => {
     const px = Math.hypot(b.x - a.x, b.y - a.y);
     if (px < 2) return;
     if (tool === 'calibrate') onDrawCalibration(a, b);
+    else if (tool === 'line') onAddLine(a, b);
+    else if (tool === 'callout') onAddCallout(a, b);
     else onAddDimension(a, b);
   };
 
-  // Pick an existing dimension (endpoint handle or body) to drag when unlocked.
   const pickMoveTarget = (s: Pt): typeof moving.current => {
     const HANDLE = 12;
     for (const line of dimensions) {
       if (Math.hypot(s.x - toScreen(line.a).x, s.y - toScreen(line.a).y) <= HANDLE)
-        return { id: line.id, mode: 'a', startImg: toImage(s), origA: line.a, origB: line.b };
+        return { kind: 'seg', which: 'dimension', id: line.id, mode: 'a', startImg: toImage(s), origA: line.a, origB: line.b };
       if (Math.hypot(s.x - toScreen(line.b).x, s.y - toScreen(line.b).y) <= HANDLE)
-        return { id: line.id, mode: 'b', startImg: toImage(s), origA: line.a, origB: line.b };
+        return { kind: 'seg', which: 'dimension', id: line.id, mode: 'b', startImg: toImage(s), origA: line.a, origB: line.b };
+    }
+    for (const line of lines) {
+      if (Math.hypot(s.x - toScreen(line.a).x, s.y - toScreen(line.a).y) <= HANDLE)
+        return { kind: 'seg', which: 'line', id: line.id, mode: 'a', startImg: toImage(s), origA: line.a, origB: line.b };
+      if (Math.hypot(s.x - toScreen(line.b).x, s.y - toScreen(line.b).y) <= HANDLE)
+        return { kind: 'seg', which: 'line', id: line.id, mode: 'b', startImg: toImage(s), origA: line.a, origB: line.b };
+    }
+    for (const note of callouts) {
+      const tip = toScreen(note.tip);
+      const bub = toScreen(note.bubble);
+      if (Math.hypot(s.x - tip.x, s.y - tip.y) <= HANDLE)
+        return { kind: 'callout', id: note.id, mode: 'tip', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
+      if (Math.hypot(s.x - bub.x, s.y - bub.y) <= HANDLE)
+        return { kind: 'callout', id: note.id, mode: 'bubble', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) {
+        const box = calloutBubbleRect(ctx, bub, note.text, 1);
+        if (s.x >= box.x && s.x <= box.x + box.w && s.y >= box.y && s.y <= box.y + box.h)
+          return { kind: 'callout', id: note.id, mode: 'bubble', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
+      }
     }
     const id = hitTest(s);
-    if (id) {
-      const line = dimensions.find(d => d.id === id)!;
-      return { id, mode: 'line', startImg: toImage(s), origA: line.a, origB: line.b };
-    }
+    if (!id) return null;
+    const dim = dimensions.find(d => d.id === id);
+    if (dim) return { kind: 'seg', which: 'dimension', id, mode: 'line', startImg: toImage(s), origA: dim.a, origB: dim.b };
+    const ln = lines.find(d => d.id === id);
+    if (ln) return { kind: 'seg', which: 'line', id, mode: 'line', startImg: toImage(s), origA: ln.a, origB: ln.b };
+    const note = callouts.find(d => d.id === id);
+    if (note) return { kind: 'callout', id, mode: 'line', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
     return null;
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 && e.button !== 1) return;
+    if (e.pointerType !== 'touch' && e.button !== 0 && e.button !== 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const s = getScreen(e);
+    pointers.current.set(e.pointerId, s);
+
+    if (pointers.current.size >= 2) {
+      panning.current = null;
+      drawing.current = null;
+      moving.current = null;
+      pendingStart.current = null;
+      stopAutoPan();
+      setPreview(null);
+      setPlacing(false);
+      setGrabbing(false);
+      const pts = [...pointers.current.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const cur = viewRef.current;
+      pinch.current = {
+        startDist: Math.max(dist, 1),
+        startScale: cur.scale,
+        startOffset: { ...cur.offset },
+        startMid: mid,
+      };
+      return;
+    }
+
     downScreen.current = s;
 
     // Pan the plan: Pan tool, middle-mouse, or SPACE held — always available.
@@ -346,19 +585,33 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const handlePointerMove = (e: React.PointerEvent) => {
     const s = getScreen(e);
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, s);
+    if (pinch.current && pointers.current.size >= 2) {
+      const pts = [...pointers.current.values()].slice(0, 2);
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const p = pinch.current;
+      const ns = Math.max(0.05, Math.min(40, p.startScale * (dist / p.startDist)));
+      const imgX = (p.startMid.x - p.startOffset.x) / p.startScale;
+      const imgY = (p.startMid.y - p.startOffset.y) / p.startScale;
+      setScale(ns);
+      setOffset({ x: mid.x - imgX * ns, y: mid.y - imgY * ns });
+      return;
+    }
     if (moving.current) {
       const cur = toImage(s);
       const m = moving.current;
-      if (m.mode === 'a') onMoveDimension(m.id, cur, m.origB);
-      else if (m.mode === 'b') onMoveDimension(m.id, m.origA, cur);
-      else {
-        const dx = cur.x - m.startImg.x;
-        const dy = cur.y - m.startImg.y;
-        onMoveDimension(
-          m.id,
-          { x: m.origA.x + dx, y: m.origA.y + dy },
-          { x: m.origB.x + dx, y: m.origB.y + dy },
-        );
+      const dx = cur.x - m.startImg.x;
+      const dy = cur.y - m.startImg.y;
+      if (m.kind === 'callout') {
+        if (m.mode === 'tip') onMoveCallout(m.id, cur, m.origBubble);
+        else if (m.mode === 'bubble') onMoveCallout(m.id, m.origTip, cur);
+        else onMoveCallout(m.id, { x: m.origTip.x + dx, y: m.origTip.y + dy }, { x: m.origBubble.x + dx, y: m.origBubble.y + dy });
+      } else {
+        const move = m.which === 'line' ? onMoveLine : onMoveDimension;
+        if (m.mode === 'a') move(m.id, cur, m.origB);
+        else if (m.mode === 'b') move(m.id, m.origA, cur);
+        else move(m.id, { x: m.origA.x + dx, y: m.origA.y + dy }, { x: m.origB.x + dx, y: m.origB.y + dy });
       }
       return;
     }
@@ -378,6 +631,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2 && pinch.current) {
+      pinch.current = null;
+      setGrabbing(false);
+      downScreen.current = null;
+      return;
+    }
+
     const s = getScreen(e);
     const down = downScreen.current;
     const moved = down ? Math.hypot(s.x - down.x, s.y - down.y) : 0;
@@ -440,7 +701,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   };
 
   /** Abort a press-drag / pan if the pointer is cancelled. Keep an armed click. */
-  const handlePointerCancel = () => {
+  const handlePointerCancel = (e?: React.PointerEvent) => {
+    if (e) pointers.current.delete(e.pointerId);
+    else pointers.current.clear();
+    pinch.current = null;
     drawing.current = null;
     panning.current = null;
     moving.current = null;
@@ -458,28 +722,46 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const hitTest = (screen: Pt): string | null => {
     let best: { id: string; d: number } | null = null;
-    for (const line of dimensions) {
-      const d = pointSegDist(screen, toScreen(line.a), toScreen(line.b));
-      if (d <= 10 && (!best || d < best.d)) best = { id: line.id, d };
+    const consider = (id: string, d: number) => {
+      if (d <= 10 && (!best || d < best.d)) best = { id, d };
+    };
+    for (const line of dimensions) consider(line.id, pointSegDist(screen, toScreen(line.a), toScreen(line.b)));
+    for (const line of lines) consider(line.id, pointSegDist(screen, toScreen(line.a), toScreen(line.b)));
+    const ctx = canvasRef.current?.getContext('2d');
+    for (const note of callouts) {
+      consider(note.id, pointSegDist(screen, toScreen(note.tip), toScreen(note.bubble)));
+      if (ctx) {
+        const box = calloutBubbleRect(ctx, toScreen(note.bubble), note.text, 1);
+        if (screen.x >= box.x && screen.x <= box.x + box.w && screen.y >= box.y && screen.y <= box.y + box.h)
+          return note.id;
+      }
     }
     return best?.id ?? null;
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    setScale(prev => {
-      const ns = Math.max(0.05, Math.min(20, prev * factor));
-      setOffset(o => ({
-        x: cx - ((cx - o.x) / prev) * ns,
-        y: cy - ((cy - o.y) / prev) * ns,
-      }));
-      return ns;
-    });
-  };
+  // Native wheel listener so preventDefault actually stops page scroll (React's
+  // onWheel is passive in modern Chrome).
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setScale(prev => {
+        const ns = Math.max(0.05, Math.min(40, prev * factor));
+        setOffset(o => ({
+          x: cx - ((cx - o.x) / prev) * ns,
+          y: cy - ((cy - o.y) / prev) * ns,
+        }));
+        return ns;
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const cursor = grabbing
     ? 'grabbing'
@@ -493,19 +775,37 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     <div ref={containerRef} className="relative w-full h-full overflow-hidden rounded-xl">
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 touch-none select-none"
-        style={{ cursor }}
+        className="absolute inset-0 w-full h-full touch-none select-none"
+        style={{ cursor, touchAction: 'none' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
-        onWheel={handleWheel}
       />
-      {placing && (tool === 'dimension' || tool === 'calibrate') && (
+      {placing && (tool === 'dimension' || tool === 'calibrate' || tool === 'line' || tool === 'callout') && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg">
-          Click the other end · Esc to cancel
+          {tool === 'callout' ? 'Click where the note should sit · Esc to cancel' : 'Click the other end · Esc to cancel'}
         </div>
       )}
+      {lensPending && !placing && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg">
+          Redrawing vectors…
+        </div>
+      )}
+      <div className="pointer-events-none absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg tabular-nums">
+        {Math.round(scale * 100)}%
+        {lensPending
+          ? ' · …'
+          : lensTile &&
+              pdfLens &&
+              lensTile.pdf === pdfLens.pdf &&
+              lensTile.pageNumber === pdfLens.pageNumber &&
+              Math.abs(lensTile.scale - scale) < 1e-6 &&
+              Math.abs(lensTile.ox - offset.x) < 0.5 &&
+              Math.abs(lensTile.oy - offset.y) < 0.5
+            ? ' · vector'
+            : ''}
+      </div>
     </div>
   );
 });
