@@ -4,7 +4,7 @@ import {
   Ruler, Move, Crosshair, Save, Printer, Download, Trash2, Undo2,
   ZoomIn, ZoomOut, Maximize, FileText, Loader2, ChevronDown, ChevronRight,
   Map as MapIcon, FolderOpen, RotateCcw, Check, Calculator, AlertTriangle, X,
-  Lock, Unlock, Wrench,
+  Pencil, MessageCircle, Wrench, Lock, Unlock,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -15,7 +15,7 @@ import {
   type BlueprintGroup,
 } from '@/lib/blueprints';
 import {
-  ARCH_SCALES, Calibration, DimLine, LengthUnit, Pt, SheetInfo, TrueScaleDoc,
+  ARCH_SCALES, Calibration, Callout, DimLine, DrawLine, LengthUnit, Pt, SheetInfo, TrueScaleDoc,
   TRUESCALE_COLORS, TRUESCALE_VERSION, analyzeSheet, dist, formatDecimalFeet,
   formatFeetInches, isTrueScaleEntry, loadTrueScaleDoc, manualCalibration,
   presetCalibration, realInchesForPixels, buildDocPath, saveTrueScaleDoc, toInches,
@@ -137,6 +137,9 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   // Annotations
   const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [dimensions, setDimensions] = useState<DimLine[]>([]);
+  const [lines, setLines] = useState<DrawLine[]>([]);
+  const [callouts, setCallouts] = useState<Callout[]>([]);
+  const [history, setHistory] = useState<{ kind: 'dimension' | 'line' | 'callout'; id: string }[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
@@ -151,6 +154,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const [pendingCalib, setPendingCalib] = useState<{ a: Pt; b: Pt } | null>(null);
   const [calibValue, setCalibValue] = useState('');
   const [calibUnit, setCalibUnit] = useState<LengthUnit>('ft');
+  const [pendingCallout, setPendingCallout] = useState<{ id?: string; tip: Pt; bubble: Pt } | null>(null);
+  const [calloutText, setCalloutText] = useState('');
 
   // Save state
   const [saving, setSaving] = useState(false);
@@ -211,11 +216,21 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
     if (saved && saved.version === TRUESCALE_VERSION) {
       setCalibration(saved.calibration);
       setDimensions(saved.dimensions ?? []);
+      setLines(saved.lines ?? []);
+      setCallouts(saved.callouts ?? []);
+      setHistory([
+        ...(saved.dimensions ?? []).map(d => ({ kind: 'dimension' as const, id: d.id })),
+        ...(saved.lines ?? []).map(d => ({ kind: 'line' as const, id: d.id })),
+        ...(saved.callouts ?? []).map(d => ({ kind: 'callout' as const, id: d.id })),
+      ]);
       setDirty(false);
       return true;
     }
     setCalibration(null);
     setDimensions([]);
+    setLines([]);
+    setCallouts([]);
+    setHistory([]);
     setDirty(false);
     return false;
   }, []);
@@ -318,30 +333,86 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   };
 
   const handleAddDimension = useCallback((a: Pt, b: Pt) => {
-    setDimensions(prev => [...prev, { id: makeId(), a, b, color, width }]);
+    const id = makeId();
+    setDimensions(prev => [...prev, { id, a, b, color, width }]);
+    setHistory(h => [...h, { kind: 'dimension', id }]);
     setDirty(true);
   }, [color, width]);
+
+  const handleAddLine = useCallback((a: Pt, b: Pt) => {
+    const id = makeId();
+    setLines(prev => [...prev, { id, a, b, color, width }]);
+    setHistory(h => [...h, { kind: 'line', id }]);
+    setDirty(true);
+  }, [color, width]);
+
+  const handleAddCallout = useCallback((tip: Pt, bubble: Pt) => {
+    setPendingCallout({ tip, bubble });
+    setCalloutText('');
+  }, []);
+
+  const confirmCallout = () => {
+    if (!pendingCallout) return;
+    const text = calloutText.trim() || 'Note';
+    if (pendingCallout.id) {
+      setCallouts(prev => prev.map(d => (d.id === pendingCallout.id ? { ...d, text } : d)));
+      setDirty(true);
+      flash('Callout updated.');
+    } else {
+      const id = makeId();
+      setCallouts(prev => [...prev, { id, tip: pendingCallout.tip, bubble: pendingCallout.bubble, text, color, width }]);
+      setHistory(h => [...h, { kind: 'callout', id }]);
+      setDirty(true);
+      flash('Callout added.');
+    }
+    setPendingCallout(null);
+    setCalloutText('');
+    setTool('callout');
+  };
 
   const moveDimension = useCallback((id: string, a: Pt, b: Pt) => {
     setDimensions(prev => prev.map(d => (d.id === id ? { ...d, a, b } : d)));
     setDirty(true);
   }, []);
 
+  const moveLine = useCallback((id: string, a: Pt, b: Pt) => {
+    setLines(prev => prev.map(d => (d.id === id ? { ...d, a, b } : d)));
+    setDirty(true);
+  }, []);
+
+  const moveCallout = useCallback((id: string, tip: Pt, bubble: Pt) => {
+    setCallouts(prev => prev.map(d => (d.id === id ? { ...d, tip, bubble } : d)));
+    setDirty(true);
+  }, []);
+
   const deleteSelected = () => {
     if (!selectedId) return;
     setDimensions(prev => prev.filter(d => d.id !== selectedId));
+    setLines(prev => prev.filter(d => d.id !== selectedId));
+    setCallouts(prev => prev.filter(d => d.id !== selectedId));
+    setHistory(h => h.filter(x => x.id !== selectedId));
     setSelectedId(null);
     setDirty(true);
   };
 
   const undoLast = () => {
-    setDimensions(prev => prev.slice(0, -1));
-    setSelectedId(null);
-    setDirty(true);
+    setHistory(h => {
+      const last = h[h.length - 1];
+      if (!last) return h;
+      if (last.kind === 'dimension') setDimensions(prev => prev.filter(d => d.id !== last.id));
+      if (last.kind === 'line') setLines(prev => prev.filter(d => d.id !== last.id));
+      if (last.kind === 'callout') setCallouts(prev => prev.filter(d => d.id !== last.id));
+      if (selectedId === last.id) setSelectedId(null);
+      setDirty(true);
+      return h.slice(0, -1);
+    });
   };
 
   const clearAll = () => {
     setDimensions([]);
+    setLines([]);
+    setCallouts([]);
+    setHistory([]);
     setCalibration(null);
     setSelectedId(null);
     setDirty(true);
@@ -374,6 +445,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
         page,
         calibration,
         dimensions,
+        lines,
+        callouts,
         savedAt: new Date().toISOString(),
         savedBy: session?.user?.email ?? undefined,
       };
@@ -445,6 +518,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   // ── Derived UI ────────────────────────────────────────────────────────────────
 
   const selected = dimensions.find(d => d.id === selectedId) ?? null;
+  const selectedLine = lines.find(d => d.id === selectedId) ?? null;
+  const selectedCallout = callouts.find(d => d.id === selectedId) ?? null;
   const selectedInches = selected
     ? realInchesForPixels(calibration, dist(selected.a, selected.b))
     : null;
@@ -452,7 +527,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const toolBtn = (key: Tool, icon: React.ReactNode, label: string) => (
     <button
       type="button"
-      onClick={() => setTool(key)}
+      onClick={() => { setTool(key); setToolsOpen(false); }}
       title={label}
       className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
         tool === key
@@ -472,6 +547,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
   const toolbar = (
     <>
           {toolBtn('dimension', <Ruler className="w-4 h-4" />, 'Dimension')}
+          {toolBtn('line', <Pencil className="w-4 h-4" />, 'Line')}
+          {toolBtn('callout', <MessageCircle className="w-4 h-4" />, 'Callout')}
           {toolBtn('calibrate', <Crosshair className="w-4 h-4" />, 'Set Scale')}
           {toolBtn('pan', <Move className="w-4 h-4" />, 'Pan / Select')}
 
@@ -503,6 +580,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
                   setColor(c);
                   if (selectedId) {
                     setDimensions(prev => prev.map(d => d.id === selectedId ? { ...d, color: c } : d));
+                    setLines(prev => prev.map(d => d.id === selectedId ? { ...d, color: c } : d));
+                    setCallouts(prev => prev.map(d => d.id === selectedId ? { ...d, color: c } : d));
                     setDirty(true);
                   }
                 }}
@@ -522,6 +601,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
                 setWidth(w);
                 if (selectedId) {
                   setDimensions(prev => prev.map(d => d.id === selectedId ? { ...d, width: w } : d));
+                  setLines(prev => prev.map(d => d.id === selectedId ? { ...d, width: w } : d));
+                  setCallouts(prev => prev.map(d => d.id === selectedId ? { ...d, width: w } : d));
                   setDirty(true);
                 }
               }}
@@ -532,7 +613,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
           <button
             type="button"
             onClick={() => { setLocked(l => !l); if (locked) setTool('pan'); }}
-            title={locked ? 'Unlock dimensions to move them' : 'Lock dimensions in place'}
+            title={locked ? 'Unlock markup to move it' : 'Lock markup in place'}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
               locked
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -542,7 +623,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
             {locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
             <span className="lg:hidden xl:inline">{locked ? 'Locked' : 'Move'}</span>
           </button>
-          <button type="button" onClick={undoLast} disabled={!dimensions.length} title="Undo last"
+          <button type="button" onClick={undoLast} disabled={!history.length} title="Undo last"
             className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40">
             <Undo2 className="w-4 h-4" />
           </button>
@@ -583,7 +664,7 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
     </>
   );
 
-  const toolLabel = tool === 'calibrate' ? 'Set Scale' : tool === 'pan' ? 'Pan' : 'Dimension';
+  const toolLabel = tool === 'calibrate' ? 'Set Scale' : tool === 'pan' ? 'Pan' : tool === 'line' ? 'Line' : tool === 'callout' ? 'Callout' : 'Dimension';
 
   const blueprintList = listLoading ? (
     <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div>
@@ -700,10 +781,40 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
               Selected: {selectedInches != null ? `${formatFeetInches(selectedInches)}  (${formatDecimalFeet(selectedInches)})` : `${Math.round(dist(selected.a, selected.b))} px`}
             </span>
           )}
-          <span className="text-slate-400">{dimensions.length} dimension{dimensions.length !== 1 ? 's' : ''}</span>
+          {selectedLine && (
+            <span className="font-bold text-slate-700 dark:text-slate-200">Line selected</span>
+          )}
+          {selectedCallout && (
+            <span className="inline-flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200">
+              Note: “{selectedCallout.text.replace(/\s+/g, ' ').slice(0, 40)}{selectedCallout.text.length > 40 ? '…' : ''}”
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingCallout({ id: selectedCallout.id, tip: selectedCallout.tip, bubble: selectedCallout.bubble });
+                  setCalloutText(selectedCallout.text);
+                }}
+                className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-[11px] font-bold"
+              >
+                Edit
+              </button>
+            </span>
+          )}
+          <span className="text-slate-400">
+            {dimensions.length} dim · {lines.length} line{lines.length !== 1 ? 's' : ''} · {callouts.length} note{callouts.length !== 1 ? 's' : ''}
+          </span>
           {(tool === 'dimension' || tool === 'calibrate') && (
             <span className="hidden sm:inline text-slate-500 dark:text-slate-400">
               Click two points — or click-and-drag. Esc cancels.
+            </span>
+          )}
+          {tool === 'line' && (
+            <span className="hidden sm:inline text-slate-500 dark:text-slate-400">
+              Draw a markup line — two clicks or click-and-drag.
+            </span>
+          )}
+          {tool === 'callout' && (
+            <span className="hidden sm:inline text-slate-500 dark:text-slate-400">
+              Click the plan, then click where the text bubble should sit.
             </span>
           )}
           {pdfDoc && numPages > 1 && (
@@ -790,6 +901,8 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
               tool={tool}
               calibration={calibration}
               dimensions={dimensions}
+              lines={lines}
+              callouts={callouts}
               selectedId={selectedId}
               activeColor={color}
               activeWidth={width}
@@ -798,8 +911,12 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
               pdfLens={pdfLens}
               onDrawCalibration={handleDrawCalibration}
               onAddDimension={handleAddDimension}
+              onAddLine={handleAddLine}
+              onAddCallout={handleAddCallout}
               onSelect={setSelectedId}
               onMoveDimension={moveDimension}
+              onMoveLine={moveLine}
+              onMoveCallout={moveCallout}
             />
           )}
 
@@ -839,6 +956,37 @@ const TrueScaleView: React.FC<Props> = ({ jobs, onSendToEstimator }) => {
                     className="px-3 py-2 rounded-lg text-sm font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
                   <button type="button" onClick={confirmCalibration}
                     className="px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-500">Set Scale</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {pendingCallout && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4"
+              onClick={e => { if (e.target === e.currentTarget) setPendingCallout(null); }}>
+              <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-5 w-full max-w-sm border border-slate-200 dark:border-slate-800">
+                <h3 className="font-black text-slate-900 dark:text-white mb-1">
+                  {pendingCallout.id ? 'Edit callout' : 'Callout'}
+                </h3>
+                <p className="text-xs text-slate-500 mb-4">
+                  Text in the bubble. The arrow points at the spot you clicked first.
+                </p>
+                <textarea
+                  autoFocus
+                  rows={3}
+                  value={calloutText}
+                  onChange={e => setCalloutText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); confirmCallout(); } }}
+                  placeholder="e.g. Verify 3&quot; vent here"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="flex justify-end gap-2 mt-4">
+                  <button type="button" onClick={() => setPendingCallout(null)}
+                    className="px-3 py-2 rounded-lg text-sm font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+                  <button type="button" onClick={confirmCallout}
+                    className="px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-500">
+                    {pendingCallout.id ? 'Save note' : 'Add note'}
+                  </button>
                 </div>
               </div>
             </div>
