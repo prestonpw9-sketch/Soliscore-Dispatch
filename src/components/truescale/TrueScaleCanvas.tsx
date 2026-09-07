@@ -10,7 +10,7 @@ import React, {
 import { Calibration, Callout, DimLine, DrawLine, Pt } from '@/lib/truescale';
 import {
   needsPdfLens,
-  pdfLensExtra,
+  pdfLensOutputSize,
   startPdfLensRender,
   type PdfLensSource,
 } from '@/lib/pdfjs';
@@ -228,7 +228,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       const cr = entries[0].contentRect;
-      setSize({ w: cr.width, h: cr.height });
+      setSize({ w: Math.round(cr.width), h: Math.round(cr.height) });
     });
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
@@ -262,18 +262,34 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const lensMatches = !!(
+    const lensSamePage = !!(
       lensTile &&
       pdfLens &&
       lensTile.pdf === pdfLens.pdf &&
       lensTile.pageNumber === pdfLens.pageNumber &&
-      lensTile.pdfScale === pdfLens.pdfScale &&
+      lensTile.pdfScale === pdfLens.pdfScale
+    );
+    const lensExact = !!(
+      lensSamePage &&
+      lensTile &&
       Math.abs(lensTile.scale - scale) < 1e-6 &&
       Math.abs(lensTile.ox - offset.x) < 0.5 &&
       Math.abs(lensTile.oy - offset.y) < 0.5 &&
       lensTile.cssW === size.w &&
       lensTile.cssH === size.h
     );
+    let lensBlit: { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number; exact: boolean } | null = null;
+    if (lensSamePage && lensTile) {
+      const k = scale / lensTile.scale;
+      lensBlit = {
+        canvas: lensTile.canvas,
+        x: offset.x - lensTile.ox * k,
+        y: offset.y - lensTile.oy * k,
+        w: lensTile.cssW * k,
+        h: lensTile.cssH * k,
+        exact: lensExact,
+      };
+    }
     paintScene(ctx, {
       base, baseWidth, baseHeight,
       project: toScreen,
@@ -283,11 +299,11 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       background: dark ? '#0b1220' : '#e2e8f0',
       editable: !locked,
       smoothPlan: scale * dpr <= 1.02,
-      lens: lensMatches && lensTile ? lensTile.canvas : null,
+      lens: lensBlit,
     });
   }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, lines, callouts, selectedId, preview, size, dark, locked, toScreen, lensTile, pdfLens]);
 
-  // Re-render the visible PDF region at screen density after zoom/pan settles.
+  // Re-rasterize visible PDF vectors at device pixels after zoom/pan settles.
   useEffect(() => {
     if (!pdfLens || !size.w || !size.h) {
       setLensPending(false);
@@ -306,15 +322,31 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       w: size.w / scale,
       h: size.h / scale,
     };
-    const extra = pdfLensExtra(scale, dpr, region.w, region.h);
+    const out = pdfLensOutputSize(size.w, size.h, dpr);
     const view = { scale, ox: offset.x, oy: offset.y, cssW: size.w, cssH: size.h };
+    const alreadyExact = !!(
+      lensTile &&
+      lensTile.pdf === pdfLens.pdf &&
+      lensTile.pageNumber === pdfLens.pageNumber &&
+      lensTile.pdfScale === pdfLens.pdfScale &&
+      Math.abs(lensTile.scale - scale) < 1e-6 &&
+      Math.abs(lensTile.ox - offset.x) < 0.5 &&
+      Math.abs(lensTile.oy - offset.y) < 0.5 &&
+      lensTile.cssW === size.w &&
+      lensTile.cssH === size.h
+    );
+    if (alreadyExact) {
+      setLensPending(false);
+      return;
+    }
 
     let cancelled = false;
     let cleanupJob: (() => void) | null = null;
+    const delay = lensTile ? 48 : 16;
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       setLensPending(true);
-      const job = startPdfLensRender(pdfLens, region, extra);
+      const job = startPdfLensRender(pdfLens, region, out.w, out.h);
       cleanupJob = job.cancel;
       job.promise.then(() => {
         if (cancelled) return;
@@ -333,14 +365,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
           console.warn('TrueScale PDF lens failed', err);
         }
       });
-    }, 180);
+    }, delay);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
       cleanupJob?.();
     };
-  }, [pdfLens, scale, offset, size, base]);
+  }, [pdfLens, scale, offset, size, base, lensTile]);
 
   useImperativeHandle(ref, () => ({
     fit,
@@ -757,7 +789,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       )}
       {lensPending && !placing && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg">
-          Sharpening linework…
+          Redrawing vectors…
         </div>
       )}
       <div className="pointer-events-none absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg tabular-nums">
@@ -771,7 +803,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
               Math.abs(lensTile.scale - scale) < 1e-6 &&
               Math.abs(lensTile.ox - offset.x) < 0.5 &&
               Math.abs(lensTile.oy - offset.y) < 0.5
-            ? ' · sharp'
+            ? ' · vector'
             : ''}
       </div>
     </div>
