@@ -1,3 +1,4 @@
+import { snapImagePoint, snapImageRect, snapPoint } from '@/lib/canvasSnap';
 import {
   Calibration,
   Callout,
@@ -62,6 +63,10 @@ const CAL_COLOR = '#22d3ee';
 
 const HALO = 'rgba(255,255,255,0.92)';
 
+function snap(ctx: CanvasRenderingContext2D, p: Pt, width: number): Pt {
+  return snapPoint(ctx, p.x, p.y, width);
+}
+
 function drawArrowLine(
   ctx: CanvasRenderingContext2D,
   a: Pt,
@@ -73,6 +78,8 @@ function drawArrowLine(
 ) {
   const head = 12 * sizeScale + width * 1.2;
   const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const sa = snap(ctx, a, width);
+  const sb = snap(ctx, b, width);
 
   ctx.save();
   ctx.lineJoin = 'round';
@@ -83,8 +90,8 @@ function drawArrowLine(
     ctx.strokeStyle = HALO;
     ctx.lineWidth = width + 3 * sizeScale;
     ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
+    ctx.moveTo(sa.x, sa.y);
+    ctx.lineTo(sb.x, sb.y);
     ctx.stroke();
   }
 
@@ -93,15 +100,15 @@ function drawArrowLine(
   ctx.lineWidth = width;
   if (dashed) ctx.setLineDash([8 * sizeScale, 6 * sizeScale]);
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
+  ctx.moveTo(sa.x, sa.y);
+  ctx.lineTo(sb.x, sb.y);
   ctx.stroke();
   ctx.setLineDash([]);
 
   // Filled + outlined arrowheads at BOTH ends, pointing outward.
   const drawHead = (tip: Pt, dir: number) => {
-    const p1 = { x: tip.x - head * Math.cos(dir - Math.PI / 7), y: tip.y - head * Math.sin(dir - Math.PI / 7) };
-    const p2 = { x: tip.x - head * Math.cos(dir + Math.PI / 7), y: tip.y - head * Math.sin(dir + Math.PI / 7) };
+    const p1 = snap(ctx, { x: tip.x - head * Math.cos(dir - Math.PI / 7), y: tip.y - head * Math.sin(dir - Math.PI / 7) }, 1);
+    const p2 = snap(ctx, { x: tip.x - head * Math.cos(dir + Math.PI / 7), y: tip.y - head * Math.sin(dir + Math.PI / 7) }, 1);
     ctx.beginPath();
     ctx.moveTo(tip.x, tip.y);
     ctx.lineTo(p1.x, p1.y);
@@ -113,8 +120,8 @@ function drawArrowLine(
     ctx.strokeStyle = HALO;
     ctx.stroke();
   };
-  drawHead(b, angle);
-  drawHead(a, angle + Math.PI);
+  drawHead(sb, angle);
+  drawHead(sa, angle + Math.PI);
   ctx.restore();
 }
 
@@ -129,17 +136,19 @@ function drawPlainLine(
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
+  const sa = snap(ctx, a, width);
+  const sb = snap(ctx, b, width);
   ctx.strokeStyle = HALO;
   ctx.lineWidth = width + 3 * sizeScale;
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
+  ctx.moveTo(sa.x, sa.y);
+  ctx.lineTo(sb.x, sb.y);
   ctx.stroke();
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
+  ctx.moveTo(sa.x, sa.y);
+  ctx.lineTo(sb.x, sb.y);
   ctx.stroke();
   ctx.restore();
 }
@@ -199,6 +208,17 @@ function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: n
   ctx.closePath();
 }
 
+function drawHandle(ctx: CanvasRenderingContext2D, pt: Pt, hs: number, sizeScale: number) {
+  const box = snapImageRect(ctx, pt.x - hs, pt.y - hs, hs * 2, hs * 2);
+  ctx.beginPath();
+  ctx.rect(box.x, box.y, box.w, box.h);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.lineWidth = 2 * sizeScale;
+  ctx.strokeStyle = '#2563eb';
+  ctx.stroke();
+}
+
 function leaderAnchor(box: { x: number; y: number; w: number; h: number }, tip: Pt, center: Pt): Pt {
   const dx = tip.x - center.x;
   const dy = tip.y - center.y;
@@ -224,6 +244,8 @@ function drawCallout(
   const start = leaderAnchor(box, tip, bubble);
   const head = 12 * sizeScale + width * 1.2;
   const angle = Math.atan2(tip.y - start.y, tip.x - start.x);
+  const sStart = snap(ctx, start, width);
+  const sTip = snap(ctx, tip, width);
 
   ctx.save();
   ctx.lineJoin = 'round';
@@ -232,20 +254,20 @@ function drawCallout(
   ctx.strokeStyle = HALO;
   ctx.lineWidth = width + 3 * sizeScale;
   ctx.beginPath();
-  ctx.moveTo(start.x, start.y);
-  ctx.lineTo(tip.x, tip.y);
+  ctx.moveTo(sStart.x, sStart.y);
+  ctx.lineTo(sTip.x, sTip.y);
   ctx.stroke();
   ctx.strokeStyle = selected ? '#fbbf24' : color;
   ctx.lineWidth = width;
   ctx.beginPath();
-  ctx.moveTo(start.x, start.y);
-  ctx.lineTo(tip.x, tip.y);
+  ctx.moveTo(sStart.x, sStart.y);
+  ctx.lineTo(sTip.x, sTip.y);
   ctx.stroke();
 
-  const p1 = { x: tip.x - head * Math.cos(angle - Math.PI / 7), y: tip.y - head * Math.sin(angle - Math.PI / 7) };
-  const p2 = { x: tip.x - head * Math.cos(angle + Math.PI / 7), y: tip.y - head * Math.sin(angle + Math.PI / 7) };
+  const p1 = snap(ctx, { x: sTip.x - head * Math.cos(angle - Math.PI / 7), y: sTip.y - head * Math.sin(angle - Math.PI / 7) }, 1);
+  const p2 = snap(ctx, { x: sTip.x - head * Math.cos(angle + Math.PI / 7), y: sTip.y - head * Math.sin(angle + Math.PI / 7) }, 1);
   ctx.beginPath();
-  ctx.moveTo(tip.x, tip.y);
+  ctx.moveTo(sTip.x, sTip.y);
   ctx.lineTo(p1.x, p1.y);
   ctx.lineTo(p2.x, p2.y);
   ctx.closePath();
@@ -255,11 +277,13 @@ function drawCallout(
   ctx.strokeStyle = HALO;
   ctx.stroke();
 
+  const strokeW = selected ? 2.5 * sizeScale : 1.5 * sizeScale;
+  const boxSnap = snapImageRect(ctx, box.x, box.y, box.w, box.h);
   const r = 8 * sizeScale;
-  roundRectPath(ctx, box.x, box.y, box.w, box.h, r);
+  roundRectPath(ctx, boxSnap.x, boxSnap.y, boxSnap.w, boxSnap.h, r);
   ctx.fillStyle = 'rgba(15,23,42,0.94)';
   ctx.fill();
-  ctx.lineWidth = selected ? 2.5 * sizeScale : 1.5 * sizeScale;
+  ctx.lineWidth = strokeW;
   ctx.strokeStyle = selected ? '#fbbf24' : color;
   ctx.stroke();
 
@@ -270,7 +294,8 @@ function drawCallout(
   ctx.fillStyle = '#ffffff';
   const startY = bubble.y - ((box.lines.length - 1) * (fontPx + 3 * sizeScale)) / 2;
   box.lines.forEach((ln, i) => {
-    ctx.fillText(ln, bubble.x, startY + i * (fontPx + 3 * sizeScale));
+    const tp = snapImagePoint(ctx, bubble.x, startY + i * (fontPx + 3 * sizeScale));
+    ctx.fillText(ln, tp.x, tp.y);
   });
   ctx.restore();
 }
@@ -296,12 +321,13 @@ function drawLabel(
   const y = center.y - h / 2;
 
   const r = 5 * sizeScale;
+  const box = snapImageRect(ctx, x, y, w, h);
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
+  ctx.moveTo(box.x + r, box.y);
+  ctx.arcTo(box.x + box.w, box.y, box.x + box.w, box.y + box.h, r);
+  ctx.arcTo(box.x + box.w, box.y + box.h, box.x, box.y + box.h, r);
+  ctx.arcTo(box.x, box.y + box.h, box.x, box.y, r);
+  ctx.arcTo(box.x, box.y, box.x + box.w, box.y, r);
   ctx.closePath();
   ctx.fillStyle = 'rgba(15,23,42,0.9)';
   ctx.fill();
@@ -310,7 +336,8 @@ function drawLabel(
   ctx.stroke();
 
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(text, center.x, center.y);
+  const tp = snapImagePoint(ctx, center.x, center.y);
+  ctx.fillText(text, tp.x, tp.y);
   ctx.restore();
 }
 
@@ -324,7 +351,8 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
   // Overview bitmap — skipped when a 1:1 vector tile covers the view.
   if (base && !opts.lens?.exact) {
     ctx.save();
-    ctx.translate(offset.x, offset.y);
+    const o = snapImagePoint(ctx, offset.x, offset.y);
+    ctx.translate(o.x, o.y);
     ctx.scale(scale, scale);
     const smooth = opts.smoothPlan !== false;
     ctx.imageSmoothingEnabled = smooth;
@@ -340,8 +368,9 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
       ctx.rect(offset.x, offset.y, baseWidth * scale, baseHeight * scale);
       ctx.clip();
     }
+    const dest = snapImageRect(ctx, opts.lens.x, opts.lens.y, opts.lens.w, opts.lens.h);
     ctx.imageSmoothingEnabled = !opts.lens.exact;
-    ctx.drawImage(opts.lens.canvas, opts.lens.x, opts.lens.y, opts.lens.w, opts.lens.h);
+    ctx.drawImage(opts.lens.canvas, dest.x, dest.y, dest.w, dest.h);
     ctx.restore();
   }
 
@@ -368,15 +397,7 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
     // Endpoint drag handles on the selected dimension when unlocked.
     if (selected && opts.editable) {
       const hs = 5 * sizeScale;
-      for (const pt of [a, b]) {
-        ctx.beginPath();
-        ctx.rect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-        ctx.lineWidth = 2 * sizeScale;
-        ctx.strokeStyle = '#2563eb';
-        ctx.stroke();
-      }
+      for (const pt of [a, b]) drawHandle(ctx, pt, hs, sizeScale);
     }
   }
 
@@ -388,15 +409,7 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
     drawPlainLine(ctx, a, b, line.color, line.width * sizeScale, sizeScale);
     if (selected && opts.editable) {
       const hs = 5 * sizeScale;
-      for (const pt of [a, b]) {
-        ctx.beginPath();
-        ctx.rect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-        ctx.lineWidth = 2 * sizeScale;
-        ctx.strokeStyle = '#2563eb';
-        ctx.stroke();
-      }
+      for (const pt of [a, b]) drawHandle(ctx, pt, hs, sizeScale);
     }
   }
 
@@ -414,13 +427,7 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
     if (note.id === opts.selectedId && opts.editable) {
       const hs = 5 * sizeScale;
       for (const pt of [project(note.tip), project(note.bubble)]) {
-        ctx.beginPath();
-        ctx.rect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-        ctx.lineWidth = 2 * sizeScale;
-        ctx.strokeStyle = '#2563eb';
-        ctx.stroke();
+        drawHandle(ctx, pt, hs, sizeScale);
       }
     }
   }
@@ -432,8 +439,9 @@ export function paintScene(ctx: CanvasRenderingContext2D, opts: PaintOpts) {
     const color = opts.preview.kind === 'calibrate' ? CAL_COLOR : opts.preview.color;
     // Always mark the first click so click-to-place is visible before the
     // cursor moves (a === b has zero length, so the line itself is hidden).
+    const mark = snapImagePoint(ctx, a.x, a.y);
     ctx.beginPath();
-    ctx.arc(a.x, a.y, 5 * sizeScale, 0, Math.PI * 2);
+    ctx.arc(mark.x, mark.y, 5 * sizeScale, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
     ctx.lineWidth = 2 * sizeScale;

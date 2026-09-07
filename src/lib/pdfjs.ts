@@ -1,5 +1,6 @@
 // PDF.js configuration + thin render helpers for TrueScale.
 // The worker is bundled by Vite via the `?url` import so it works in dev & prod.
+import { installPathPixelSnap } from './canvasSnap';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -57,6 +58,8 @@ export async function renderPdfPage(pdf: PdfDoc, pageNumber: number): Promise<Re
   canvas.height = Math.ceil(viewport.height);
   const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   if (!ctx) throw new Error('Could not get 2D context for PDF render');
+  installPathPixelSnap(ctx);
+  installThinLineBoost(ctx, MIN_STROKE_DEVICE_PX);
 
   await page.render({ canvasContext: ctx, viewport, background: '#ffffff' }).promise;
   // PDF user space is 1/72". At `scale`, base px per point = scale → px/inch = scale*72.
@@ -139,6 +142,7 @@ export function startPdfLensRender(
   if (!ctx) throw new Error('Could not get 2D context for PDF lens');
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
+  installPathPixelSnap(ctx);
   installThinLineBoost(ctx, MIN_STROKE_DEVICE_PX);
 
   const extraX = canvas.width / Math.max(region.w, 1e-6);

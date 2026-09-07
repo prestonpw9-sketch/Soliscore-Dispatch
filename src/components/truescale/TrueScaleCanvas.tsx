@@ -228,7 +228,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       const cr = entries[0].contentRect;
-      setSize({ w: cr.width, h: cr.height });
+      setSize({ w: Math.round(cr.width), h: Math.round(cr.height) });
     });
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
