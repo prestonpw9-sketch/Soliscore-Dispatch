@@ -45,6 +45,27 @@ export interface DimLine {
   label?: string;
 }
 
+/** A markup line (no measurement) in base-image pixels. */
+export interface DrawLine {
+  id: string;
+  a: Pt;
+  b: Pt;
+  color: string;
+  width: number;
+}
+
+/** A text bubble with a leader arrow pointing at a spot on the plan. */
+export interface Callout {
+  id: string;
+  /** Arrow tip — the thing on the plan being pointed at. */
+  tip: Pt;
+  /** Center of the text bubble. */
+  bubble: Pt;
+  text: string;
+  color: string;
+  width: number;
+}
+
 export type LengthUnit = 'ft' | 'in';
 
 export const TRUESCALE_VERSION = 1 as const;
@@ -60,6 +81,10 @@ export interface TrueScaleDoc {
   page: number;
   calibration: Calibration | null;
   dimensions: DimLine[];
+  /** Optional markup lines (older sidecars omit this). */
+  lines?: DrawLine[];
+  /** Optional text-arrow callouts (older sidecars omit this). */
+  callouts?: Callout[];
   savedAt: string;
   savedBy?: string;
 }

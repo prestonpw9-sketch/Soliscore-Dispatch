@@ -7,16 +7,16 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Calibration, DimLine, Pt } from '@/lib/truescale';
+import { Calibration, Callout, DimLine, DrawLine, Pt } from '@/lib/truescale';
 import {
   needsPdfLens,
-  pdfLensExtra,
+  pdfLensOutputSize,
   startPdfLensRender,
   type PdfLensSource,
 } from '@/lib/pdfjs';
-import { paintScene, Preview } from './scenePainter';
+import { calloutBubbleRect, paintScene, Preview } from './scenePainter';
 
-export type Tool = 'pan' | 'calibrate' | 'dimension';
+export type Tool = 'pan' | 'calibrate' | 'dimension' | 'line' | 'callout';
 
 export interface TrueScaleCanvasHandle {
   /** Composite the plan + annotations to a base-resolution canvas (for export/print). */
@@ -32,6 +32,8 @@ interface Props {
   tool: Tool;
   calibration: Calibration | null;
   dimensions: DimLine[];
+  lines: DrawLine[];
+  callouts: Callout[];
   selectedId: string | null;
   activeColor: string;
   activeWidth: number;
@@ -42,8 +44,12 @@ interface Props {
   pdfLens?: PdfLensSource | null;
   onDrawCalibration: (a: Pt, b: Pt) => void;
   onAddDimension: (a: Pt, b: Pt) => void;
+  onAddLine: (a: Pt, b: Pt) => void;
+  onAddCallout: (tip: Pt, bubble: Pt) => void;
   onSelect: (id: string | null) => void;
   onMoveDimension: (id: string, a: Pt, b: Pt) => void;
+  onMoveLine: (id: string, a: Pt, b: Pt) => void;
+  onMoveCallout: (id: string, tip: Pt, bubble: Pt) => void;
 }
 
 interface LensTile {
@@ -75,9 +81,10 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   ref,
 ) {
   const {
-    base, baseWidth, baseHeight, tool, calibration, dimensions, selectedId,
+    base, baseWidth, baseHeight, tool, calibration, dimensions, lines, callouts, selectedId,
     activeColor, activeWidth, dark, locked, pdfLens,
-    onDrawCalibration, onAddDimension, onSelect, onMoveDimension,
+    onDrawCalibration, onAddDimension, onAddLine, onAddCallout, onSelect,
+    onMoveDimension, onMoveLine, onMoveCallout,
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -100,7 +107,9 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
   const pendingStart = useRef<Pt | null>(null);
   // Dragging an existing dimension (endpoint or whole line) when unlocked.
   const moving = useRef<
-    { id: string; mode: 'a' | 'b' | 'line'; startImg: Pt; origA: Pt; origB: Pt } | null
+    | { kind: 'seg'; which: 'dimension' | 'line'; id: string; mode: 'a' | 'b' | 'line'; startImg: Pt; origA: Pt; origB: Pt }
+    | { kind: 'callout'; id: string; mode: 'tip' | 'bubble' | 'line'; startImg: Pt; origTip: Pt; origBubble: Pt }
+    | null
   >(null);
   // Edge auto-pan while drawing (so long measurements can extend past the view).
   const autoPanRAF = useRef<number | null>(null);
@@ -219,7 +228,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       const cr = entries[0].contentRect;
-      setSize({ w: cr.width, h: cr.height });
+      setSize({ w: Math.round(cr.width), h: Math.round(cr.height) });
     });
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
@@ -253,32 +262,48 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const lensMatches = !!(
+    const lensSamePage = !!(
       lensTile &&
       pdfLens &&
       lensTile.pdf === pdfLens.pdf &&
       lensTile.pageNumber === pdfLens.pageNumber &&
-      lensTile.pdfScale === pdfLens.pdfScale &&
+      lensTile.pdfScale === pdfLens.pdfScale
+    );
+    const lensExact = !!(
+      lensSamePage &&
+      lensTile &&
       Math.abs(lensTile.scale - scale) < 1e-6 &&
       Math.abs(lensTile.ox - offset.x) < 0.5 &&
       Math.abs(lensTile.oy - offset.y) < 0.5 &&
       lensTile.cssW === size.w &&
       lensTile.cssH === size.h
     );
+    let lensBlit: { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number; exact: boolean } | null = null;
+    if (lensSamePage && lensTile) {
+      const k = scale / lensTile.scale;
+      lensBlit = {
+        canvas: lensTile.canvas,
+        x: offset.x - lensTile.ox * k,
+        y: offset.y - lensTile.oy * k,
+        w: lensTile.cssW * k,
+        h: lensTile.cssH * k,
+        exact: lensExact,
+      };
+    }
     paintScene(ctx, {
       base, baseWidth, baseHeight,
       project: toScreen,
       scale, offset,
-      calibration, dimensions, selectedId, preview,
+      calibration, dimensions, lines, callouts, selectedId, preview,
       sizeScale: 1,
       background: dark ? '#0b1220' : '#e2e8f0',
       editable: !locked,
       smoothPlan: scale * dpr <= 1.02,
-      lens: lensMatches && lensTile ? lensTile.canvas : null,
+      lens: lensBlit,
     });
-  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, selectedId, preview, size, dark, locked, toScreen, lensTile, pdfLens]);
+  }, [base, baseWidth, baseHeight, scale, offset, calibration, dimensions, lines, callouts, selectedId, preview, size, dark, locked, toScreen, lensTile, pdfLens]);
 
-  // Re-render the visible PDF region at screen density after zoom/pan settles.
+  // Re-rasterize visible PDF vectors at device pixels after zoom/pan settles.
   useEffect(() => {
     if (!pdfLens || !size.w || !size.h) {
       setLensPending(false);
@@ -297,15 +322,31 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       w: size.w / scale,
       h: size.h / scale,
     };
-    const extra = pdfLensExtra(scale, dpr, region.w, region.h);
+    const out = pdfLensOutputSize(size.w, size.h, dpr);
     const view = { scale, ox: offset.x, oy: offset.y, cssW: size.w, cssH: size.h };
+    const alreadyExact = !!(
+      lensTile &&
+      lensTile.pdf === pdfLens.pdf &&
+      lensTile.pageNumber === pdfLens.pageNumber &&
+      lensTile.pdfScale === pdfLens.pdfScale &&
+      Math.abs(lensTile.scale - scale) < 1e-6 &&
+      Math.abs(lensTile.ox - offset.x) < 0.5 &&
+      Math.abs(lensTile.oy - offset.y) < 0.5 &&
+      lensTile.cssW === size.w &&
+      lensTile.cssH === size.h
+    );
+    if (alreadyExact) {
+      setLensPending(false);
+      return;
+    }
 
     let cancelled = false;
     let cleanupJob: (() => void) | null = null;
+    const delay = lensTile ? 48 : 16;
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       setLensPending(true);
-      const job = startPdfLensRender(pdfLens, region, extra);
+      const job = startPdfLensRender(pdfLens, region, out.w, out.h);
       cleanupJob = job.cancel;
       job.promise.then(() => {
         if (cancelled) return;
@@ -324,14 +365,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
           console.warn('TrueScale PDF lens failed', err);
         }
       });
-    }, 180);
+    }, delay);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
       cleanupJob?.();
     };
-  }, [pdfLens, scale, offset, size, base]);
+  }, [pdfLens, scale, offset, size, base, lensTile]);
 
   useImperativeHandle(ref, () => ({
     fit,
@@ -359,7 +400,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         project: (p: Pt) => p,
         scale: 1,
         offset: { x: 0, y: 0 },
-        calibration, dimensions, selectedId: null, preview: null,
+        calibration, dimensions, lines, callouts, selectedId: null, preview: null,
         sizeScale: Math.max(1, baseWidth / 1100),
         background: '#ffffff',
         editable: false,
@@ -367,7 +408,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
       });
       return out;
     },
-  }), [base, baseWidth, baseHeight, calibration, dimensions, fit, size]);
+  }), [base, baseWidth, baseHeight, calibration, dimensions, lines, callouts, fit, size]);
 
   // ── Pointer handlers ───────────────────────────────────────────────────────
 
@@ -431,29 +472,58 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   useEffect(() => () => stopAutoPan(), []);
 
-  const previewKind = () => (tool === 'calibrate' ? 'calibrate' : 'dimension');
+  const previewKind = (): Preview['kind'] => {
+    if (tool === 'calibrate') return 'calibrate';
+    if (tool === 'line') return 'line';
+    if (tool === 'callout') return 'callout';
+    return 'dimension';
+  };
 
   const finalizeLine = (a: Pt, b: Pt) => {
     const px = Math.hypot(b.x - a.x, b.y - a.y);
     if (px < 2) return;
     if (tool === 'calibrate') onDrawCalibration(a, b);
+    else if (tool === 'line') onAddLine(a, b);
+    else if (tool === 'callout') onAddCallout(a, b);
     else onAddDimension(a, b);
   };
 
-  // Pick an existing dimension (endpoint handle or body) to drag when unlocked.
   const pickMoveTarget = (s: Pt): typeof moving.current => {
     const HANDLE = 12;
     for (const line of dimensions) {
       if (Math.hypot(s.x - toScreen(line.a).x, s.y - toScreen(line.a).y) <= HANDLE)
-        return { id: line.id, mode: 'a', startImg: toImage(s), origA: line.a, origB: line.b };
+        return { kind: 'seg', which: 'dimension', id: line.id, mode: 'a', startImg: toImage(s), origA: line.a, origB: line.b };
       if (Math.hypot(s.x - toScreen(line.b).x, s.y - toScreen(line.b).y) <= HANDLE)
-        return { id: line.id, mode: 'b', startImg: toImage(s), origA: line.a, origB: line.b };
+        return { kind: 'seg', which: 'dimension', id: line.id, mode: 'b', startImg: toImage(s), origA: line.a, origB: line.b };
+    }
+    for (const line of lines) {
+      if (Math.hypot(s.x - toScreen(line.a).x, s.y - toScreen(line.a).y) <= HANDLE)
+        return { kind: 'seg', which: 'line', id: line.id, mode: 'a', startImg: toImage(s), origA: line.a, origB: line.b };
+      if (Math.hypot(s.x - toScreen(line.b).x, s.y - toScreen(line.b).y) <= HANDLE)
+        return { kind: 'seg', which: 'line', id: line.id, mode: 'b', startImg: toImage(s), origA: line.a, origB: line.b };
+    }
+    for (const note of callouts) {
+      const tip = toScreen(note.tip);
+      const bub = toScreen(note.bubble);
+      if (Math.hypot(s.x - tip.x, s.y - tip.y) <= HANDLE)
+        return { kind: 'callout', id: note.id, mode: 'tip', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
+      if (Math.hypot(s.x - bub.x, s.y - bub.y) <= HANDLE)
+        return { kind: 'callout', id: note.id, mode: 'bubble', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) {
+        const box = calloutBubbleRect(ctx, bub, note.text, 1);
+        if (s.x >= box.x && s.x <= box.x + box.w && s.y >= box.y && s.y <= box.y + box.h)
+          return { kind: 'callout', id: note.id, mode: 'bubble', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
+      }
     }
     const id = hitTest(s);
-    if (id) {
-      const line = dimensions.find(d => d.id === id)!;
-      return { id, mode: 'line', startImg: toImage(s), origA: line.a, origB: line.b };
-    }
+    if (!id) return null;
+    const dim = dimensions.find(d => d.id === id);
+    if (dim) return { kind: 'seg', which: 'dimension', id, mode: 'line', startImg: toImage(s), origA: dim.a, origB: dim.b };
+    const ln = lines.find(d => d.id === id);
+    if (ln) return { kind: 'seg', which: 'line', id, mode: 'line', startImg: toImage(s), origA: ln.a, origB: ln.b };
+    const note = callouts.find(d => d.id === id);
+    if (note) return { kind: 'callout', id, mode: 'line', startImg: toImage(s), origTip: note.tip, origBubble: note.bubble };
     return null;
   };
 
@@ -531,16 +601,17 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
     if (moving.current) {
       const cur = toImage(s);
       const m = moving.current;
-      if (m.mode === 'a') onMoveDimension(m.id, cur, m.origB);
-      else if (m.mode === 'b') onMoveDimension(m.id, m.origA, cur);
-      else {
-        const dx = cur.x - m.startImg.x;
-        const dy = cur.y - m.startImg.y;
-        onMoveDimension(
-          m.id,
-          { x: m.origA.x + dx, y: m.origA.y + dy },
-          { x: m.origB.x + dx, y: m.origB.y + dy },
-        );
+      const dx = cur.x - m.startImg.x;
+      const dy = cur.y - m.startImg.y;
+      if (m.kind === 'callout') {
+        if (m.mode === 'tip') onMoveCallout(m.id, cur, m.origBubble);
+        else if (m.mode === 'bubble') onMoveCallout(m.id, m.origTip, cur);
+        else onMoveCallout(m.id, { x: m.origTip.x + dx, y: m.origTip.y + dy }, { x: m.origBubble.x + dx, y: m.origBubble.y + dy });
+      } else {
+        const move = m.which === 'line' ? onMoveLine : onMoveDimension;
+        if (m.mode === 'a') move(m.id, cur, m.origB);
+        else if (m.mode === 'b') move(m.id, m.origA, cur);
+        else move(m.id, { x: m.origA.x + dx, y: m.origA.y + dy }, { x: m.origB.x + dx, y: m.origB.y + dy });
       }
       return;
     }
@@ -651,9 +722,19 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
 
   const hitTest = (screen: Pt): string | null => {
     let best: { id: string; d: number } | null = null;
-    for (const line of dimensions) {
-      const d = pointSegDist(screen, toScreen(line.a), toScreen(line.b));
-      if (d <= 10 && (!best || d < best.d)) best = { id: line.id, d };
+    const consider = (id: string, d: number) => {
+      if (d <= 10 && (!best || d < best.d)) best = { id, d };
+    };
+    for (const line of dimensions) consider(line.id, pointSegDist(screen, toScreen(line.a), toScreen(line.b)));
+    for (const line of lines) consider(line.id, pointSegDist(screen, toScreen(line.a), toScreen(line.b)));
+    const ctx = canvasRef.current?.getContext('2d');
+    for (const note of callouts) {
+      consider(note.id, pointSegDist(screen, toScreen(note.tip), toScreen(note.bubble)));
+      if (ctx) {
+        const box = calloutBubbleRect(ctx, toScreen(note.bubble), note.text, 1);
+        if (screen.x >= box.x && screen.x <= box.x + box.w && screen.y >= box.y && screen.y <= box.y + box.h)
+          return note.id;
+      }
     }
     return best?.id ?? null;
   };
@@ -701,14 +782,14 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
       />
-      {placing && (tool === 'dimension' || tool === 'calibrate') && (
+      {placing && (tool === 'dimension' || tool === 'calibrate' || tool === 'line' || tool === 'callout') && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/80 text-white text-xs font-semibold shadow-lg">
-          Click the other end · Esc to cancel
+          {tool === 'callout' ? 'Click where the note should sit · Esc to cancel' : 'Click the other end · Esc to cancel'}
         </div>
       )}
       {lensPending && !placing && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg">
-          Sharpening linework…
+          Redrawing vectors…
         </div>
       )}
       <div className="pointer-events-none absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-900/70 text-white/90 text-[11px] font-semibold shadow-lg tabular-nums">
@@ -722,7 +803,7 @@ const TrueScaleCanvas = forwardRef<TrueScaleCanvasHandle, Props>(function TrueSc
               Math.abs(lensTile.scale - scale) < 1e-6 &&
               Math.abs(lensTile.ox - offset.x) < 0.5 &&
               Math.abs(lensTile.oy - offset.y) < 0.5
-            ? ' · sharp'
+            ? ' · vector'
             : ''}
       </div>
     </div>
