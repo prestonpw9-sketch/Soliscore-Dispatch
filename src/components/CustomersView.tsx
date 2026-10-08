@@ -32,17 +32,34 @@ interface Props {
   onRefresh?: () => Promise<void> | void;
 }
 
-type NewBuilderForm = {
+type CustomerKind = 'residential' | 'builder';
+
+type NewCustomerForm = {
+  kind: CustomerKind;
   name: string;
   phone: string;
   email: string;
   address: string;
   city: string;
+  notes: string;
 };
 
-const EMPTY_FORM: NewBuilderForm = {
-  name: '', phone: '', email: '', address: '', city: '',
+const EMPTY_FORM: NewCustomerForm = {
+  kind: 'builder', name: '', phone: '', email: '', address: '', city: '', notes: '',
 };
+
+function addCustomerTitle(kind: CustomerKind): string {
+  switch (kind) {
+    case 'residential':
+      return 'Add one-job customer';
+    case 'builder':
+      return 'Add builder';
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
+}
 
 function clampPct(n: number): number {
   if (Number.isNaN(n)) return 0;
@@ -132,9 +149,14 @@ const CustomersView: React.FC<Props> = ({
   const [typeFilter, setTypeFilter]   = useState<'all' | 'Residential' | 'Commercial'>('all');
   const [selected, setSelected]       = useState<Customer | null>(null);
   const [showBuilderModal, setShowBuilderModal] = useState(false);
-  const [newBuilder, setNewBuilder]   = useState<NewBuilderForm>(EMPTY_FORM);
+  const [newBuilder, setNewBuilder]   = useState<NewCustomerForm>(EMPTY_FORM);
   const [saveError, setSaveError]     = useState<string | null>(null);
   const [saving, setSaving]           = useState(false);
+  const [confirmRemoveCustomer, setConfirmRemoveCustomer] = useState(false);
+  const [removingCustomer, setRemovingCustomer] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [confirmRemoveProjectId, setConfirmRemoveProjectId] = useState<string | null>(null);
+  const [removingProjectId, setRemovingProjectId] = useState<string | null>(null);
 
   // All projects (for counts and detail billing).
   const [allProjects, setAllProjects] = useState<ProjectBilling[]>([]);
@@ -163,6 +185,9 @@ const CustomersView: React.FC<Props> = ({
   useEffect(() => {
     setShowProjectForm(false);
     setNewProject({ name: '', address: '' });
+    setConfirmRemoveCustomer(false);
+    setConfirmRemoveProjectId(null);
+    setRemoveError(null);
   }, [selected?.id]);
 
   const projectsByBuilder = useMemo(() => {
@@ -209,6 +234,47 @@ const CustomersView: React.FC<Props> = ({
     setNewProject({ name: '', address: '' });
     setShowProjectForm(false);
     await fetchAllProjects();
+    await onRefresh?.();
+  };
+
+  const handleRemoveProject = async (projectId: string) => {
+    if (!canEdit) return;
+    setRemovingProjectId(projectId);
+    setProjectError(null);
+    const { error } = await supabase.from('projects').delete().eq('id', projectId);
+    setRemovingProjectId(null);
+    if (error) {
+      setProjectError(error.message);
+      return;
+    }
+    setAllProjects(prev => prev.filter(p => p.id !== projectId));
+    setConfirmRemoveProjectId(null);
+    await onRefresh?.();
+  };
+
+  const handleRemoveCustomer = async () => {
+    if (!selected || !canEdit) return;
+    setRemovingCustomer(true);
+    setRemoveError(null);
+    const id = selected.id;
+    const isBuilder = selected.propertyType === 'Commercial';
+    if (isBuilder) {
+      const { error: builderError } = await supabase.from('builders').delete().eq('id', id);
+      if (builderError) {
+        setRemovingCustomer(false);
+        setRemoveError(builderError.message);
+        return;
+      }
+    }
+    const { error: customerError } = await supabase.from('customers').delete().eq('id', id);
+    setRemovingCustomer(false);
+    if (customerError) {
+      setRemoveError(customerError.message);
+      return;
+    }
+    setAllProjects(prev => prev.filter(p => p.builderId !== id));
+    setSelected(null);
+    setConfirmRemoveCustomer(false);
     await onRefresh?.();
   };
 
@@ -339,20 +405,24 @@ const CustomersView: React.FC<Props> = ({
     setSaving(true);
     try {
       await onCreateCustomer({
-        ...newBuilder,
-        propertyType: 'Commercial',
+        name: newBuilder.name,
+        phone: newBuilder.phone,
+        email: newBuilder.email,
+        address: newBuilder.address,
+        city: newBuilder.city,
+        notes: newBuilder.kind === 'residential' ? newBuilder.notes : '',
+        propertyType: newBuilder.kind === 'builder' ? 'Commercial' : 'Residential',
         totalJobs: 0,
-        notes: '',
       });
       closeModal();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save builder.');
+      setSaveError(err instanceof Error ? err.message : 'Failed to save customer.');
     } finally {
       setSaving(false);
     }
   };
 
-  const field = (id: keyof NewBuilderForm) => ({
+  const field = (id: Exclude<keyof NewCustomerForm, 'kind'>) => ({
     id,
     value: newBuilder[id],
     onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -470,10 +540,16 @@ const CustomersView: React.FC<Props> = ({
               {canEdit && (
                 <button
                   type="button"
-                  onClick={() => setShowBuilderModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap shadow-sm transition-colors"
+                  onClick={() => {
+                    setNewBuilder({
+                      ...EMPTY_FORM,
+                      kind: typeFilter === 'Residential' ? 'residential' : 'builder',
+                    });
+                    setShowBuilderModal(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap shadow-sm transition-colors"
                 >
-                  <Plus className="w-3.5 h-3.5" /> New Builder
+                  <Plus className="w-3.5 h-3.5" /> Add customer
                 </button>
               )}
             </div>
@@ -630,7 +706,7 @@ const CustomersView: React.FC<Props> = ({
                       Projects &amp; billing
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
-                      Log what % of each milestone has been invoiced (Rough 40% / Top-out 40% / Trim 20%) — partial billing supported.
+                      Log what % of each milestone has been invoiced (Rough 40% / Top-out 40% / Trim 20%). Remove a project when the job is finished or you didn't get the work.
                     </p>
                     <div className="space-y-3">
                       {projectsLoading ? (
@@ -749,6 +825,41 @@ const CustomersView: React.FC<Props> = ({
                                     );
                                   })}
                                 </div>
+
+                                {canEdit && (
+                                  confirmRemoveProjectId === proj.id ? (
+                                    <div className="rounded-md border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 p-2.5 space-y-2">
+                                      <p className="text-[11px] text-red-800 dark:text-red-200">
+                                        Remove {proj.name}? Scheduled jobs stay on the board.
+                                      </p>
+                                      <div className="flex gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmRemoveProjectId(null)}
+                                          className="flex-1 px-2 py-1.5 border border-slate-200 dark:border-slate-600 rounded-md text-[11px] font-semibold text-slate-600 dark:text-slate-300"
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={removingProjectId === proj.id}
+                                          onClick={() => void handleRemoveProject(proj.id)}
+                                          className="flex-1 px-2 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-md text-[11px] font-semibold"
+                                        >
+                                          {removingProjectId === proj.id ? 'Removing…' : 'Remove project'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmRemoveProjectId(proj.id)}
+                                      className="text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline"
+                                    >
+                                      Remove project
+                                    </button>
+                                  )
+                                )}
                               </div>
                             );
                           })}
@@ -814,6 +925,45 @@ const CustomersView: React.FC<Props> = ({
               </div>
 
               <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0">
+                {canEdit && (
+                  confirmRemoveCustomer ? (
+                    <div className="mb-3 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 p-3 space-y-2">
+                      <p className="text-xs text-red-800 dark:text-red-200">
+                        {selected.propertyType === 'Commercial' && selectedProjects.length > 0
+                          ? `Remove ${selected.name}? This also removes ${selectedProjects.map(p => p.name).join(', ')}. Scheduled jobs stay on the board.`
+                          : `Remove ${selected.name}? Scheduled jobs stay on the board.`}
+                      </p>
+                      {removeError && (
+                        <p role="alert" className="text-xs text-red-700 dark:text-red-300 font-medium">{removeError}</p>
+                      )}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setConfirmRemoveCustomer(false); setRemoveError(null); }}
+                          className="flex-1 px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={removingCustomer}
+                          onClick={() => void handleRemoveCustomer()}
+                          className="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold"
+                        >
+                          {removingCustomer ? 'Removing…' : 'Remove customer'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmRemoveCustomer(true)}
+                      className="mb-3 w-full text-left text-xs font-semibold text-red-600 dark:text-red-400 hover:underline"
+                    >
+                      Remove customer
+                    </button>
+                  )
+                )}
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -862,10 +1012,16 @@ const CustomersView: React.FC<Props> = ({
             aria-labelledby="builder-modal-title"
             className="bg-white dark:bg-slate-900 rounded-t-2xl sm:rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200"
           >
-            <div className="bg-gradient-to-r from-purple-700 to-purple-900 px-6 py-4 flex items-center justify-between">
+            <div className={`px-6 py-4 flex items-center justify-between ${
+              newBuilder.kind === 'residential'
+                ? 'bg-gradient-to-r from-teal-600 to-teal-800'
+                : 'bg-gradient-to-r from-purple-700 to-purple-900'
+            }`}>
               <div className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-purple-200" aria-hidden="true" />
-                <h3 id="builder-modal-title" className="text-lg font-bold text-white">Add General Contractor</h3>
+                {newBuilder.kind === 'residential'
+                  ? <Home className="w-5 h-5 text-white/80" aria-hidden="true" />
+                  : <Building2 className="w-5 h-5 text-purple-200" aria-hidden="true" />}
+                <h3 id="builder-modal-title" className="text-lg font-bold text-white">{addCustomerTitle(newBuilder.kind)}</h3>
               </div>
               <button type="button" onClick={closeModal} aria-label="Close modal" className="p-1 hover:bg-white/20 rounded-lg text-purple-200 transition-colors">
                 <X className="w-5 h-5" />
@@ -873,10 +1029,39 @@ const CustomersView: React.FC<Props> = ({
             </div>
 
             <form onSubmit={e => void handleSaveBuilder(e)} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-2" role="group" aria-label="Customer type">
+                {([
+                  ['residential', 'One-job customer'],
+                  ['builder', 'Builder'],
+                ] as const).map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => setNewBuilder(prev => ({ ...prev, kind }))}
+                    className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                      newBuilder.kind === kind
+                        ? kind === 'residential'
+                          ? 'bg-teal-600 border-teal-600 text-white'
+                          : 'bg-purple-600 border-purple-600 text-white'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {newBuilder.kind === 'residential'
+                  ? 'A homeowner or anyone you only do one job for. You can remove them when the work is done.'
+                  : 'A contractor you keep on file, with a project for each job site.'}
+              </p>
               <div>
-                <label htmlFor="builder-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Company / Builder Name *</label>
-                <input ref={firstInputRef} id="builder-name" required type="text" placeholder="e.g. Summit Construction"
-                  className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                <label htmlFor="builder-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {newBuilder.kind === 'residential' ? 'Customer name *' : 'Company / builder name *'}
+                </label>
+                <input ref={firstInputRef} id="builder-name" required type="text"
+                  placeholder={newBuilder.kind === 'residential' ? 'e.g. Sarah Jenkins' : 'e.g. Summit Construction'}
+                  className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
                   {...field('name')} />
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -905,6 +1090,16 @@ const CustomersView: React.FC<Props> = ({
                   className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
                   {...field('city')} />
               </div>
+              {newBuilder.kind === 'residential' && (
+                <div>
+                  <label htmlFor="builder-notes" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Notes</label>
+                  <textarea id="builder-notes" rows={2} placeholder="Gate code, one-time repair, and so on"
+                    value={newBuilder.notes}
+                    onChange={e => setNewBuilder(prev => ({ ...prev, notes: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                </div>
+              )}
               {saveError && <p role="alert" className="text-xs text-red-600 dark:text-red-400 font-medium">{saveError}</p>}
               <div className="flex gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button type="button" onClick={closeModal}
@@ -912,8 +1107,12 @@ const CustomersView: React.FC<Props> = ({
                   Cancel
                 </button>
                 <button type="submit" disabled={saving}
-                  className="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors">
-                  {saving ? 'Saving…' : 'Save Builder'}
+                  className={`flex-1 px-4 py-2.5 disabled:opacity-50 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors ${
+                    newBuilder.kind === 'residential'
+                      ? 'bg-teal-600 hover:bg-teal-700'
+                      : 'bg-purple-600 hover:bg-purple-700'
+                  }`}>
+                  {saving ? 'Saving…' : newBuilder.kind === 'residential' ? 'Save customer' : 'Save builder'}
                 </button>
               </div>
             </form>
