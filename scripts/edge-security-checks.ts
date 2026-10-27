@@ -14,6 +14,12 @@ import {
   timingSafeEqualString,
   validateTwilioSignature,
 } from '../supabase/functions/_shared/twilioSignature.ts';
+import {
+  findWarrantyMatch,
+  normalizeAddress,
+  warrantyEnd,
+  warrantyTitle,
+} from '../supabase/functions/_shared/warranty.ts';
 
 const AUTH_TOKEN = '12345';
 const WEBHOOK_URL = 'https://mycompany.com/myapp.php?foo=1&bar=2';
@@ -291,5 +297,20 @@ const noRole = await authorizeDispatchCaller({
 });
 assert.equal(noRole.ok, false);
 assert.equal(noRole.ok === false && noRole.status, 403);
+
+// Warranty tagging for texted jobs: same street, still covered, never "Address pending".
+const completedRows = [
+  { id: 7, title: 'Mesa Builder', location: '100 Mesa Drive, Tucson AZ', phase: 'Trim', status: 'completed', completed_at: '2026-03-01T18:00:00Z', warranty_until: '2027-03-01' },
+  { id: 8, title: 'Old Job', location: '9 Oak St', phase: 'Final', status: 'completed', completed_at: '2024-01-01T18:00:00Z', warranty_until: '2025-01-01' },
+  { id: 9, title: 'Open Job', location: '5 Pine Ln', phase: 'Rough-In', status: 'scheduled', completed_at: null, warranty_until: null },
+];
+assert.equal(normalizeAddress('100 Mesa Dr.'), normalizeAddress('100 mesa drive, Tucson'));
+assert.equal(findWarrantyMatch('100 Mesa Dr', completedRows, '2026-10-27')?.jobId, '7');
+assert.equal(findWarrantyMatch('100 Mesa Dr', completedRows, '2027-03-02'), null);
+assert.equal(findWarrantyMatch('9 Oak Street', completedRows, '2026-10-27'), null);
+assert.equal(findWarrantyMatch('5 Pine Lane', completedRows, '2026-10-27'), null);
+assert.equal(findWarrantyMatch('Address pending', completedRows, '2026-10-27'), null);
+assert.equal(warrantyEnd({ id: 1, completed_at: '2028-02-29T12:00:00Z' }), '2029-02-28');
+assert.equal(warrantyTitle('WARRANTY — Leak'), 'WARRANTY — Leak');
 
 console.log('edge-security-checks: ok');

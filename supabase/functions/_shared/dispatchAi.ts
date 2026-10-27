@@ -6,6 +6,7 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { requireDispatchUser } from './callerAuthLive.ts';
 import { notifyCrew } from './twilio.ts';
+import { activeWarranties, type CompletedJobRow, type WarrantyMatch } from './warranty.ts';
 
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -92,6 +93,9 @@ site quirks, or scheduling rules, call remember_fact (and update_technician_skil
 Memories persist across chats — treat them as ground truth unless the user corrects them.
 
 Job statuses: scheduled (on board), active (in progress), completed.
+Completed jobs stay on file under warranty (default 1 year, see UNDER WARRANTY). You can NOT
+mark jobs completed, restore them, or delete them — the office does that in the app.
+A new job or service call at an address listed UNDER WARRANTY is warranty work: say so.
 Pending dispatches = scheduled jobs with no crew assigned.
 Dates are full-day YYYY-MM-DD (America/Phoenix). Never invent dates.
 
@@ -738,6 +742,8 @@ interface DispatchSnapshot {
     technician_ids: string[];
     description: string;
   }>;
+  /** Completed jobs whose warranty still covers today. */
+  underWarranty: WarrantyMatch[];
   jobTasks: Array<{
     id: string;
     job_id: string;
@@ -825,6 +831,8 @@ async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnap
       };
     });
 
+  const underWarranty = activeWarranties((jobsRes.data ?? []) as CompletedJobRow[], arizonaToday());
+
   const jobs = allJobs
     .filter(j => j.status !== 'completed' || (j.end_date >= windowStart && j.date <= windowEnd))
     .filter(j => !j.date || (j.end_date >= windowStart && j.date <= windowEnd));
@@ -855,6 +863,7 @@ async function loadDispatchSnapshot(admin: SupabaseClient): Promise<DispatchSnap
     technicians,
     jobs,
     allJobs,
+    underWarranty,
     jobTasks,
     timeOff,
     memories,
@@ -912,6 +921,15 @@ function formatSnapshot(snap: DispatchSnapshot): string {
 
   const unassigned = openJobs.filter(j => j.technician_ids.length === 0);
   lines.push(`\nUnassigned open jobs: ${unassigned.length}`);
+
+  if (snap.underWarranty.length) {
+    lines.push('\nUNDER WARRANTY (completed; new work at these addresses is warranty work):');
+    for (const w of snap.underWarranty.slice(0, 80)) {
+      lines.push(
+        `- Job #${w.jobId} "${w.title}" @ ${w.location || 'n/a'} | phase=${w.phase || 'n/a'} | warranty until ${w.warrantyUntil}`,
+      );
+    }
+  }
 
   if (snap.memories.length) {
     lines.push('\nLONG-TERM MEMORIES (persist across chats):');

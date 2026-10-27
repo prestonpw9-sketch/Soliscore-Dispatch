@@ -31,6 +31,7 @@ interface Props {
   onOpenEstimator: () => void;
   onPhaseChange: (jobId: string, newPhase: string) => void;
   onInspectionChange?: (jobId: string, passed: boolean) => void;
+  onCompleteJob?: (jobId: string) => void;
   onHire: (name: string, role: string, phone?: string) => void;
   onFire: (id: string) => void;
   onJobClick?: (job: Job) => void;
@@ -95,6 +96,7 @@ const Dashboard: React.FC<Props> = ({
   onOpenEstimator,
   onPhaseChange,
   onInspectionChange,
+  onCompleteJob,
   onHire,
   onFire,
   onJobClick,
@@ -321,6 +323,7 @@ const Dashboard: React.FC<Props> = ({
                                 technicianName={tech.name}
                                 onPhaseChange={onPhaseChange}
                                 onInspectionChange={onInspectionChange}
+                                onComplete={canEdit ? onCompleteJob : undefined}
                                 onClick={() => onJobClick?.(job)}
                               />
                             </div>

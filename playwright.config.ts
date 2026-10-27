@@ -1,5 +1,13 @@
 import { defineConfig } from '@playwright/test';
 
+// Machines that keep the Supabase vars only in .env (not the shell) get a fake,
+// mock-only origin. The dev server inherits it, and Vite lets process env win
+// over .env, so tests can never reach a real project.
+if (!process.env.VITE_SUPABASE_URL) {
+  process.env.VITE_SUPABASE_URL = 'https://e2e-mock.supabase.co';
+  process.env.VITE_SUPABASE_ANON_KEY = 'e2e-mock-anon-key';
+}
+
 /**
  * Schedule end-to-end tests. The dev server is local only.
  * Tests intercept the hosted Supabase origin and never forward those requests.

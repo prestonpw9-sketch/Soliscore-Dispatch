@@ -4,6 +4,7 @@ import { formatEmergencyPageMessage, loadCrewDirectory, notifyCrew } from "../_s
 import { twilioWebhookForbidden } from "../_shared/twilioWebhook.ts";
 import { phonesMatch } from "../_shared/phone.ts";
 import { shouldSkipSuperintendentAi } from "../_shared/crewInbound.ts";
+import { lookupWarrantyMatch, warrantyNote, warrantyTitle } from "../_shared/warranty.ts";
 import {
   formatBoardSpan,
   phoenixNowLabel,
@@ -112,7 +113,11 @@ Date rules for STANDARD jobs:
 How to Respond:
 - If work type is missing: ask what needs to be done.
 - If location is missing: ask for address or lot/community.
-- If Everything is Complete: call the correct tool FIRST, then confirm what was added to the board and for which date (with year ${year}).`;
+- If Everything is Complete: call the correct tool FIRST, then confirm what was added to the board and for which date (with year ${year}).
+
+Rule 6: Texting Never Closes Out Work
+You can only ADD jobs to the board. You cannot mark jobs complete, cancel them, or delete them. If someone asks, tell them Preston will take care of it in the office.
+New work at an address we already finished may be under warranty — the system tags that automatically; just log the job as usual.`;
 }
 
 const tools = [
@@ -411,15 +416,19 @@ serve(async (req) => {
         }
 
         if (name === "log_job") {
-          const title = String(args.title || args.job_type || "SMS job request").trim();
-          const jobType = String(args.job_type || title).trim();
+          const jobType = String(args.job_type || args.title || "SMS job request").trim();
           const address = String(args.address || "Address pending").trim();
+          const warranty = await lookupWarrantyMatch(supabase, address, phoenixYMD());
+          const baseTitle = String(args.title || args.job_type || "SMS job request").trim();
+          const title = warranty ? warrantyTitle(baseTitle) : baseTitle;
           const phase = normalizePhase(args.phase);
           const notes = typeof args.notes === "string" ? args.notes.trim() : "";
           const date = resolveJobDate(args.target_date);
           const endDate = resolveJobEndDate(args.target_end_date, date);
           const when = formatBoardSpan(date, endDate);
-          const description = [jobType, notes].filter(Boolean).join(" — ");
+          const description = [jobType, notes, warranty ? warrantyNote(warranty) : ""]
+            .filter(Boolean)
+            .join(" — ");
           console.log("log_job dates", { raw: args.target_date, rawEnd: args.target_end_date, date, endDate });
 
           const row: JobInsert = {
@@ -462,17 +471,18 @@ serve(async (req) => {
               const names = page.sent.map((s) => s.name).join(", ");
               if (page.sent.length) {
                 confirmations.push(
-                  `URGENT: Emergency flagged! On-call notified (${names}). I've put ${title} at ${address} on the schedule for ${when}.`,
+                  `URGENT: Emergency flagged! On-call notified (${names}). I've put ${baseTitle} at ${address} on the schedule for ${when}.`,
                 );
               } else {
                 console.error("emergency page failed:", page.error, page.skipped);
                 confirmations.push(
-                  `URGENT: Emergency flagged! I logged ${title} at ${address} for ${when}, but could not reach on-call plumbers yet — Preston needs to call the crew. ${page.error ?? ""}`.trim(),
+                  `URGENT: Emergency flagged! I logged ${baseTitle} at ${address} for ${when}, but could not reach on-call plumbers yet — Preston needs to call the crew. ${page.error ?? ""}`.trim(),
                 );
               }
             } else {
               confirmations.push(
-                `I've put ${title} at ${address} on the schedule for ${when}. Preston will follow up if anything changes.`,
+                // Replies use the untagged title; the warranty tag is for the office board.
+                `I've put ${baseTitle} at ${address} on the schedule for ${when}. Preston will follow up if anything changes.`,
               );
             }
           }
@@ -482,7 +492,9 @@ serve(async (req) => {
           const endDate = resolveJobEndDate(args.target_end_date, targetDate);
           const when = formatBoardSpan(targetDate, endDate);
           const address = String(args.address || "Address pending").trim();
-          const title = String(args.title || `${jobType} — ${address}`).trim();
+          const warranty = await lookupWarrantyMatch(supabase, address, phoenixYMD());
+          const baseTitle = String(args.title || `${jobType} — ${address}`).trim();
+          const title = warranty ? warrantyTitle(baseTitle) : baseTitle;
           const phase = normalizePhase(args.phase ?? "Rough-In");
           console.log("schedule_job dates", { raw: args.target_date, rawEnd: args.target_end_date, targetDate, endDate });
 
@@ -490,7 +502,7 @@ serve(async (req) => {
             customer_phone: phoneNumber,
             title,
             location: address,
-            description: jobType,
+            description: warranty ? `${jobType} — ${warrantyNote(warranty)}` : jobType,
             status: "scheduled",
             date: targetDate,
             end_date: endDate,

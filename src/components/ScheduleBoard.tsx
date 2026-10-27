@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown, ChevronLeft, ChevronRight, CalendarRange, Loader2, Plus, Trash2, X,
   ClipboardCheck, ArrowRightLeft, Check, AlertTriangle, CheckCircle2, Pencil,
-  MapPin, User, CalendarDays, Search,
+  MapPin, User, CalendarDays, Search, RotateCcw, ShieldCheck,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
-import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/data';
+import type { Job, Technician, JobTask, TaskStatus, TechTimeOff, Customer } from '@/lib/data';
 import { clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, isTechOffOnDay, addCalendarDays, dispatchToday, arizonaToday } from '@/lib/data';
+import { defaultWarrantyUntil, formatWarrantyDate, isWarrantyExpired } from '@/lib/warranty';
 import { useDispatchToday } from '@/hooks/useDispatchToday';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 import {
@@ -134,7 +135,13 @@ interface Props {
   techTimeOff?: TechTimeOff[];
   onRefresh: () => Promise<void> | void;
   onInspectionChange?: (jobId: string, passed: boolean) => Promise<void> | void;
+  /** Used to search completed jobs by the customer's phone number. */
+  customers?: Customer[];
+  onRestoreJob?: (jobId: string) => Promise<CompletionResult> | void;
+  onWarrantyChange?: (jobId: string, warrantyUntil: string) => Promise<CompletionResult> | void;
 }
+
+type CompletionResult = { ok: true } | { ok: false; message: string };
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -221,8 +228,211 @@ function PhaseSectionHeader({
   );
 }
 
-const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh, onInspectionChange }) => {
+// ── Completed / Under Warranty ──────────────────────────────────────────────
+
+const COMPLETED_SECTION_KEY = 'completed';
+
+/** Stored warranty date, else the 1-year default from completed_at. */
+function effectiveWarrantyUntil(job: Job): string | null {
+  if (job.warrantyUntil) return job.warrantyUntil;
+  if (!job.completedAt) return null;
+  const completed = new Date(job.completedAt);
+  if (Number.isNaN(completed.getTime())) return null;
+  return defaultWarrantyUntil(arizonaToday(completed));
+}
+
+type AddressGroup = { address: string; jobs: Job[] };
+type BuilderGroup = { builder: string; addresses: AddressGroup[] };
+
+function groupByBuilderAndAddress(list: Job[]): BuilderGroup[] {
+  const builders = new Map<string, Map<string, Job[]>>();
+  for (const job of list) {
+    const builder = job.customerName?.trim() || 'Untitled Job';
+    const address = job.address?.trim() || 'No address';
+    const byAddress = builders.get(builder) ?? new Map<string, Job[]>();
+    byAddress.set(address, [...(byAddress.get(address) ?? []), job]);
+    builders.set(builder, byAddress);
+  }
+  return [...builders.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([builder, byAddress]) => ({
+      builder,
+      addresses: [...byAddress.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([address, jobs]) => ({
+          address,
+          jobs: [...jobs].sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? '')),
+        })),
+    }));
+}
+
+function completedMatches(job: Job, query: string, phone: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const text = [job.customerName, job.address, job.description, job.phase, phone]
+    .join(' ')
+    .toLowerCase();
+  if (text.includes(q)) return true;
+  const digits = q.replace(/\D/g, '');
+  return digits.length >= 3 && phone.replace(/\D/g, '').includes(digits);
+}
+
+function CompletedWarrantySection({
+  jobs,
+  customers,
+  canEdit,
+  collapsed,
+  onToggle,
+  onRestore,
+  onWarrantyChange,
+}: {
+  jobs: Job[];
+  customers: Customer[];
+  canEdit: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  onRestore?: (job: Job) => void;
+  onWarrantyChange?: (job: Job, warrantyUntil: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const today = arizonaToday();
+  const phoneFor = useCallback(
+    (job: Job) => customers.find(c => c.id === job.customerId)?.phone ?? '',
+    [customers],
+  );
+
+  const { active, expired } = useMemo(() => {
+    const matched = jobs.filter(job => completedMatches(job, query, phoneFor(job)));
+    return {
+      active: groupByBuilderAndAddress(matched.filter(job => !isWarrantyExpired(effectiveWarrantyUntil(job), today))),
+      expired: groupByBuilderAndAddress(matched.filter(job => isWarrantyExpired(effectiveWarrantyUntil(job), today))),
+    };
+  }, [jobs, query, phoneFor, today]);
+
+  // Searching opens the section, like the phase sections do.
+  const closed = collapsed && !query.trim();
+  const panelId = 'schedule-section-completed-panel';
+  const noun = jobs.length === 1 ? 'job' : 'jobs';
+  const colors = 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100';
+
+  const renderGroups = (groups: BuilderGroup[], isExpired: boolean) => groups.map(group => (
+    <div key={group.builder} className="border-b border-slate-100 dark:border-slate-800 last:border-b-0">
+      <h4 className="px-4 pt-3 text-sm font-black text-slate-900 dark:text-white">{group.builder}</h4>
+      {group.addresses.map(addr => (
+        <div key={addr.address} className="px-4 pb-3">
+          <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
+            <MapPin className="w-3 h-3" aria-hidden="true" /> {addr.address}
+          </p>
+          <ul className="mt-1.5 space-y-1.5">
+            {addr.jobs.map(job => {
+              const until = effectiveWarrantyUntil(job);
+              const label = `${job.customerName} ${job.phase || ''}`.trim();
+              return (
+                <li
+                  key={job.id}
+                  data-testid={`completed-job-${job.id}`}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
+                >
+                  <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                    {job.phase || 'Rough-In'}
+                  </span>
+                  {job.description && (
+                    <span className="text-xs text-slate-600 dark:text-slate-300 truncate max-w-[16rem]">{job.description}</span>
+                  )}
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                    isExpired
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'
+                      : 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300'
+                  }`}>
+                    {until
+                      ? `${isExpired ? 'Warranty ended' : 'Warranty until'} ${formatWarrantyDate(until)}`
+                      : 'Warranty date not set'}
+                  </span>
+                  {canEdit && onWarrantyChange && (
+                    <input
+                      type="date"
+                      value={until ?? ''}
+                      onChange={e => { if (e.target.value) onWarrantyChange(job, e.target.value); }}
+                      aria-label={`Warranty until for ${label}`}
+                      className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  )}
+                  {canEdit && onRestore && (
+                    <button
+                      type="button"
+                      onClick={() => onRestore(job)}
+                      aria-label={`Restore ${label}`}
+                      className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Restore
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  ));
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+      <div id="schedule-section-completed" className={`scroll-mt-56 ${colors}`}>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={!closed}
+          aria-controls={panelId}
+          className={`w-full min-h-11 px-3 sm:px-4 py-2.5 flex items-center gap-2 text-left ${colors}`}
+        >
+          <ChevronDown aria-hidden="true" className={`w-4 h-4 shrink-0 transition-transform ${closed ? '-rotate-90' : ''}`} />
+          <ShieldCheck aria-hidden="true" className="w-4 h-4 shrink-0" />
+          <span className="font-black text-sm">Completed / Under Warranty</span>
+          <span className="text-xs font-bold tabular-nums">{jobs.length} {noun}</span>
+        </button>
+      </div>
+      {!closed && (
+        <div id={panelId} className="pb-2">
+          <div className="relative px-4 pt-3">
+            <Search className="absolute left-7 top-1/2 translate-y-[-25%] w-4 h-4 text-slate-400" aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search builder, address, title, or phone"
+              aria-label="Search completed jobs"
+              className="w-full min-h-11 pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+          </div>
+          {active.length === 0 && expired.length === 0 && (
+            <p className="px-4 py-6 text-sm text-slate-400 text-center">
+              {query.trim() ? `No completed jobs match “${query.trim()}”.` : 'No completed jobs yet.'}
+            </p>
+          )}
+          {active.length > 0 && <div id="schedule-completed-active">{renderGroups(active, false)}</div>}
+          {expired.length > 0 && (
+            <div id="schedule-completed-expired" className="mt-2 border-t border-slate-200 dark:border-slate-700">
+              <h3 className="px-4 pt-3 text-xs font-black uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                Expired
+              </h3>
+              {renderGroups(expired, true)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ScheduleBoard: React.FC<Props> = ({
+  jobs: allJobs, technicians, techTimeOff = [], onRefresh, onInspectionChange,
+  customers = [], onRestoreJob, onWarrantyChange,
+}) => {
   const { canEdit } = useAuth();
+  // Completed jobs leave the phase sections and live in Completed / Under Warranty.
+  const jobs = useMemo(() => allJobs.filter(j => j.status !== 'completed'), [allJobs]);
+  const completedJobs = useMemo(() => allJobs.filter(j => j.status === 'completed'), [allJobs]);
   const dispatchDay = useDispatchToday();
 
   const [mode, setMode] = useState<'month' | 'timeline' | 'myday'>(
@@ -571,6 +781,30 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       return next;
     });
   }, []);
+
+  // Completed starts collapsed; the choice persists with the phase sections.
+  const completedCollapsed = collapsed[COMPLETED_SECTION_KEY] ?? true;
+  const toggleCompleted = useCallback(() => {
+    setCollapsed(prev => {
+      const next = { ...prev, [COMPLETED_SECTION_KEY]: !(prev[COMPLETED_SECTION_KEY] ?? true) };
+      persistCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  const restoreCompleted = useCallback(async (job: Job) => {
+    if (!onRestoreJob) return;
+    setError(null);
+    const result = await onRestoreJob(job.id);
+    if (result && result.ok === false) setError(result.message);
+  }, [onRestoreJob]);
+
+  const changeWarranty = useCallback(async (job: Job, warrantyUntil: string) => {
+    if (!onWarrantyChange) return;
+    setError(null);
+    const result = await onWarrantyChange(job.id, warrantyUntil);
+    if (result && result.ok === false) setError(result.message);
+  }, [onWarrantyChange]);
 
   const sectionClosed = useCallback((id: string) => {
     if (search.trim()) return false;
@@ -1140,6 +1374,16 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
         </div>
       </div>
       )}
+
+      <CompletedWarrantySection
+        jobs={completedJobs}
+        customers={customers}
+        canEdit={canEdit}
+        collapsed={completedCollapsed}
+        onToggle={toggleCompleted}
+        onRestore={onRestoreJob ? job => void restoreCompleted(job) : undefined}
+        onWarrantyChange={onWarrantyChange ? (job, until) => void changeWarranty(job, until) : undefined}
+      />
 
       {/* Modals */}
       {editJob && (

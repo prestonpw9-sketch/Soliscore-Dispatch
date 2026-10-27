@@ -266,10 +266,16 @@ function readBody(raw: string | null): unknown {
   try { return JSON.parse(raw); } catch { return raw; }
 }
 
-export async function installSupabaseMock(page: Page, opts: { role: RoleName }): Promise<MockHandle> {
+export async function installSupabaseMock(
+  page: Page,
+  opts: { role: RoleName; extraJobs?: Row[] },
+): Promise<MockHandle> {
   const host = supabaseHost();
   const range = dispatchRange();
   const db = seed(range, opts.role);
+  for (const extra of opts.extraJobs ?? []) {
+    db.jobs.push({ ...clone(db.jobs[0]), technician_id: null, technician_ids: [], description: '', ...clone(extra) });
+  }
   const writes: CapturedWrite[] = [];
   const leaks: string[] = [];
   const joined: JoinedChannel[] = [];
