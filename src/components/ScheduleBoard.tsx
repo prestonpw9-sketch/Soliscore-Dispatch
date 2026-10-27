@@ -692,8 +692,8 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4 pb-72">
-      {/* pb-72 lets the last phase scroll up under the sticky jump bar. */}
+    <div className="space-y-4 pb-[calc(100dvh-8rem)]">
+      {/* Bottom padding lets the last phase scroll up under the sticky jump bar. */}
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 justify-between">
         <div className="flex items-center gap-2">

@@ -461,6 +461,7 @@ const AppLayout: React.FC = () => {
             {/* New Job */}
             <button
               type="button"
+              aria-label="New Job"
               onClick={() => {
                 setModalDefaults(undefined);
                 setModalOpen(true);
