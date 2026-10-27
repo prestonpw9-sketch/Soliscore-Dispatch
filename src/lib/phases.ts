@@ -38,6 +38,91 @@ const PHASE_ALIASES: Record<string, PlumbingPhase> = {
   Finish: 'Trim',
 };
 
+/**
+ * Schedule section order. The board the crew scrolls is:
+ * Rough In → Top Out → Trim → Punch → Service Calls.
+ * Final sits between Trim and Punch (pipeline). T&M follows Service Calls.
+ * Anything that is not a real phase lands in Other.
+ */
+export const SCHEDULE_SECTIONS = [
+  'Rough-In',
+  'Top-Out',
+  'Trim',
+  'Final',
+  'Punch',
+  'Service Call',
+  'T&M',
+  'Other',
+] as const;
+
+export type ScheduleSection = (typeof SCHEDULE_SECTIONS)[number];
+
+export const SCHEDULE_SECTION_LABELS: Record<ScheduleSection, string> = {
+  'Rough-In': 'Rough In',
+  'Top-Out': 'Top Out',
+  'Trim': 'Trim',
+  'Final': 'Final',
+  'Punch': 'Punch',
+  'Service Call': 'Service Calls',
+  'T&M': 'T&M',
+  'Other': 'Other',
+};
+
+const SECTION_ALIAS: Record<string, ScheduleSection> = {};
+for (const phase of PLUMBING_PHASES) {
+  SECTION_ALIAS[phase.toLowerCase()] = phase;
+}
+for (const [alias, phase] of Object.entries(PHASE_ALIASES)) {
+  SECTION_ALIAS[alias.toLowerCase()] = phase;
+}
+SECTION_ALIAS['service calls'] = 'Service Call';
+SECTION_ALIAS['punch list'] = 'Punch';
+SECTION_ALIAS['punchlist'] = 'Punch';
+SECTION_ALIAS['time & materials'] = 'T&M';
+SECTION_ALIAS['time and materials'] = 'T&M';
+SECTION_ALIAS['t & m'] = 'T&M';
+
+/** Which schedule section a stored phase belongs in. Blank stays Rough-In. */
+export function scheduleSectionForPhase(raw: string | null | undefined): ScheduleSection {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return 'Rough-In';
+  return SECTION_ALIAS[trimmed.toLowerCase()] ?? 'Other';
+}
+
+/**
+ * Phase value to keep on a job. Known labels and aliases become the canonical
+ * phase. Unrecognized values stay as stored so they can render under Other.
+ */
+export function storedPhase(raw: string | null | undefined): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return 'Rough-In';
+  const section = scheduleSectionForPhase(trimmed);
+  return section === 'Other' ? trimmed : section;
+}
+
+export function scheduleSectionDomId(id: string): string {
+  const slug = id.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `schedule-section-${slug || 'phase'}`;
+}
+
+export function groupByScheduleSection<T>(
+  items: readonly T[],
+  phaseOf: (item: T) => string | null | undefined,
+): { id: ScheduleSection; label: string; items: T[] }[] {
+  const buckets = new Map<ScheduleSection, T[]>();
+  for (const id of SCHEDULE_SECTIONS) buckets.set(id, []);
+  for (const item of items) {
+    const section = scheduleSectionForPhase(phaseOf(item));
+    const bucket = buckets.get(section);
+    if (bucket) bucket.push(item);
+  }
+  return SCHEDULE_SECTIONS.flatMap(id => {
+    const bucket = buckets.get(id) ?? [];
+    if (bucket.length === 0) return [];
+    return [{ id, label: SCHEDULE_SECTION_LABELS[id], items: bucket }];
+  });
+}
+
 export function isPlumbingPhase(value: string): value is PlumbingPhase {
   return (PLUMBING_PHASES as readonly string[]).includes(value);
 }

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ChevronLeft, ChevronRight, CalendarRange, Loader2, Plus, Trash2, X,
+  ChevronDown, ChevronLeft, ChevronRight, CalendarRange, Loader2, Plus, Trash2, X,
   ClipboardCheck, ArrowRightLeft, Check, AlertTriangle, CheckCircle2, Pencil,
-  MapPin, User, CalendarDays,
+  MapPin, User, CalendarDays, Search,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
@@ -10,7 +10,18 @@ import type { Job, Technician, JobTask, TaskStatus, TechTimeOff } from '@/lib/da
 import { clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, isTechOffOnDay, addCalendarDays, dispatchToday, arizonaToday } from '@/lib/data';
 import { useDispatchToday } from '@/hooks/useDispatchToday';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
-import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext } from '@/lib/phases';
+import {
+  canChangePhase,
+  phaseBlockedMessage,
+  storedPhase,
+  phaseGateContext,
+  groupByScheduleSection,
+  scheduleSectionDomId,
+  scheduleSectionForPhase,
+  SCHEDULE_SECTION_LABELS,
+  PHASE_HEADER_COLORS,
+  type ScheduleSection,
+} from '@/lib/phases';
 import InspectionPassedToggle from './InspectionPassedToggle';
 
 // ── Date helpers (all 'YYYY-MM-DD' text, no time-of-day) ────────────────────
@@ -128,6 +139,87 @@ interface Props {
 // ── Component ────────────────────────────────────────────────────────────────
 
 const COL_W = 36; // px per day column
+const PHASE_COLLAPSE_KEY = 'schedule_phase_collapsed';
+
+function readCollapsed(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(PHASE_COLLAPSE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'boolean') out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function persistCollapsed(next: Record<string, boolean>) {
+  try { localStorage.setItem(PHASE_COLLAPSE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+}
+
+function jobHaystack(job: Job, tasks: JobTask[], technicianName: (id: string | null) => string): string {
+  const section = scheduleSectionForPhase(job.phase);
+  const crew = [
+    ...tasks.filter(t => t.jobId === job.id).flatMap(t => [technicianName(t.technicianId), t.task]),
+    ...(job.technicianIds ?? []).map(id => technicianName(id)),
+    job.technicianId ? technicianName(job.technicianId) : '',
+  ];
+  return [
+    job.customerName,
+    job.address,
+    job.description,
+    job.phase,
+    section,
+    SCHEDULE_SECTION_LABELS[section],
+    job.serviceType ?? '',
+    ...crew,
+  ].join(' ').toLowerCase();
+}
+
+function PhaseSectionHeader({
+  id,
+  label,
+  count,
+  collapsed,
+  onToggle,
+  panelId,
+}: {
+  id: ScheduleSection;
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  panelId: string;
+}) {
+  const colors = PHASE_HEADER_COLORS[id] ?? PHASE_HEADER_COLORS.Other;
+  const noun = count === 1 ? 'job' : 'jobs';
+  return (
+    <div id={scheduleSectionDomId(id)} className={`scroll-mt-56 border-b border-black/5 ${colors}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        aria-controls={panelId}
+        className={`w-full min-h-11 px-3 sm:px-4 py-2.5 flex items-center text-left ${colors}`}
+      >
+        <span className={`sticky left-0 z-[6] inline-flex items-center gap-2 pr-3 ${colors}`}>
+          <ChevronDown
+            aria-hidden="true"
+            className={`w-4 h-4 shrink-0 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+          />
+          <span className="font-black text-sm">{label}</span>
+          <span className="text-xs font-bold tabular-nums">
+            {count} {noun}
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
 
 const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], onRefresh, onInspectionChange }) => {
   const { canEdit } = useAuth();
@@ -154,6 +246,22 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     try { localStorage.setItem('schedule_myday_tech', id); } catch { /* ignore */ }
   }, []);
 
+  const [search, setSearch] = useState('');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(readCollapsed);
+  const [stickyTop, setStickyTop] = useState(56);
+  useEffect(() => {
+    const header = document.querySelector('header.ts-app-header');
+    if (!header) return;
+    const apply = () => setStickyTop(Math.ceil(header.getBoundingClientRect().height));
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(header);
+    window.addEventListener('resize', apply);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', apply);
+    };
+  }, []);
   const [tasks, setTasks] = useState<JobTask[]>([]);
   const [latestNotes, setLatestNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -364,7 +472,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
       .update({
         date: start,
         end_date: safeEnd,
-        phase: tmEnabled ? 'T&M' : normalizePhase(phase),
+        phase: tmEnabled ? 'T&M' : storedPhase(phase),
         inspection_passed: passed,
         tm_enabled: tmEnabled,
         tm_approved_by: tmEnabled ? (tm?.approvedBy?.trim() || job.tmApprovedBy || null) : null,
@@ -428,7 +536,7 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     if (blocked) { setError(blocked); return; }
     const tmEnabled = phase === 'T&M';
     const { error: err } = await supabase.from('jobs').update({
-      phase: normalizePhase(phase),
+      phase: storedPhase(phase),
       tm_enabled: tmEnabled,
     }).eq('id', job.id);
     if (err) { setError(err.message); return; }
@@ -456,21 +564,91 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
     setLogTask(null);
   }, [patchTask]);
 
-  // ── Group tasks by job ────────────────────────────────────────────────────
+  const toggleSection = useCallback((id: string) => {
+    setCollapsed(prev => {
+      const next = { ...prev, [id]: !prev[id] };
+      persistCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  const sectionClosed = useCallback((id: string) => {
+    if (search.trim()) return false;
+    return Boolean(collapsed[id]);
+  }, [collapsed, search]);
+
+  const jumpToSection = useCallback((id: ScheduleSection) => {
+    setCollapsed(prev => {
+      if (!prev[id]) return prev;
+      const next = { ...prev, [id]: false };
+      persistCollapsed(next);
+      return next;
+    });
+    window.setTimeout(() => {
+      const el = document.getElementById(scheduleSectionDomId(id));
+      if (!el) return;
+      const bar = document.getElementById('schedule-phase-jump');
+      const offset = stickyTop + (bar?.getBoundingClientRect().height ?? 0) + 8;
+      const top = window.scrollY + el.getBoundingClientRect().top - offset;
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }, 60);
+  }, [stickyTop]);
+
+  // ── Group tasks by job, then by plumbing phase ───────────────────────────
   const groups = useMemo(() => {
+    const q = search.trim().toLowerCase();
     // Only show jobs whose range overlaps the visible window.
     const visible = jobs.filter(j => {
       const s = j.date;
       const e = j.endDate ?? j.date;
-      return e >= rangeStart && s <= rangeEnd;
+      if (!(e >= rangeStart && s <= rangeEnd)) return false;
+      if (!q) return true;
+      return jobHaystack(j, tasks, technicianName).includes(q);
     });
     return visible
       .map(job => ({
         job,
         rows: tasks.filter(t => t.jobId === job.id),
       }))
-      .sort((a, b) => a.job.date.localeCompare(b.job.date));
-  }, [jobs, tasks, rangeStart, rangeEnd]);
+      .sort((a, b) => a.job.date.localeCompare(b.job.date) || a.job.customerName.localeCompare(b.job.customerName));
+  }, [jobs, tasks, rangeStart, rangeEnd, search, technicianName]);
+
+  const boardSections = useMemo(
+    () => groupByScheduleSection(groups, group => group.job.phase),
+    [groups],
+  );
+
+  const myDaySections = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const todayTasks = tasks.filter(t =>
+      !!viewAsTech &&
+      t.technicianId === viewAsTech &&
+      t.startDate <= selectedDay &&
+      (t.endDate || t.startDate) >= selectedDay &&
+      jobs.some(j => j.id === t.jobId),
+    );
+    const matched = todayTasks
+      .filter(t => {
+        const job = jobs.find(j => j.id === t.jobId);
+        if (!job) return false;
+        if (!q) return true;
+        return jobHaystack(job, tasks, technicianName).includes(q);
+      })
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    return groupByScheduleSection(matched, t => jobs.find(j => j.id === t.jobId)?.phase);
+  }, [tasks, jobs, viewAsTech, selectedDay, search, technicianName]);
+
+  const jumpSections = mode === 'myday'
+    ? myDaySections.map(section => ({
+        id: section.id,
+        label: section.label,
+        count: new Set(section.items.map(task => task.jobId)).size,
+      }))
+    : boardSections.map(section => ({
+        id: section.id,
+        label: section.label,
+        count: section.items.length,
+      }));
 
   // Position helper for a bar within the day grid.
   const barStyle = (start: string, end: string): React.CSSProperties | null => {
@@ -514,7 +692,8 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-72">
+      {/* pb-72 lets the last phase scroll up under the sticky jump bar. */}
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 justify-between">
         <div className="flex items-center gap-2">
@@ -554,6 +733,49 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
+      </div>
+
+      <div
+        id="schedule-phase-jump"
+        className="sticky z-30 -mx-1 px-1 py-2 space-y-2 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-sm border-b border-slate-200/80 dark:border-slate-800"
+        style={{ top: stickyTop }}
+      >
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
+          <input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search jobs, address, or crew"
+            aria-label="Search schedule"
+            className="w-full min-h-11 pl-9 pr-10 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 outline-none"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        {jumpSections.length > 0 && (
+          <nav aria-label="Jump to phase" className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
+            {jumpSections.map(section => (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => jumpToSection(section.id)}
+                  className={`shrink-0 min-h-11 px-3 rounded-full border text-xs font-bold inline-flex items-center gap-1.5 ${PHASE_HEADER_COLORS[section.id] ?? PHASE_HEADER_COLORS.Other}`}
+                >
+                  {section.label}
+                  <span className="tabular-nums">{section.count}</span>
+                </button>
+            ))}
+          </nav>
+        )}
       </div>
 
       {error && (
@@ -600,6 +822,10 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
           canEdit={canEdit}
           onLog={setLogTask}
           loading={loading}
+          query={search}
+          daySections={myDaySections}
+          collapsed={collapsed}
+          onToggleSection={toggleSection}
         />
       ) : (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
@@ -641,10 +867,27 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
             ) : groups.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-3">
                 <CalendarRange className="w-12 h-12 opacity-20" />
-                <p className="text-sm font-medium">No jobs scheduled in this range.</p>
+                <p className="text-sm font-medium">
+                  {search.trim() ? `No jobs match “${search.trim()}”.` : 'No jobs scheduled in this range.'}
+                </p>
               </div>
             ) : (
-              groups.map(({ job, rows }) => {
+              boardSections.map(section => {
+                const closed = sectionClosed(section.id);
+                const panelId = `${scheduleSectionDomId(section.id)}-panel`;
+                return (
+                  <div key={section.id}>
+                    <PhaseSectionHeader
+                      id={section.id}
+                      label={section.label}
+                      count={section.items.length}
+                      collapsed={closed}
+                      onToggle={() => toggleSection(section.id)}
+                      panelId={panelId}
+                    />
+                    {!closed && (
+                      <div id={panelId}>
+                        {section.items.map(({ job, rows }) => {
                 const jobBehind = rows.some(r => computeHealth(r).behind);
                 const jobStart = job.date;
                 const jobEnd = job.endDate ?? job.date;
@@ -886,6 +1129,11 @@ const ScheduleBoard: React.FC<Props> = ({ jobs, technicians, techTimeOff = [], o
                     )}
                   </div>
                 );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
               })
             )}
           </div>
@@ -943,9 +1191,14 @@ const MyDayView: React.FC<{
   canEdit: boolean;
   onLog: (t: JobTask) => void;
   loading: boolean;
+  query: string;
+  daySections: { id: ScheduleSection; label: string; items: JobTask[] }[];
+  collapsed: Record<string, boolean>;
+  onToggleSection: (id: string) => void;
 }> = ({
   jobs, tasks, technicians, selectedDay, viewAsTech, onChangeTech,
   techColor, technicianName, latestNotes, canEdit, onLog, loading,
+  query, daySections, collapsed, onToggleSection,
 }) => {
   const jobById = useMemo(() => new Map(jobs.map(j => [j.id, j])), [jobs]);
 
@@ -979,12 +1232,15 @@ const MyDayView: React.FC<{
     );
   }
 
+  const q = query.trim().toLowerCase();
+  const matchesQuery = (task: JobTask) => {
+    if (!q) return true;
+    const job = jobById.get(task.jobId);
+    return job ? jobHaystack(job, tasks, technicianName).includes(q) : false;
+  };
   const mine = tasks.filter(t => t.technicianId === viewAsTech);
-  const activeToday = mine
-    .filter(t => t.startDate <= selectedDay && (t.endDate ?? t.startDate) >= selectedDay)
-    .sort((a, b) => a.startDate.localeCompare(b.startDate));
   const upcoming = mine
-    .filter(t => t.startDate > selectedDay)
+    .filter(t => t.startDate > selectedDay && matchesQuery(t))
     .sort((a, b) => a.startDate.localeCompare(b.startDate))
     .slice(0, 4);
 
@@ -1093,14 +1349,36 @@ const MyDayView: React.FC<{
     <div className="space-y-5 max-w-2xl">
       <div className="flex items-center justify-between gap-2">{picker}</div>
 
-      <div>
-        <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-2">On this day</h3>
-        {activeToday.length === 0 ? (
+      <div className="space-y-3">
+        {daySections.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center text-sm text-slate-400">
-            Nothing scheduled for {technicianName(viewAsTech)} on this day.
+            {q
+              ? `No jobs match “${query.trim()}”.`
+              : `Nothing scheduled for ${technicianName(viewAsTech)} on this day.`}
           </div>
         ) : (
-          <div className="space-y-3">{activeToday.map(t => renderCard(t, false))}</div>
+          daySections.map(section => {
+            const closed = q ? false : Boolean(collapsed[section.id]);
+            const panelId = `${scheduleSectionDomId(section.id)}-panel`;
+            const count = new Set(section.items.map(task => task.jobId)).size;
+            return (
+              <section key={section.id} className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                <PhaseSectionHeader
+                  id={section.id}
+                  label={section.label}
+                  count={count}
+                  collapsed={closed}
+                  onToggle={() => onToggleSection(section.id)}
+                  panelId={panelId}
+                />
+                {!closed && (
+                  <div id={panelId} className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950">
+                    {section.items.map(task => renderCard(task, false))}
+                  </div>
+                )}
+              </section>
+            );
+          })
         )}
       </div>
 

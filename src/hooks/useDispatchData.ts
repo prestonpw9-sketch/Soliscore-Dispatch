@@ -7,7 +7,7 @@ import { syncJobTasksForCrew } from '@/lib/jobTasksSync';
 import { upsertTodayScheduleHistory } from '@/lib/scheduleHistory';
 import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
 import { formatTimeOffSpan, fullyOffLeave, toLocalYMD } from '@/lib/data';
-import { normalizePhase } from '@/lib/phases';
+import { storedPhase } from '@/lib/phases';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -98,7 +98,7 @@ export const useDispatchData = () => {
         customerName:      j.title ?? j.customerName ?? 'New Field Job',
         address:           j.location ?? j.address ?? 'Tucson, AZ',
         description:       j.description ?? '',
-        phase:             normalizePhase(j.phase),
+        phase:             storedPhase(j.phase),
         inspectionPassed:  Boolean(j.inspection_passed),
         status:            normalizeJobStatus(j.status),
         startTime:         j.startTime ?? '08:00',
@@ -683,7 +683,7 @@ export const useDispatchData = () => {
   }, [refresh, techTimeOff, technicians]);
 
   const updateJobPhase = useCallback(async (jobId: string, newPhase: string) => {
-    const phase = normalizePhase(newPhase);
+    const phase = storedPhase(newPhase);
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, phase } : j));
     const { error: sbError } = await supabase
       .from('jobs').update({ phase }).eq('id', jobId);

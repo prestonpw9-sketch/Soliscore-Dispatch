@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Job } from '@/lib/data';
 import { PLUMBING_PHASES, type PlumbingPhase } from '@/components/PhaseDropdown';
-import { canChangePhase, normalizePhase, phaseGateContext } from '@/lib/phases';
+import { canChangePhase, isPlumbingPhase, phaseGateContext } from '@/lib/phases';
 import { avatarGradientClass } from '@/lib/avatarStyle';
 import InspectionPassedToggle from './InspectionPassedToggle';
 
@@ -49,18 +49,18 @@ const JobCard: React.FC<JobCardProps> = ({
   onPhaseChange,
   onInspectionChange,
 }) => {
-  const [phase, setPhase] = useState<PlumbingPhase>(() => normalizePhase(job?.phase));
+  const [phase, setPhase] = useState(() => job?.phase || 'Rough-In');
 
   // Sync if upstream data changes
   useEffect(() => {
-    setPhase(normalizePhase(job?.phase));
+    setPhase(job?.phase || 'Rough-In');
   }, [job?.phase]);
 
   const handlePhaseChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newPhase = normalizePhase(e.target.value);
+    const newPhase = e.target.value;
     const gate = canChangePhase(phase, newPhase, phaseGateContext(job));
     if (gate.ok) setPhase(newPhase);
-    if (onPhaseChange && job?.id) {
+    if (onPhaseChange && job?.id && isPlumbingPhase(newPhase)) {
       onPhaseChange(job.id, newPhase);
     }
   };
@@ -69,7 +69,8 @@ const JobCard: React.FC<JobCardProps> = ({
   const address       = job?.address      || '—';
   const description   = job?.description   || job?.serviceType || 'No description added.';
   const initial       = technicianName.charAt(0).toUpperCase();
-  const accent        = PHASE_ACCENT[phase] ?? DEFAULT_ACCENT;
+  const accent = isPlumbingPhase(phase) ? PHASE_ACCENT[phase] : DEFAULT_ACCENT;
+  const phaseClass = isPlumbingPhase(phase) ? PHASE_COLORS[phase] : DEFAULT_PHASE_COLORS;
 
   return (
     <div
@@ -121,13 +122,16 @@ const JobCard: React.FC<JobCardProps> = ({
           onChange={handlePhaseChange}
           onClick={e => e.stopPropagation()}
           aria-label="Job phase"
-          className={`font-black text-[11px] rounded-full px-2.5 py-1 border outline-none cursor-pointer transition-colors ${PHASE_COLORS[phase] ?? DEFAULT_PHASE_COLORS}`}
+          className={`font-black text-[11px] rounded-full px-2.5 py-1 border outline-none cursor-pointer transition-colors ${phaseClass}`}
         >
           {PLUMBING_PHASES.map(p => (
             <option key={p} value={p} className="bg-white text-slate-900 dark:bg-slate-800 dark:text-white font-semibold">
               {p}
             </option>
           ))}
+          {!isPlumbingPhase(phase) && (
+            <option value={phase}>{phase}</option>
+          )}
         </select>
       </div>
 
