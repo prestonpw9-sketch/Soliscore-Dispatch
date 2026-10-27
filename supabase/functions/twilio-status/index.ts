@@ -1,4 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { requireDispatchUser } from '../_shared/callerAuthLive.ts';
 import { probeTwilioAuth } from '../_shared/twilioAuth.ts';
 
 const CORS_HEADERS = {
@@ -21,10 +22,11 @@ serve(async (req: Request) => {
     return jsonResponse({ error: 'Method not allowed.' }, 405);
   }
 
-  const auth = req.headers.get('Authorization');
-  if (!auth?.startsWith('Bearer ')) {
-    return jsonResponse({ error: 'Missing authorization header.' }, 401);
-  }
+  const caller = await requireDispatchUser(req, {
+    requireWriter: true,
+    writerError: 'Read-only role cannot inspect Twilio credentials.',
+  });
+  if (!caller.ok) return jsonResponse({ error: caller.error }, caller.status);
 
   const probed = await probeTwilioAuth();
   return jsonResponse(probed, probed.ok ? 200 : 502);

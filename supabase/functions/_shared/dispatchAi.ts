@@ -4,6 +4,7 @@
  */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireDispatchUser } from './callerAuthLive.ts';
 import { notifyCrew } from './twilio.ts';
 
 export const CORS_HEADERS = {
@@ -229,38 +230,11 @@ function canWrite(role: UserRole | null): boolean {
   return role === 'owner' || role === 'crew';
 }
 
-export function createUserClient(req: Request): SupabaseClient | null {
-  const authHeader = req.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return null;
-
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  if (!supabaseUrl || !supabaseAnonKey) return null;
-
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
-}
-
 export function createServiceClient(): SupabaseClient | null {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceKey) return null;
   return createClient(supabaseUrl, serviceKey);
-}
-
-export async function resolveUserRole(
-  userClient: SupabaseClient,
-  userId: string,
-): Promise<UserRole | null> {
-  const { data } = await userClient
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', userId)
-    .maybeSingle();
-  const role = data?.role;
-  if (role === 'owner' || role === 'office' || role === 'crew') return role;
-  return null;
 }
 
 async function loadMemoryFile(admin: SupabaseClient): Promise<MemoryFile> {
@@ -1675,21 +1649,13 @@ export async function handleDispatchAiChat(
   req: Request,
   body: Record<string, unknown>,
 ): Promise<Response> {
-  const userClient = createUserClient(req);
-  if (!userClient) return jsonResponse({ error: 'Missing authorization header.' }, 401);
+  const caller = await requireDispatchUser(req, { requireWriter: false });
+  if (!caller.ok) return jsonResponse({ error: caller.error }, caller.status);
+  const role = caller.role;
+  const userId = caller.userId;
 
   const admin = createServiceClient();
   if (!admin) return jsonResponse({ error: 'Server misconfiguration (service role).' }, 500);
-
-  const { data: { user }, error: authError } = await userClient.auth.getUser();
-  if (authError || !user) {
-    return jsonResponse({ error: 'Unauthorized — sign out and sign back in.' }, 401);
-  }
-
-  const role = await resolveUserRole(userClient, user.id);
-  if (!role) {
-    return jsonResponse({ error: 'No user role assigned.' }, 403);
-  }
 
   const apiKey = Deno.env.get('GEMINI_API_KEY') ?? Deno.env.get('VITE_GEMINI_API_KEY');
   if (!apiKey) {
@@ -1707,7 +1673,7 @@ export async function handleDispatchAiChat(
 
   let snap = await loadDispatchSnapshot(admin);
   try {
-    await captureTodayScheduleHistory(admin, snap, 'ai', user.id);
+    await captureTodayScheduleHistory(admin, snap, 'ai', userId);
     snap = { ...snap, historyIndex: await loadHistoryIndex(admin) };
   } catch (err) {
     console.error('schedule history capture failed:', err);
@@ -1795,13 +1761,13 @@ export async function handleDispatchAiChat(
       const fc = part.functionCall as { name?: string; args?: Record<string, unknown> };
       const name = fc.name ?? '';
       const args = (fc.args ?? {}) as Record<string, unknown>;
-      const exec = await executeTool(name, args, admin, snap, role, user.id);
+      const exec = await executeTool(name, args, admin, snap, role, userId);
       if (exec.mutated) {
         didMutate = true;
         // Refresh snapshot after mutations so later tools see fresh data
         snap = await loadDispatchSnapshot(admin);
         try {
-          await captureTodayScheduleHistory(admin, snap, 'ai', user.id);
+          await captureTodayScheduleHistory(admin, snap, 'ai', userId);
           snap = { ...snap, historyIndex: await loadHistoryIndex(admin) };
         } catch (err) {
           console.error('schedule history capture failed:', err);

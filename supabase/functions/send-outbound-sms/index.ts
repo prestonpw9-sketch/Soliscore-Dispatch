@@ -1,12 +1,11 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { requireDispatchUser } from '../_shared/callerAuthLive.ts';
 import {
   CORS_HEADERS,
   createServiceClient,
-  createUserClient,
   handleDispatchAiChat,
   jsonResponse,
   loadAllMemories,
-  resolveUserRole,
   saveTechnicianSkillsDirect,
 } from '../_shared/dispatchAi.ts';
 import { sendTwilioSms } from '../_shared/twilio.ts';
@@ -14,6 +13,12 @@ import { probeTwilioAuth } from '../_shared/twilioAuth.ts';
 
 function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
+}
+
+function writerErrorFor(action: unknown): string {
+  if (action === 'twilio-status') return 'Read-only role cannot inspect Twilio credentials.';
+  if (action === 'save-tech-skills') return 'Read-only role cannot edit crew abilities.';
+  return 'Read-only role cannot send messages.';
 }
 
 function normalizeSkills(raw: unknown): string[] {
@@ -60,11 +65,14 @@ serve(async (req: Request) => {
       return await handleDispatchAiChat(req, body);
     }
 
-    if (body.action === 'list-ai-memories') {
-      const userClient = createUserClient(req);
-      if (!userClient) return jsonResponse({ error: 'Missing authorization header.' }, 401);
-      const { data: { user }, error: authError } = await userClient.auth.getUser();
-      if (authError || !user) return jsonResponse({ error: 'Unauthorized.' }, 401);
+    const readingMemories = body.action === 'list-ai-memories';
+    const caller = await requireDispatchUser(req, {
+      requireWriter: !readingMemories,
+      writerError: writerErrorFor(body.action),
+    });
+    if (!caller.ok) return jsonResponse({ error: caller.error }, caller.status);
+
+    if (readingMemories) {
       const admin = createServiceClient();
       if (!admin) return jsonResponse({ error: 'Server misconfiguration.' }, 500);
       const memories = await loadAllMemories(admin);
@@ -72,14 +80,6 @@ serve(async (req: Request) => {
     }
 
     if (body.action === 'twilio-status') {
-      const userClient = createUserClient(req);
-      if (!userClient) return jsonResponse({ error: 'Missing authorization header.' }, 401);
-      const { data: { user }, error: authError } = await userClient.auth.getUser();
-      if (authError || !user) return jsonResponse({ error: 'Unauthorized.' }, 401);
-      const role = await resolveUserRole(userClient, user.id);
-      if (role !== 'owner' && role !== 'crew') {
-        return jsonResponse({ error: 'Read-only role cannot inspect Twilio credentials.' }, 403);
-      }
       const probed = await probeTwilioAuth();
       return jsonResponse(probed, probed.ok ? 200 : 502);
     }
@@ -89,22 +89,13 @@ serve(async (req: Request) => {
       const skills = normalizeSkills(body.skills);
       if (!technicianId) return jsonResponse({ error: 'Missing technician_id.' }, 400);
 
-      const userClient = createUserClient(req);
-      if (!userClient) return jsonResponse({ error: 'Missing authorization header.' }, 401);
-      const { data: { user }, error: authError } = await userClient.auth.getUser();
-      if (authError || !user) return jsonResponse({ error: 'Unauthorized.' }, 401);
-      const role = await resolveUserRole(userClient, user.id);
-      if (role !== 'owner' && role !== 'crew') {
-        return jsonResponse({ error: 'Read-only role cannot edit crew abilities.' }, 403);
-      }
-
       const admin = createServiceClient();
       if (!admin) return jsonResponse({ error: 'Server misconfiguration.' }, 500);
 
       const saved = await saveTechnicianSkillsDirect(admin, {
         technicianId,
         skills,
-        userId: user.id,
+        userId: caller.userId,
       });
       if (!saved.ok) return jsonResponse({ error: saved.error }, 400);
       return jsonResponse({

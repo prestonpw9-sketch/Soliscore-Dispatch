@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { formatEmergencyPageMessage, loadCrewDirectory, notifyCrew } from "../_shared/twilio.ts";
+import { twilioWebhookForbidden } from "../_shared/twilioWebhook.ts";
 import { phonesMatch } from "../_shared/phone.ts";
 import { shouldSkipSuperintendentAi } from "../_shared/crewInbound.ts";
 import {
@@ -245,8 +246,18 @@ async function recordScheduleAlert(
 
 serve(async (req) => {
   try {
+    if (req.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
     const bodyText = await req.text();
     const params = new URLSearchParams(bodyText);
+
+    // Superintendents text the business number with no login. Twilio's signature
+    // is the credential. Reject before any database write, OpenAI call, or page.
+    const forbidden = await twilioWebhookForbidden(req, "super-processor", params);
+    if (forbidden) return forbidden;
+
     const incomingMessage = params.get("Body") || "";
     const phoneNumber = params.get("From") || "Unknown";
 

@@ -231,6 +231,20 @@ export async function resolveTwilioCreds(): Promise<
   return { ...merged, source: 'vault' };
 }
 
+/**
+ * Account Auth Token for X-Twilio-Signature.
+ * REST calls may use an API key; Twilio still signs webhooks with the Auth Token.
+ * Env first, then the get_twilio_edge_secrets Vault fallback when the env value is missing or truncated.
+ */
+export async function resolveTwilioAuthToken(): Promise<string> {
+  const envToken = cleanTwilioSecret(Deno.env.get('TWILIO_AUTH_TOKEN'));
+  if (envToken.length >= 20) return envToken;
+  const vault = await readTwilioCredsFromVault();
+  const vaultToken = cleanTwilioSecret(vault.authToken);
+  if (vaultToken.length >= 20) return vaultToken;
+  return '';
+}
+
 function twilioBasicAuth(username: string, password: string): string {
   return `Basic ${btoa(`${username}:${password}`)}`;
 }

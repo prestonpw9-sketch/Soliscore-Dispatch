@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test:edge-security": "node --experimental-strip-types scripts/edge-security-checks.ts",
     "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio"
   },
   "dependencies": {
