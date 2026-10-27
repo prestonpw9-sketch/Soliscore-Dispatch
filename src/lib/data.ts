@@ -43,6 +43,10 @@ export interface Job {
   tmApprovedBy?: string;
   tmWorkDescription?: string;
   tmHours?: number | null;
+  /** ISO timestamp set when the job (phase row) is marked completed. */
+  completedAt?: string | null;
+  /** Warranty coverage end date (YYYY-MM-DD). Defaults to completion + 1 year. */
+  warrantyUntil?: string | null;
 }
 
 // Full-day service categories selected on a job (jobs.service_type).

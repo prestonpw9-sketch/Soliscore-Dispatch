@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check } from 'lucide-react';
+import { X, Plus, Trash2, Briefcase, Loader2, Pencil, Check, CheckCircle2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { PLUMBING_PHASES } from '@/components/PhaseDropdown';
 import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext } from '@/lib/phases';
 import InspectionPassedToggle from './InspectionPassedToggle';
 import { dispatchToday } from '@/lib/data';
+import { completeJobPatch } from '@/lib/warranty';
 
 interface Job {
   id: number;
@@ -36,7 +37,7 @@ interface Props {
 }
 
 const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) => {
-  const { canEdit } = useAuth();
+  const { canEdit, isOwner } = useAuth();
   const [jobs, setJobs]               = useState<Job[]>([]);
   const [loading, setLoading]         = useState(false);
   const [saving, setSaving]           = useState(false);
@@ -230,7 +231,28 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
     setSaving(false);
   };
 
+  // Complete applies to this one job (phase) row. It drops off the active list and
+  // shows in the Schedule's Completed / Under Warranty section.
+  const handleComplete = async (id: number) => {
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase
+      .from('jobs')
+      .update(completeJobPatch())
+      .eq('id', id);
+    if (updateError) { setError(updateError.message); }
+    else {
+      setJobs(prev => prev.filter(j => j.id !== id));
+      if (editingId === id) cancelEditing();
+      if (confirmDeleteId === id) setConfirmDeleteId(null);
+      await onJobsChanged?.();
+    }
+    setSaving(false);
+  };
+
+  // Permanent delete is owner-only (RLS enforces the same rule).
   const handleDelete = async (id: number) => {
+    if (!isOwner) return;
     setSaving(true);
     setError(null);
     const { error: deleteError } = await supabase.from('jobs').delete().eq('id', id);
@@ -396,17 +418,30 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
                     </div>
                   )}
                 </div>
-                <div className="shrink-0 self-start md:self-center">
-                  {canEdit && (isDeleting ? (
+                <div className="shrink-0 self-start md:self-center flex items-center gap-2">
+                  {canEdit && !isDeleting && (
+                    <button
+                      type="button"
+                      onClick={() => void handleComplete(job.id)}
+                      disabled={saving}
+                      aria-label={`Mark ${displayName} complete`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors"
+                    >
+                      <CheckCircle2 className="w-4 h-4" /> Complete
+                    </button>
+                  )}
+                  {isOwner && (isDeleting ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-red-600 font-semibold whitespace-nowrap">Remove job?</span>
+                      <span className="text-xs text-red-600 font-semibold whitespace-nowrap">Permanently delete?</span>
                       <button type="button" onClick={() => handleDelete(job.id)} disabled={saving}
-                        className="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors">Yes</button>
+                        className="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors">Delete</button>
                       <button type="button" onClick={() => setConfirmDeleteId(null)} disabled={saving}
                         className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 text-slate-700 text-xs font-bold rounded-lg transition-colors">Cancel</button>
                     </div>
                   ) : (
                     <button type="button" onClick={() => setConfirmDeleteId(job.id)}
+                      aria-label={`Delete ${displayName}`}
+                      title="Permanently delete (owner only)"
                       className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors">
                       <Trash2 className="w-5 h-5" />
                     </button>

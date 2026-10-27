@@ -82,6 +82,9 @@ const AppLayout: React.FC = () => {
     createJob,
     updateJob,
     toggleJobStatus,
+    completeJob,
+    restoreJob,
+    setWarrantyUntil,
     rescheduleJob,
     assignTechnician,
     assignTechnicians,
@@ -267,6 +270,14 @@ const AppLayout: React.FC = () => {
 
   const handleToggleTaskStatus = (jobId: string) => {
     void toggleJobStatus(jobId);
+  };
+
+  const handleCompleteJob = (jobId: string) => {
+    void (async () => {
+      const result = await completeJob(jobId);
+      if (result.ok === false) showToast(result.message, 'error');
+      else showToast('Job completed — now under warranty');
+    })();
   };
 
   const handleAssignTechnician = (jobId: string, technicianId: string | null) => {
@@ -546,6 +557,7 @@ const AppLayout: React.FC = () => {
                   onOpenEstimator={() => setEstimatorOpen(true)}
                   onPhaseChange={handlePhaseChange}
                   onInspectionChange={canEdit ? setInspectionPassed : undefined}
+                  onCompleteJob={canEdit ? handleCompleteJob : undefined}
                   onHire={hireTechnician}
                   onFire={fireTechnician}
                   onJobClick={openJobForEdit}
@@ -562,6 +574,9 @@ const AppLayout: React.FC = () => {
                   techTimeOff={techTimeOff}
                   onRefresh={refresh}
                   onInspectionChange={canEdit ? setInspectionPassed : undefined}
+                  customers={customers}
+                  onRestoreJob={canEdit ? restoreJob : undefined}
+                  onWarrantyChange={canEdit ? setWarrantyUntil : undefined}
                 />
               )}
 

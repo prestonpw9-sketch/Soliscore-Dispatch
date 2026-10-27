@@ -8,6 +8,7 @@ import { upsertTodayScheduleHistory } from '@/lib/scheduleHistory';
 import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeOff, DispatchAnnouncement } from '@/lib/data';
 import { formatTimeOffSpan, fullyOffLeave, toLocalYMD } from '@/lib/data';
 import { storedPhase } from '@/lib/phases';
+import { completeJobPatch, restoreJobPatch } from '@/lib/warranty';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -116,6 +117,8 @@ export const useDispatchData = () => {
         tmApprovedBy:      j.tm_approved_by != null ? String(j.tm_approved_by) : '',
         tmWorkDescription: j.tm_work_description != null ? String(j.tm_work_description) : '',
         tmHours:           j.tm_hours != null && j.tm_hours !== '' ? Number(j.tm_hours) : null,
+        completedAt:       j.completed_at ? String(j.completed_at) : null,
+        warrantyUntil:     j.warranty_until ? String(j.warranty_until).slice(0, 10) : null,
       }));
       setJobs(liveJobs);
       jobsFetchOkRef.current = true;
@@ -607,19 +610,58 @@ export const useDispatchData = () => {
     }
   }, [refresh]); // FIX: `jobs` removed from deps — read via ref instead
 
+  // Complete / restore always write completed_at + warranty_until alongside the
+  // status so the Completed / Under Warranty section stays consistent.
+  const writeJobCompletion = useCallback(async (
+    id: string,
+    patch: ReturnType<typeof completeJobPatch> | ReturnType<typeof restoreJobPatch>,
+  ): Promise<MutationResult> => {
+    setJobs(prev => prev.map(j => j.id === id ? {
+      ...j,
+      status: patch.status,
+      completedAt: patch.completed_at,
+      warrantyUntil: patch.warranty_until,
+    } : j));
+    const { error: sbError } = await supabase.from('jobs').update(patch).eq('id', id);
+    if (sbError) {
+      console.error('Failed to update job completion:', sbError);
+      await refresh();
+      return { ok: false, message: sbError.message || 'Could not update job.' };
+    }
+    return { ok: true };
+  }, [refresh]);
+
+  const completeJob = useCallback(
+    (id: string) => writeJobCompletion(id, completeJobPatch()),
+    [writeJobCompletion],
+  );
+
+  const restoreJob = useCallback(
+    (id: string) => writeJobCompletion(id, restoreJobPatch()),
+    [writeJobCompletion],
+  );
+
   const toggleJobStatus = useCallback(async (id: string) => {
     // FIX: read from ref — same stale closure fix as rescheduleJob
     const job = jobsRef.current.find(j => j.id === id);
     if (!job) return;
-    const newStatus = job.status === 'completed' ? 'scheduled' : 'completed';
-    setJobs(prev => prev.map(j => j.id === id ? { ...j, status: newStatus } : j));
-    const { error: sbError } = await supabase
-      .from('jobs').update({ status: newStatus }).eq('id', id);
-    if (sbError) {
-      console.error('Failed to toggle job status:', sbError);
-      await refresh();
+    await (job.status === 'completed' ? restoreJob(id) : completeJob(id));
+  }, [completeJob, restoreJob]); // FIX: `jobs` removed from deps — read via ref instead
+
+  const setWarrantyUntil = useCallback(async (id: string, warrantyUntil: string): Promise<MutationResult> => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(warrantyUntil)) {
+      return { ok: false, message: 'Warranty date must be a valid date.' };
     }
-  }, [refresh]); // FIX: `jobs` removed from deps — read via ref instead
+    setJobs(prev => prev.map(j => j.id === id ? { ...j, warrantyUntil } : j));
+    const { error: sbError } = await supabase
+      .from('jobs').update({ warranty_until: warrantyUntil }).eq('id', id);
+    if (sbError) {
+      console.error('Failed to update warranty date:', sbError);
+      await refresh();
+      return { ok: false, message: sbError.message || 'Could not save warranty date.' };
+    }
+    return { ok: true };
+  }, [refresh]);
 
   const assignTechnician = useCallback(async (
     jobId: string, technicianId: string | null,
@@ -907,6 +949,9 @@ export const useDispatchData = () => {
     createJob,
     updateJob,
     toggleJobStatus,
+    completeJob,
+    restoreJob,
+    setWarrantyUntil,
     rescheduleJob,
     assignTechnician,
     assignTechnicians,

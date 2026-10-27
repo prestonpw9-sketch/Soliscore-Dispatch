@@ -38,6 +38,8 @@ interface JobCardProps {
   onClick?: () => void;
   onPhaseChange?: (jobId: string, newPhase: PlumbingPhase) => void;
   onInspectionChange?: (jobId: string, passed: boolean) => void;
+  /** Owner / crew only: mark this job (phase row) completed. */
+  onComplete?: (jobId: string) => void;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ const JobCard: React.FC<JobCardProps> = ({
   onClick,
   onPhaseChange,
   onInspectionChange,
+  onComplete,
 }) => {
   const [phase, setPhase] = useState(() => job?.phase || 'Rough-In');
 
@@ -141,6 +144,21 @@ const JobCard: React.FC<JobCardProps> = ({
           checked={Boolean(job.inspectionPassed)}
           onChange={passed => onInspectionChange(job.id, passed)}
         />
+      )}
+
+      {onComplete && job?.id && job.status !== 'completed' && (
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); onComplete(job.id); }}
+          onKeyDown={e => e.stopPropagation()}
+          aria-label={`Mark ${customerName} complete`}
+          className="self-start inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+          </svg>
+          Complete
+        </button>
       )}
     </div>
   );
