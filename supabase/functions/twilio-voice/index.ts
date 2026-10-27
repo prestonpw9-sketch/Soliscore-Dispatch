@@ -1,7 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { escapeXml } from "../_shared/phone.ts";
+import { buildPublicWebhookUrl } from "../_shared/twilioSignature.ts";
 import { loadCrewDirectory, pickEmergencyRecipients } from "../_shared/twilio.ts";
+import { twilioWebhookForbidden } from "../_shared/twilioWebhook.ts";
 
 function xml(body: string) {
   return new Response(`<?xml version="1.0" encoding="UTF-8"?>${body}`, {
@@ -11,17 +13,31 @@ function xml(body: string) {
 }
 
 function publicFnUrl(req: Request, extraQuery = ""): string {
-  const incoming = new URL(req.url);
-  const base = Deno.env.get("SUPABASE_URL") ?? `${incoming.origin}`;
-  const qs = extraQuery.startsWith("?") || extraQuery === "" ? extraQuery : `?${extraQuery}`;
-  return `${base}/functions/v1/twilio-voice${qs}`;
+  const base = buildPublicWebhookUrl({
+    requestUrl: req.url,
+    functionName: "twilio-voice",
+    getHeader: (name) => req.headers.get(name),
+    override: Deno.env.get("TWILIO_WEBHOOK_URL"),
+  });
+  const url = new URL(base);
+  url.search = extraQuery.startsWith("?") ? extraQuery.slice(1) : extraQuery;
+  return url.toString();
 }
 
 serve(async (req) => {
   try {
+    if (req.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
     const url = new URL(req.url);
     const bodyText = await req.text();
     const params = new URLSearchParams(bodyText);
+
+    // Every Twilio hit is signed, including Gather, press-1 / press-2, and recording callbacks.
+    const forbidden = await twilioWebhookForbidden(req, "twilio-voice", params);
+    if (forbidden) return forbidden;
+
     for (const [key, value] of params) {
       if (!url.searchParams.has(key)) url.searchParams.set(key, value);
     }

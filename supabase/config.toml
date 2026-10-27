@@ -27,11 +27,17 @@ verify_jwt = false
 import_map = "./functions/gemini-chat/deno.json"
 entrypoint = "./functions/gemini-chat/index.ts"
 
+# Inbound SMS from the business number. verify_jwt stays off so a superintendent
+# can text without a Supabase login. Requests are authenticated with
+# X-Twilio-Signature (see supabase/functions/_shared/twilioSignature.ts).
+# Optional secret TWILIO_WEBHOOK_URL must match the Twilio console webhook URL.
 [functions.super-processor]
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/super-processor/index.ts"
 
+# Inbound voice, including Gather / press-1 / press-2 and recording callbacks.
+# Same X-Twilio-Signature check and optional TWILIO_WEBHOOK_URL as super-processor.
 [functions.twilio-voice]
 enabled = true
 verify_jwt = false
