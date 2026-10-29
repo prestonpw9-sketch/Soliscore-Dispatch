@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import org.json.JSONArray
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -217,6 +218,64 @@ class JobGeofencePlugin : Plugin() {
             sites.add(JobSite(id, name, latitude, longitude, safeRadius))
         }
         return sites
+    }
+
+    @PluginMethod
+    fun startShiftTracking(call: PluginCall) {
+        val sites = JSONArray()
+        call.getObject("shop")?.let { sites.put(clampedSite(it)) }
+        val extra = call.getArray("sites")
+        if (extra != null) {
+            for (index in 0 until extra.length()) {
+                val row = extra.optJSONObject(index) ?: continue
+                sites.put(clampedSite(row))
+            }
+        }
+        context.getSharedPreferences("job_geofence", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putString("shift_sites", sites.toString())
+            .apply()
+        val intent = Intent(context, ShiftTrackingService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun stopShiftTracking(call: PluginCall) {
+        val intent = Intent(context, ShiftTrackingService::class.java)
+            .setAction(ShiftTrackingService.ACTION_STOP)
+        context.startService(intent)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun drainSamples(call: PluginCall) {
+        val payload = JSObject()
+        payload.put("samples", ShiftSampleQueue.drain(context))
+        call.resolve(payload)
+    }
+
+    @PluginMethod
+    fun getBattery(call: PluginCall) {
+        val payload = JSObject()
+        val percent = ShiftSampleQueue.batteryPercent(context)
+        if (percent == null) payload.put("percent", JSONObject.NULL) else payload.put("percent", percent)
+        call.resolve(payload)
+    }
+
+    private fun clampedSite(row: JSONObject): JSONObject {
+        val radius = row.optDouble("radiusMeters", 90.0)
+        val clamped = radius.coerceIn(30.0, 200.0)
+        return JSONObject()
+            .put("id", row.optString("id").ifBlank { "site" })
+            .put("name", row.optString("name"))
+            .put("latitude", row.optDouble("latitude"))
+            .put("longitude", row.optDouble("longitude"))
+            .put("radiusMeters", clamped)
     }
 
     private fun parseHours(raw: JSObject?): WorkHours {

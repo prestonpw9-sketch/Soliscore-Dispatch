@@ -4,6 +4,17 @@ import { distanceMeters } from './distance.ts';
 /** About 300 feet. Matches public.jobs.geofence_radius_m. */
 export const DEFAULT_GEOFENCE_RADIUS_M = 90;
 
+/** About 100 feet. Smaller than this is mostly GPS noise. */
+export const MIN_GEOFENCE_RADIUS_M = 30;
+
+/** About 650 feet. Wider than this starts to overlap the next job. */
+export const MAX_GEOFENCE_RADIUS_M = 200;
+
+export function clampRadius(meters: number | null | undefined): number {
+  if (meters == null || !Number.isFinite(meters) || meters <= 0) return DEFAULT_GEOFENCE_RADIUS_M;
+  return Math.min(MAX_GEOFENCE_RADIUS_M, Math.max(MIN_GEOFENCE_RADIUS_M, meters));
+}
+
 /** iOS region monitoring allows 20 regions per app. */
 export const IOS_GEOFENCE_LIMIT = 20;
 
@@ -48,8 +59,7 @@ export function jobSitesForArrival(jobs: Job[], day: string): JobSite[] {
     if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) continue;
     const end = job.endDate ?? job.date;
     if (!job.date || job.date > day || end < day) continue;
-    const stored = finiteOrNull(job.geofenceRadiusM);
-    const radiusMeters = stored != null && stored > 0 ? stored : DEFAULT_GEOFENCE_RADIUS_M;
+    const radiusMeters = clampRadius(finiteOrNull(job.geofenceRadiusM));
     sites.push({
       id: job.id,
       name: arrivalJobLabel(job.customerName),

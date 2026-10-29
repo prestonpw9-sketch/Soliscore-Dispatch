@@ -39,15 +39,31 @@ export interface ArrivalEvent {
   open: boolean;
 }
 
+export interface ShiftSample {
+  at: number;
+  latitude: number;
+  longitude: number;
+  speedMps: number | null;
+  batteryPercent: number | null;
+}
+
 export interface JobGeofencePlugin {
   checkAccess(): Promise<AccessStatus>;
   requestAccess(): Promise<AccessStatus>;
   sync(options: { sites: JobSiteSpec[]; workHours: WorkHoursSpec }): Promise<SyncResult>;
   stop(): Promise<void>;
   consumePendingArrival(): Promise<PendingArrival>;
+  startShiftTracking(options: { shop: JobSiteSpec; sites: JobSiteSpec[] }): Promise<void>;
+  stopShiftTracking(): Promise<void>;
+  drainSamples(): Promise<{ samples: ShiftSample[] }>;
+  getBattery(): Promise<{ percent: number | null }>;
   addListener(
     eventName: 'arrival',
     listenerFunc: (event: ArrivalEvent) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'sample',
+    listenerFunc: (sample: ShiftSample) => void,
   ): Promise<PluginListenerHandle>;
 }
 

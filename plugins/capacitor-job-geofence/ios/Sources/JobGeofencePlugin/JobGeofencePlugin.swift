@@ -1,5 +1,6 @@
 import Capacitor
 import CoreLocation
+import CoreMotion
 import Foundation
 import UserNotifications
 
@@ -59,10 +60,17 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         CAPPluginMethod(name: "requestAccess", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "sync", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "consumePendingArrival", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "consumePendingArrival", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startShiftTracking", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopShiftTracking", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "drainSamples", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getBattery", returnType: CAPPluginReturnPromise)
     ]
 
     private let manager = CLLocationManager()
+    private let motion = CMMotionActivityManager()
+    private var shiftActive = false
+    private var highFrequency = false
     private let defaults = UserDefaults.standard
     private var pendingAccessCall: CAPPluginCall?
     private var askedNotifications = false
@@ -134,6 +142,82 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         call.resolve()
     }
 
+    @objc func startShiftTracking(_ call: CAPPluginCall) {
+        let shop = call.getObject("shop")
+        var tracked: [StoredSite] = []
+        if let shop, let site = makeSite(
+            id: shop["id"] as? String ?? "shop",
+            name: shop["name"] as? String,
+            latitude: doubleValue(shop["latitude"]),
+            longitude: doubleValue(shop["longitude"]),
+            radius: doubleValue(shop["radiusMeters"])
+        ) {
+            tracked.append(site)
+        }
+        tracked.append(contentsOf: parseSites(call.getArray("sites")))
+        sites = tracked
+        shiftActive = true
+        if manager.authorizationStatus == .authorizedAlways {
+            manager.allowsBackgroundLocationUpdates = true
+        }
+        if CLLocationManager.significantLocationChangeMonitoringAvailable() {
+            manager.startMonitoringSignificantLocationChanges()
+        }
+        setHighFrequency(false)
+        reconcile()
+        if CMMotionActivityManager.isActivityAvailable() {
+            motion.startActivityUpdates(to: .main) { [weak self] activity in
+                guard let self, let activity else { return }
+                let moving = activity.automotive || activity.cycling
+                if activity.stationary {
+                    self.setHighFrequency(false)
+                } else if moving {
+                    self.setHighFrequency(true)
+                }
+            }
+        }
+        call.resolve()
+    }
+
+    @objc func stopShiftTracking(_ call: CAPPluginCall) {
+        shiftActive = false
+        highFrequency = false
+        motion.stopActivityUpdates()
+        manager.stopUpdatingLocation()
+        stopMonitoring()
+        call.resolve()
+    }
+
+    @objc func drainSamples(_ call: CAPPluginCall) {
+        let samples = ShiftSampleQueue.drain().map { row -> [String: Any] in
+            var sample: [String: Any] = [
+                "at": row["at"] ?? 0,
+                "latitude": row["latitude"] ?? 0,
+                "longitude": row["longitude"] ?? 0
+            ]
+            if let speed = row["speedMps"] {
+                sample["speedMps"] = speed
+            } else {
+                sample["speedMps"] = NSNull()
+            }
+            if let battery = row["batteryPercent"] {
+                sample["batteryPercent"] = battery
+            } else {
+                sample["batteryPercent"] = NSNull()
+            }
+            return sample
+        }
+        call.resolve(["samples": samples])
+    }
+
+    @objc func getBattery(_ call: CAPPluginCall) {
+        if let percent = ShiftSampleQueue.batteryPercent() {
+            call.resolve(["percent": percent])
+        } else {
+            call.resolve(["percent": NSNull()])
+        }
+    }
+
     @objc func consumePendingArrival(_ call: CAPPluginCall) {
         guard defaults.bool(forKey: "pendingOpen"),
               let jobId = defaults.string(forKey: "pendingId") else {
@@ -173,6 +257,13 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
 
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
+        if shiftActive {
+            ShiftSampleQueue.append(location)
+            let moving = location.speed >= 4.4704
+            setHighFrequency(moving)
+            notifyListeners("sample", data: samplePayload(location))
+            return
+        }
         guard WorkHoursClock.isWithin(Date(), hours: hours) else {
             stopRegions()
             return
@@ -244,6 +335,41 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         }
         let notifications = notificationsGranted ? "granted" : (askedNotifications ? "denied" : "prompt")
         return ["location": location, "notifications": notifications]
+    }
+
+    private func setHighFrequency(_ enabled: Bool) {
+        guard shiftActive else { return }
+        highFrequency = enabled
+        if enabled {
+            manager.desiredAccuracy = kCLLocationAccuracyBest
+            manager.distanceFilter = 15
+            manager.startUpdatingLocation()
+        } else {
+            manager.stopUpdatingLocation()
+            manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            if CLLocationManager.significantLocationChangeMonitoringAvailable() {
+                manager.startMonitoringSignificantLocationChanges()
+            }
+        }
+    }
+
+    private func samplePayload(_ location: CLLocation) -> [String: Any] {
+        var payload: [String: Any] = [
+            "at": location.timestamp.timeIntervalSince1970 * 1000,
+            "latitude": location.coordinate.latitude,
+            "longitude": location.coordinate.longitude
+        ]
+        if location.speed >= 0 {
+            payload["speedMps"] = location.speed
+        } else {
+            payload["speedMps"] = NSNull()
+        }
+        if let battery = ShiftSampleQueue.batteryPercent() {
+            payload["batteryPercent"] = battery
+        } else {
+            payload["batteryPercent"] = NSNull()
+        }
+        return payload
     }
 
     private func startArming() {

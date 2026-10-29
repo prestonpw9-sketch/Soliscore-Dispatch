@@ -1,22 +1,32 @@
-# Job-site arrival (Android sideload and iOS TestFlight)
+# Job-site arrival and shift tracking (Android sideload and iOS TestFlight)
 
-Phase 1 watches job sites and asks the crew to update a time card. The Vercel web app is unchanged as a website: `npm run build` still emits the Vite bundle, and arrival checks in the browser run only while the tab is open. Background alerts need the Capacitor shell below.
+A shift starts with one clock-in at the shop and runs until clock-out. The phone switches segments on its own: Shop, then Travel while moving, then On site after a stop inside a job fence, then Travel again, then the next job or back to the shop. No extra taps and no second login.
 
-The SQL migration `supabase/migrations/20261029040032_job_site_geofence.sql` is **not applied**. Do not run it against the hosted project until Preston says so. Until those columns exist, jobs have no coordinates and both the website and the phone app stay quiet.
+The Vercel site is the same Vite build. In a browser tab, tracking runs only while that tab is open and a shift is clocked in. Background tracking is the Capacitor app.
 
-Nothing in this feature calls the Twilio SMS edge functions or the superintendent texting flow.
+These SQL files are **not applied**. Do not run them until Preston says so.
+
+- `supabase/migrations/20261029040032_job_site_geofence.sql` adds job coordinates.
+- `supabase/migrations/20261029043709_shift_time_segments.sql` adds the shop, shifts, segments, and battery samples, and caps a job fence at 200 m (about 650 ft).
+
+Until those columns exist, the phone still records the shift locally and retries the sync. Nothing in this feature calls the Twilio SMS edge functions or the superintendent texting flow.
 
 ## What the phone does
 
-- Default window: weekdays 6:00 AM–4:00 PM America/Phoenix. End is 4:00 PM sharp (the 4 PM hour is off). Change the window on the Time Card screen; it is stored on that phone.
-- Outside that window the app removes job geofences. Android schedules the next start with AlarmManager. iOS stops region monitoring and uses a significant-location wake (plus the next time the app opens) to arm regions again at the start of the window.
-- On enter: a local notification, `You're at <job name>, update your time card?`. Tapping it opens Time Card for that job.
-- Radius defaults to 90 meters (about 300 feet). iOS monitors at most 20 regions. Android monitors at most 100.
-- The in-app Time Card clock-in is stored on the phone only. It does not write to Supabase.
+- First Start shows a consent screen: location is recorded only while clocked in.
+- Start is accepted only inside the shop geofence (Time Card → Shop). Save the shop latitude, longitude, and radius on the phone. An owner save is also queued for `shop_locations`.
+- Driving starts after speed stays at or above the configured threshold (default 10 mph) for 30 seconds, or after the phone has been outside the current shop or job fence for that long.
+- A job (or the shop, on the way back) starts only after the phone has been stopped inside that fence for the dwell time. Default is 4 minutes. The Time Card offers 3, 4, or 5. Driving through a site does not count.
+- Job and shop radii stay between 30 m and 200 m. The default is 90 m, about 300 ft. A wider fence would overlap the next job.
+- Travel segments and on-site segments are separate rows on the time card.
+- The 6:00 AM–4:00 PM Phoenix weekday window is only a safety stop. It does not block clock-in. A shift that is still open at the end of the window, or that runs longer than the window’s length (default 10 hours), closes itself as `auto_stop`.
+- Segments and battery samples are queued on the phone and upserted by id. Replaying the queue after a dead zone updates the same rows. It does not insert duplicates.
+- Battery percent is stored at clock-in, about every 15 minutes, and at clock-out.
+- While moving, the native app uses high-accuracy GPS. While stopped it uses geofences, significant-location changes, and a slow fix. Android keeps a low-priority foreground notice for the shift so the system does not kill the tracker. Motion activity (driving vs still) switches those modes.
 
 ## Coordinates
 
-Addresses are not geocoded automatically. After the migration is applied, look up one address and paste the result onto the job:
+Addresses are not geocoded automatically. After the geofence migration is applied, look up one address and paste the result onto the job:
 
 ```bash
 node --experimental-strip-types scripts/geocode-job-address.ts "100 E Congress St, Tucson, AZ"
@@ -69,16 +79,19 @@ Release signing (when you outgrow the debug APK): **Build → Generate Signed Bu
 5. **Product → Archive**. When the archive finishes, **Distribute App → TestFlight & App Store → Upload**.
 6. In App Store Connect, wait until the build finishes processing. Add the crew as internal testers (same App Store Connect team, up to 100, no Beta App Review) or as external testers (Beta App Review the first time).
 7. Testers install **TestFlight**, accept the invite, and install **ITDG Dispatch**.
-8. On first launch, choose **Always** for location so arrival can alert while the app is in the background during work hours. When In Use only covers the app while it is on screen.
+8. On first launch, choose **Always** for location. Tracking runs only after Start, and only until clock-out. When In Use only covers the app while it is on screen.
 
 Apple still requires a privacy policy URL on the TestFlight listing. The app already serves `/privacy`.
 
 ## Still needs a device
 
-This repo cannot run an Android emulator image or Xcode here. Before handing phones to the crew, confirm on a real device:
+Preston's phone is the first device to test. This environment has no Android emulator image and no Xcode, so the native tracker has not been run on hardware. On that phone, confirm:
 
-- The permission sheets match the copy above, and background location is actually granted.
-- Entering a geocoded site during the work window shows the notification, and tapping it opens Time Card.
-- After 4:00 PM Phoenix (and on Saturday/Sunday) a site entry does not notify, and the next weekday morning arms monitoring again without a reinstall.
-- A cold start from the notification still opens the right job.
-- The Vercel site at `app.solidcoreplumb.com` still loads in a desktop browser with no Capacitor prompt until a job has coordinates and it is during work hours.
+- The consent screen appears once, then Start works only at the shop.
+- A drive over about 10 mph becomes Travel, and a stop of a few minutes inside a job fence becomes On site, with no taps in between.
+- Leaving the site and returning to the shop closes the job and, after the dwell, records Shop again.
+- Airplane mode keeps segments on the phone. Turning service back on syncs them once, without duplicate rows, after the migrations are applied.
+- Battery percent is present at clock-in and clock-out, and the drop across a real day is acceptable.
+- Forgetting to clock out closes the shift at the safety time (default 4:00 PM Phoenix, or 10 hours after an after-hours start).
+- The Android foreground notice and the iOS blue location pill appear only while the shift is open, and high-accuracy GPS quiets down while parked.
+- The Vercel site still loads in a desktop browser and does not ask for location until Start on the time card.

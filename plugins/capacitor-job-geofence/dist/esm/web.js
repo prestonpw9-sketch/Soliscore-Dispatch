@@ -19,4 +19,16 @@ export class JobGeofenceWeb extends WebPlugin {
   async consumePendingArrival() {
     return { jobId: null, jobName: null, open: false };
   }
+
+  async startShiftTracking() {}
+
+  async stopShiftTracking() {}
+
+  async drainSamples() {
+    return { samples: [] };
+  }
+
+  async getBattery() {
+    return { percent: null };
+  }
 }

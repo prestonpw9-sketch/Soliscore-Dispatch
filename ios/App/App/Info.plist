@@ -67,9 +67,11 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>ITDG Dispatch uses your location during work hours (weekdays 6:00 AM to 4:00 PM Phoenix time) to tell when you arrive at a job site and remind you to update your time card.</string>
+	<string>ITDG Dispatch records your location only while you are clocked in, so your time card can separate shop time, travel, and time at each job.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>ITDG Dispatch uses your location during work hours (weekdays 6:00 AM to 4:00 PM Phoenix time) to tell when you arrive at a job site and remind you to update your time card. Location monitoring stops outside those hours. Allow Always so the reminder can appear while the app is in the background.</string>
+	<string>ITDG Dispatch records your location only while you are clocked in, so your time card can separate shop time, travel, and time at each job. Allow Always so this keeps working when the screen is off. Tracking stops when you clock out.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>ITDG Dispatch uses motion while you are clocked in to turn on high-accuracy GPS only while you are driving, and to use low-power location while you are stopped.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

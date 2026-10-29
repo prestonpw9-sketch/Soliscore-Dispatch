@@ -10,6 +10,7 @@
     "test:e2e": "playwright test",
     "test:edge-security": "node --experimental-strip-types scripts/edge-security-checks.ts",
     "test:geofence": "node --experimental-strip-types scripts/geofence-checks.ts",
+    "test:shift": "node --experimental-strip-types scripts/shift-checks.ts",
     "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio"
   },
   "dependencies": {
