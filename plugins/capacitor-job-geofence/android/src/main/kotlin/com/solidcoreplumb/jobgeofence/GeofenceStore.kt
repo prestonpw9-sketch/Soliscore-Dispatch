@@ -64,7 +64,7 @@ class GeofenceStore(context: Context) {
             ZoneId.of("America/Phoenix")
         }
         val start = prefs.getInt(KEY_START, 6)
-        val end = prefs.getInt(KEY_END, 16)
+        val end = prefs.getInt(KEY_END, 17)
         if (start < 0 || end <= start || end > 23) return WorkHours.defaults()
         return WorkHours(zone, start, end, prefs.getBoolean(KEY_WEEKDAYS, true))
     }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Clock, MapPin } from 'lucide-react';
 import { clampRadius } from '@/lib/geofence/sites';
-import { formatHourLabel } from '@/lib/geofence/workHours';
+import { DEFAULT_WORK_HOURS, formatHourLabel } from '@/lib/geofence/workHours';
 import { segmentMinutes } from '@/lib/shift/machine';
 import type { ShopLocation, TimeSegment } from '@/lib/shift/types';
 import type { ShiftTracker } from '@/hooks/useShiftTracker';
@@ -186,7 +186,7 @@ export default function TimeCardView({ tracker }: Props) {
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <h3 className="text-sm font-bold text-slate-900 dark:text-white">Safety stop</h3>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          Tracking runs from clock-in until clock-out. If a shift is still open at the end of this window, it closes on its own. Default is {formatHourLabel(6)} to {formatHourLabel(16)}, weekdays, Phoenix time.
+          Tracking runs from clock-in until clock-out. If a shift is still open at the end of this window, it closes on its own. Default is {formatHourLabel(DEFAULT_WORK_HOURS.startHour)} to {formatHourLabel(DEFAULT_WORK_HOURS.endHour)}, weekdays, Phoenix time.
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <HourSelect
@@ -254,7 +254,7 @@ export default function TimeCardView({ tracker }: Props) {
               Location while clocked in
             </h2>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-              Location is recorded only while you are clocked in. The phone saves shop time, travel time, and time at each job so the time card fills in without extra taps. It stops when you clock out. If you forget, it also stops at the safety time (default 4:00 PM Phoenix time on weekdays). High-accuracy GPS runs while you are moving. While you are stopped it uses the lower-power shop and job fences.
+              Location is recorded only while you are clocked in. The phone saves shop time, travel time, and time at each job so the time card fills in without extra taps. It stops when you clock out. If you forget, it also stops at the safety time (default 5:00 PM Phoenix time on weekdays). High-accuracy GPS runs while you are moving. While you are stopped it uses the lower-power shop and job fences.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button

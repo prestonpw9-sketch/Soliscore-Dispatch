@@ -1,8 +1,8 @@
 /**
  * Crew arrival monitoring window.
  * Hours are editable per phone. The zone stays America/Phoenix (no daylight
- * saving). Start is inclusive, end is exclusive: 6 and 16 means 6:00 AM
- * through 3:59 PM.
+ * saving). Start is inclusive, end is exclusive: 6 and 17 means 6:00 AM
+ * through 4:59 PM. The safety stop fires at 5:00 PM.
  */
 export interface WorkHoursConfig {
   timeZone: 'America/Phoenix';
@@ -14,7 +14,7 @@ export interface WorkHoursConfig {
 export const DEFAULT_WORK_HOURS: WorkHoursConfig = {
   timeZone: 'America/Phoenix',
   startHour: 6,
-  endHour: 16,
+  endHour: 17,
   weekdaysOnly: true,
 };
 

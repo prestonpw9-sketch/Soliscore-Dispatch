@@ -29,7 +29,8 @@ function at(iso: string): Date {
 assert.equal(isWithinWorkHours(at('2026-10-28T15:00:00Z'), phoenix), true);
 assert.equal(isWithinWorkHours(at('2026-10-28T13:00:00Z'), phoenix), true);
 assert.equal(isWithinWorkHours(at('2026-10-28T12:59:00Z'), phoenix), false);
-assert.equal(isWithinWorkHours(at('2026-10-28T23:00:00Z'), phoenix), false);
+assert.equal(isWithinWorkHours(at('2026-10-28T23:00:00Z'), phoenix), true);
+assert.equal(isWithinWorkHours(at('2026-10-29T00:00:00Z'), phoenix), false);
 assert.equal(isWithinWorkHours(at('2026-10-31T15:00:00Z'), phoenix), false);
 assert.equal(
   isWithinWorkHours(at('2026-10-31T15:00:00Z'), { ...phoenix, weekdaysOnly: false }),
@@ -38,7 +39,7 @@ assert.equal(
 
 const stop = nextWorkHoursBoundary(at('2026-10-28T15:00:00Z'), phoenix);
 assert.equal(stop.action, 'stop');
-assert.equal(stop.at.toISOString(), '2026-10-28T23:00:00.000Z');
+assert.equal(stop.at.toISOString(), '2026-10-29T00:00:00.000Z');
 
 const morning = nextWorkHoursBoundary(at('2026-10-28T12:59:00Z'), phoenix);
 assert.equal(morning.action, 'start');

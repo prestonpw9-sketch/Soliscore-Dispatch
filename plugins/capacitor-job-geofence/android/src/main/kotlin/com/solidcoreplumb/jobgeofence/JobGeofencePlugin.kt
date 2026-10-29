@@ -286,7 +286,7 @@ class JobGeofencePlugin : Plugin() {
             ZoneId.of("America/Phoenix")
         }
         val start = raw.optInt("startHour", 6)
-        val end = raw.optInt("endHour", 16)
+        val end = raw.optInt("endHour", 17)
         if (start < 0 || end <= start || end > 23) return WorkHours.defaults()
         val weekdays = if (raw.has("weekdaysOnly")) raw.optBoolean("weekdaysOnly", true) else true
         return WorkHours(zone, start, end, weekdays)

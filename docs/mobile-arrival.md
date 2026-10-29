@@ -19,7 +19,7 @@ Until those columns exist, the phone still records the shift locally and retries
 - A job (or the shop, on the way back) starts only after the phone has been stopped inside that fence for the dwell time. Default is 4 minutes. The Time Card offers 3, 4, or 5. Driving through a site does not count.
 - Job and shop radii stay between 30 m and 200 m. The default is 90 m, about 300 ft. A wider fence would overlap the next job.
 - Travel segments and on-site segments are separate rows on the time card.
-- The 6:00 AM–4:00 PM Phoenix weekday window is only a safety stop. It does not block clock-in. A shift that is still open at the end of the window, or that runs longer than the window’s length (default 10 hours), closes itself as `auto_stop`.
+- The 6:00 AM–5:00 PM Phoenix weekday window is only a safety stop. It does not block clock-in. Crew usually finish by 4:30 PM; 5:00 PM is the default cutoff. A shift that is still open at the end of the window, or that runs longer than the window’s length (default 11 hours), closes itself as `auto_stop`.
 - Segments and battery samples are queued on the phone and upserted by id. Replaying the queue after a dead zone updates the same rows. It does not insert duplicates.
 - Battery percent is stored at clock-in, about every 15 minutes, and at clock-out.
 - While moving, the native app uses high-accuracy GPS. While stopped it uses geofences, significant-location changes, and a slow fix. Android keeps a low-priority foreground notice for the shift so the system does not kill the tracker. Motion activity (driving vs still) switches those modes.
@@ -92,6 +92,6 @@ Preston's phone is the first device to test. This environment has no Android emu
 - Leaving the site and returning to the shop closes the job and, after the dwell, records Shop again.
 - Airplane mode keeps segments on the phone. Turning service back on syncs them once, without duplicate rows, after the migrations are applied.
 - Battery percent is present at clock-in and clock-out, and the drop across a real day is acceptable.
-- Forgetting to clock out closes the shift at the safety time (default 4:00 PM Phoenix, or 10 hours after an after-hours start).
+- Forgetting to clock out closes the shift at the safety time (default 5:00 PM Phoenix, or 11 hours after an after-hours start).
 - The Android foreground notice and the iOS blue location pill appear only while the shift is open, and high-accuracy GPS quiets down while parked.
 - The Vercel site still loads in a desktop browser and does not ask for location until Start on the time card.

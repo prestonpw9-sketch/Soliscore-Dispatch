@@ -23,7 +23,7 @@ struct StoredHours {
     static let fallback = StoredHours(
         timeZone: TimeZone(identifier: "America/Phoenix") ?? .current,
         startHour: 6,
-        endHour: 16,
+        endHour: 17,
         weekdaysOnly: true
     )
 }
@@ -493,7 +493,7 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         hours = StoredHours(
             timeZone: TimeZone(identifier: zoneId) ?? StoredHours.fallback.timeZone,
             startHour: defaults.object(forKey: "startHour") as? Int ?? 6,
-            endHour: defaults.object(forKey: "endHour") as? Int ?? 16,
+            endHour: defaults.object(forKey: "endHour") as? Int ?? 17,
             weekdaysOnly: defaults.object(forKey: "weekdaysOnly") as? Bool ?? true
         )
     }
@@ -546,7 +546,7 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         guard let raw else { return StoredHours.fallback }
         let zoneName = raw["timeZone"] as? String ?? "America/Phoenix"
         let start = intValue(raw["startHour"] as Any?) ?? 6
-        let end = intValue(raw["endHour"] as Any?) ?? 16
+        let end = intValue(raw["endHour"] as Any?) ?? 17
         if start < 0 || end <= start || end > 23 {
             return StoredHours.fallback
         }

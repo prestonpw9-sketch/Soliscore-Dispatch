@@ -70,16 +70,16 @@ function apply(state: MachineState, input: Parameters<typeof step>[1], cfg = con
 }
 
 const eightAm = Date.parse('2026-10-28T15:00:00.000Z');
-const fourPm = Date.parse('2026-10-28T23:00:00.000Z');
+const fivePmStop = Date.parse('2026-10-29T00:00:00.000Z');
 
-assert.equal(new Date(safetyStopAt(eightAm, DEFAULT_WORK_HOURS)).toISOString(), '2026-10-28T23:00:00.000Z');
-assert.equal(new Date(nextEndBoundary(eightAm, DEFAULT_WORK_HOURS)).toISOString(), '2026-10-28T23:00:00.000Z');
+assert.equal(new Date(safetyStopAt(eightAm, DEFAULT_WORK_HOURS)).toISOString(), '2026-10-29T00:00:00.000Z');
+assert.equal(new Date(nextEndBoundary(eightAm, DEFAULT_WORK_HOURS)).toISOString(), '2026-10-29T00:00:00.000Z');
 
-const fivePm = Date.parse('2026-10-29T00:00:00.000Z');
-assert.equal(new Date(safetyStopAt(fivePm, DEFAULT_WORK_HOURS)).toISOString(), '2026-10-29T10:00:00.000Z');
+const startedAtFive = Date.parse('2026-10-29T00:00:00.000Z');
+assert.equal(new Date(safetyStopAt(startedAtFive, DEFAULT_WORK_HOURS)).toISOString(), '2026-10-29T11:00:00.000Z');
 
 const saturdayMorning = Date.parse('2026-10-31T15:00:00.000Z');
-assert.equal(new Date(safetyStopAt(saturdayMorning, DEFAULT_WORK_HOURS)).toISOString(), '2026-11-01T01:00:00.000Z');
+assert.equal(new Date(safetyStopAt(saturdayMorning, DEFAULT_WORK_HOURS)).toISOString(), '2026-11-01T02:00:00.000Z');
 
 assert.equal(clampRadius(5_000), 200);
 assert.equal(clampRadius(null), 90);
@@ -175,11 +175,11 @@ let stopped = apply(
   cfg,
   idsFrom(400),
 );
-stopped = apply(stopped, { type: 'sample', fix: fix(fourPm - 60_000, SHOP.latitude, SHOP.longitude, 0, 60) }, cfg, idsFrom(410));
+stopped = apply(stopped, { type: 'sample', fix: fix(fivePmStop - 60_000, SHOP.latitude, SHOP.longitude, 0, 60) }, cfg, idsFrom(410));
 assert.equal(stopped.shift?.endedAt, null);
-stopped = apply(stopped, { type: 'sample', fix: fix(fourPm + 5 * 60_000, SHOP.latitude, SHOP.longitude, 0, 55) }, cfg, idsFrom(420));
+stopped = apply(stopped, { type: 'sample', fix: fix(fivePmStop + 5 * 60_000, SHOP.latitude, SHOP.longitude, 0, 55) }, cfg, idsFrom(420));
 assert.equal(stopped.shift?.endReason, 'auto_stop');
-assert.equal(stopped.shift?.endedAt, new Date(fourPm).toISOString());
+assert.equal(stopped.shift?.endedAt, new Date(fivePmStop).toISOString());
 assert.equal(openSegment(stopped), null);
 assert.equal(stopped.shift?.batteryEnd, 55);
 assert.ok(stopped.batterySamples.some(sample => sample.batteryPercent === 77));

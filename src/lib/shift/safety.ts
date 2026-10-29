@@ -44,7 +44,7 @@ export function nextEndBoundary(afterMs: number, config: WorkHoursConfig): numbe
 /**
  * When a forgotten shift must close.
  * Uses the earlier of the configured end time and the length of the window
- * (default 6:00 AM to 4:00 PM, so 10 hours).
+ * (default 6:00 AM to 5:00 PM, so 11 hours).
  */
 export function safetyStopAt(startedAtMs: number, config: WorkHoursConfig): number {
   const windowMs = Math.max(1, config.endHour - config.startHour) * 3_600_000;

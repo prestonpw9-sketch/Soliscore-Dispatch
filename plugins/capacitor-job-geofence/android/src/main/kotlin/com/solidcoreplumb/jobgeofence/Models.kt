@@ -23,7 +23,7 @@ data class WorkHours(
         fun defaults(): WorkHours = WorkHours(
             timeZone = ZoneId.of("America/Phoenix"),
             startHour = 6,
-            endHour = 16,
+            endHour = 17,
             weekdaysOnly = true,
         )
     }
