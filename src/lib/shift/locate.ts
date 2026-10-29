@@ -180,9 +180,7 @@ export async function acquireStartFix(
   const fromFix = (fix: StartFix): LocateResult => (
     { ok: true, fix, quality: goodEnough(fix) ? 'accurate' : 'best' }
   );
-  const fatal = (reason: LocateFailure) => (
-    reason === 'denied' || reason === 'services-off' || reason === 'plugin-missing'
-  );
+  const fatal = (reason: LocateFailure) => reason === 'denied' || reason === 'services-off';
 
   try {
     const raced = await options.withDeadline(() => {

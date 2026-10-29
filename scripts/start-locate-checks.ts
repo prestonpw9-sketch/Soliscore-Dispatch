@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { distanceMeters } from '../src/lib/geofence/distance.ts';
+import { geolocationFromBridge, jobGeofenceFromBridge } from '../src/lib/geofence/nativeClient.ts';
 import { DEFAULT_WORK_HOURS } from '../src/lib/geofence/workHours.ts';
 import {
   acquireStartFix,
@@ -300,21 +301,48 @@ const deniedNative = await acquireStartFix({
 assert.deepEqual(deniedNative, { ok: false, reason: 'denied' });
 assert.match(permissionDeniedMessage(), /denied/);
 
+let coarseOnMissing = false;
 const missing = await acquireStartFix({
   nativePosition: async () => ({ ok: false, reason: 'plugin-missing' }),
   watch: () => () => {},
-  coarsePosition: async () => coarseFix,
+  coarsePosition: async () => {
+    coarseOnMissing = true;
+    return coarseFix;
+  },
 }, {
   accuracyGoalM: 90,
   highAccuracyMs: 15_000,
   coarseMs: 10_000,
   withDeadline: passthrough,
 });
-assert.deepEqual(missing, { ok: false, reason: 'plugin-missing' });
+assert.equal(coarseOnMissing, true);
+assert.equal(missing.ok, true);
+if (missing.ok) assert.equal(missing.fix.accuracyM, 40);
 assert.match(locateFailureMessage('plugin-missing'), /plugin is not available/);
 assert.equal(nativeFailureReason(new Error('plugin-missing')), 'plugin-missing');
+assert.equal(nativeFailureReason(new Error('JobGeofence plugin is not implemented on android')), 'plugin-missing');
 assert.equal(nativeFailureReason(new Error('services-off')), 'services-off');
 assert.equal(nativeFailureReason(new Error('permission denied')), 'denied');
+
+const bridgePlugin = {
+  requestAccess: async () => ({ location: 'granted' as const, notifications: 'granted' as const }),
+  getCurrentPosition: async () => ({ latitude: 1, longitude: 2, accuracy: 3, speed: 0, time: 1 }),
+};
+assert.equal(jobGeofenceFromBridge(null), null);
+assert.equal(jobGeofenceFromBridge({ Plugins: {} }), null);
+assert.equal(
+  jobGeofenceFromBridge({ isPluginAvailable: () => false, Plugins: { JobGeofence: bridgePlugin } }),
+  null,
+);
+assert.equal(
+  jobGeofenceFromBridge({ isPluginAvailable: name => name === 'JobGeofence', Plugins: { JobGeofence: bridgePlugin } }),
+  bridgePlugin,
+);
+assert.equal(geolocationFromBridge({ Plugins: { Geolocation: {} } }), null);
+assert.ok(geolocationFromBridge({
+  isPluginAvailable: name => name === 'Geolocation',
+  Plugins: { Geolocation: { getCurrentPosition: async () => ({ coords: { latitude: 1, longitude: 2 } }) } },
+})?.getCurrentPosition);
 
 const preAborted = new AbortController();
 preAborted.abort();

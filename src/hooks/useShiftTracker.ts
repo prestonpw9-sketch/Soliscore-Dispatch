@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Job } from '@/lib/data';
-import { isNativeDispatchApp, loadJobGeofence } from '@/lib/geofence/nativeClient';
+import { geolocationFromBridge, isNativeDispatchApp, jobGeofenceFromBridge, loadJobGeofence } from '@/lib/geofence/nativeClient';
 import { jobSitesForArrival } from '@/lib/geofence/sites';
 import { loadWorkHours, phoenixToday, saveWorkHours, type WorkHoursConfig } from '@/lib/geofence/workHours';
 import { useAuth } from '@/lib/AuthContext';
@@ -35,7 +35,6 @@ import {
   otherStartErrorMessage,
   permissionCheckTimeoutMessage,
   permissionDeniedMessage,
-  pluginMissingMessage,
   withDeadline,
   type LocateFailure,
   type NativePositionResult,
@@ -126,30 +125,75 @@ function positionFromPlugin(reading: {
   };
 }
 
+function bridgeCap() {
+  if (typeof window === 'undefined') return undefined;
+  return (window as Window & { Capacitor?: Parameters<typeof jobGeofenceFromBridge>[0] }).Capacitor;
+}
+
+function positionFromGeolocation(reading: {
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number | null;
+  speed?: number | null;
+  coords?: { latitude?: number; longitude?: number; accuracy?: number | null; speed?: number | null };
+  timestamp?: number;
+}): StartFix | null {
+  const coords = reading.coords;
+  const latitude = coords?.latitude ?? reading.latitude;
+  const longitude = coords?.longitude ?? reading.longitude;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') return null;
+  return {
+    latitude,
+    longitude,
+    accuracyM: coords?.accuracy ?? reading.accuracy ?? null,
+    speedMps: coords?.speed ?? reading.speed ?? null,
+    at: reading.timestamp ?? Date.now(),
+  };
+}
+
 async function readNativePosition(
   options: { enableHighAccuracy: boolean; maximumAge: number; timeoutMs: number },
   signal: AbortSignal,
 ): Promise<NativePositionResult> {
-  const loaded = await withDeadline(() => loadJobGeofence(), 5_000, signal);
-  if (isCancelled(loaded)) return { ok: false, reason: 'timeout' };
-  if (isTimedOut(loaded) || loaded == null || !loaded.getCurrentPosition) {
-    return { ok: false, reason: 'plugin-missing' };
+  const cap = bridgeCap();
+  const plugin = jobGeofenceFromBridge(cap);
+  if (plugin?.getCurrentPosition) {
+    const reading = await withDeadline(
+      () => plugin.getCurrentPosition({
+        enableHighAccuracy: options.enableHighAccuracy,
+        maximumAge: options.maximumAge,
+        timeout: options.timeoutMs,
+      }).then(
+        value => ({ ok: true as const, fix: positionFromPlugin(value) }),
+        (err: unknown) => locateErrorReason(err),
+      ),
+      options.timeoutMs,
+      signal,
+    );
+    if (isCancelled(reading)) return { ok: false, reason: 'timeout' };
+    if (!isTimedOut(reading) && !(reading.ok === false && reading.reason === 'plugin-missing')) return reading;
   }
-  const plugin = loaded;
-  const reading = await withDeadline(
-    () => plugin.getCurrentPosition({
-      enableHighAccuracy: options.enableHighAccuracy,
-      maximumAge: options.maximumAge,
-      timeout: options.timeoutMs,
-    }).then(
-      value => ({ ok: true as const, fix: positionFromPlugin(value) }),
-      (err: unknown) => locateErrorReason(err),
-    ),
-    options.timeoutMs,
-    signal,
-  );
-  if (isCancelled(reading) || isTimedOut(reading)) return { ok: false, reason: 'timeout' };
-  return reading;
+  const geolocation = geolocationFromBridge(cap);
+  if (geolocation?.getCurrentPosition) {
+    const reading = await withDeadline(
+      () => geolocation.getCurrentPosition({
+        enableHighAccuracy: options.enableHighAccuracy,
+        maximumAge: options.maximumAge,
+        timeout: options.timeoutMs,
+      }).then(
+        value => {
+          const fix = positionFromGeolocation(value);
+          return fix ? { ok: true as const, fix } : { ok: false as const, reason: 'unavailable' as const };
+        },
+        (err: unknown) => locateErrorReason(err),
+      ),
+      options.timeoutMs,
+      signal,
+    );
+    if (isCancelled(reading)) return { ok: false, reason: 'timeout' };
+    if (!isTimedOut(reading)) return reading;
+  }
+  return { ok: false, reason: 'plugin-missing' };
 }
 
 function readCoarseFix(): Promise<StartFix> {
@@ -261,19 +305,12 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     setStarting(true);
     setNotice('Getting your location…');
     try {
-      if (isNativeDispatchApp()) {
-        const loaded = await withDeadline(() => loadJobGeofence(), 5_000, abort.signal);
-        if (isCancelled(loaded)) {
-          setNotice(locationRequestCancelledMessage());
-          return;
-        }
-        if (isTimedOut(loaded) || loaded == null || !loaded.requestAccess) {
-          setNotice(pluginMissingMessage());
-          return;
-        }
-        const plugin = loaded;
+      const bridge = isNativeDispatchApp() ? bridgeCap() : undefined;
+      const geofence = jobGeofenceFromBridge(bridge);
+      const capacitorGeo = geolocationFromBridge(bridge);
+      if (geofence?.requestAccess) {
         const access = await withDeadline(
-          () => plugin.requestAccess().then(
+          () => geofence.requestAccess().then(
             status => ({ status }),
             (err: unknown) => ({ failed: locateErrorReason(err) }),
           ),
@@ -289,10 +326,32 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
           return;
         }
         if ('failed' in access) {
-          setNotice(locateFailureMessage(access.failed.reason));
+          if (access.failed.reason !== 'plugin-missing') {
+            setNotice(locateFailureMessage(access.failed.reason));
+            return;
+          }
+        } else if (access.status.location !== 'granted') {
+          setNotice(permissionDeniedMessage());
           return;
         }
-        if (access.status.location !== 'granted') {
+      } else if (capacitorGeo?.requestPermissions) {
+        const access = await withDeadline(
+          () => capacitorGeo.requestPermissions().then(
+            status => ({ status }),
+            (err: unknown) => ({ failed: locateErrorReason(err) }),
+          ),
+          15_000,
+          abort.signal,
+        );
+        if (isCancelled(access)) {
+          setNotice(locationRequestCancelledMessage());
+          return;
+        }
+        if (!isTimedOut(access) && 'failed' in access && access.failed.reason === 'denied') {
+          setNotice(permissionDeniedMessage());
+          return;
+        }
+        if (!isTimedOut(access) && !('failed' in access) && access.status.location === 'denied') {
           setNotice(permissionDeniedMessage());
           return;
         }
@@ -302,19 +361,20 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
       // promise itself starts the WebView request first, and that request
       // can swallow the 30s timer on Android.
       const located = await withDeadline(() => acquireStartFix({
-        nativePosition: isNativeDispatchApp()
+        nativePosition: geofence?.getCurrentPosition || capacitorGeo?.getCurrentPosition
           ? options => readNativePosition(options, abort.signal)
           : undefined,
         watch: browserStartWatch(),
-        coarsePosition: () => {
-          if (!isNativeDispatchApp()) return readCoarseFix();
-          return readNativePosition(
-            { enableHighAccuracy: false, maximumAge: 60_000, timeoutMs: 10_000 },
-            abort.signal,
-          ).then(result => {
-            if (result.ok === false) throw new Error(result.reason);
-            return result.fix;
-          });
+        coarsePosition: async () => {
+          if (geofence?.getCurrentPosition || capacitorGeo?.getCurrentPosition) {
+            const result = await readNativePosition(
+              { enableHighAccuracy: false, maximumAge: 60_000, timeoutMs: 10_000 },
+              abort.signal,
+            );
+            if (result.ok === true) return result.fix;
+            if (result.reason === 'denied' || result.reason === 'services-off') throw new Error(result.reason);
+          }
+          return readCoarseFix();
         },
       }, {
         accuracyGoalM: shopNow.radiusMeters,
