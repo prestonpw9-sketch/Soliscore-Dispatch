@@ -27,6 +27,9 @@ interface Place {
 export interface StepResult {
   state: MachineState;
   error: StepError | null;
+  /** Meters from the shop when clock-in is rejected for distance. */
+  distanceM?: number;
+  accuracyM?: number | null;
 }
 
 export function initialMachine(): MachineState {
@@ -96,8 +99,23 @@ function placesOf(config: TrackingConfig): Place[] {
   return places;
 }
 
+/** Don't treat a 1 km error circle as if the phone were at the fence. */
+export const ACCURACY_CREDIT_CAP_M = 100;
+
+/**
+ * A fix counts as inside when the reported center, pulled toward the place by
+ * its accuracy, still falls in the radius. Accuracy credit is capped so a
+ * very coarse fix cannot swallow a neighboring job.
+ */
+export function countsAsInside(distanceM: number, radiusM: number, accuracyM: number | null | undefined): boolean {
+  const reported = Number.isFinite(accuracyM) && (accuracyM ?? 0) > 0 ? accuracyM ?? 0 : 0;
+  const credit = Math.min(reported, ACCURACY_CREDIT_CAP_M);
+  return distanceM - credit <= radiusM;
+}
+
 function inside(fix: Fix, place: Place): boolean {
-  return distanceMeters(fix.latitude, fix.longitude, place.latitude, place.longitude) <= place.radiusMeters;
+  const distance = distanceMeters(fix.latitude, fix.longitude, place.latitude, place.longitude);
+  return countsAsInside(distance, place.radiusMeters, fix.accuracyM);
 }
 
 function nearestPlace(fix: Fix, places: Place[]): Place | null {
@@ -269,7 +287,14 @@ export function step(
   if (input.type === 'clock-in') {
     if (!shop) return { state, error: 'no-shop' };
     if (state.shift && !state.shift.endedAt) return { state, error: 'already-started' };
-    if (!inside(fix, shop)) return { state, error: 'not-at-shop' };
+    if (!inside(fix, shop)) {
+      return {
+        state,
+        error: 'not-at-shop',
+        distanceM: distanceMeters(fix.latitude, fix.longitude, shop.latitude, shop.longitude),
+        accuracyM: fix.accuracyM ?? null,
+      };
+    }
     const shiftId = ids();
     const started: MachineState = {
       ...initialMachine(),

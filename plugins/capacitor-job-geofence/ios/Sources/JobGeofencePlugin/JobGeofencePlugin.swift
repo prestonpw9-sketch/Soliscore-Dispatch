@@ -58,6 +58,7 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "checkAccess", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestAccess", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestBackgroundAccess", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "sync", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "consumePendingArrival", returnType: CAPPluginReturnPromise),
@@ -96,20 +97,26 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
     }
 
     @objc func requestAccess(_ call: CAPPluginCall) {
-        pendingAccessCall = call
         let status = manager.authorizationStatus
         if status == .notDetermined {
+            pendingAccessCall = call
+            manager.requestWhenInUseAuthorization()
+            return
+        }
+        call.resolve(accessPayload())
+    }
+
+    @objc func requestBackgroundAccess(_ call: CAPPluginCall) {
+        // Resolve first. The Always prompt must not hold Start.
+        call.resolve(accessPayload())
+        if manager.authorizationStatus == .authorizedWhenInUse {
             manager.requestAlwaysAuthorization()
         }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
             DispatchQueue.main.async {
                 self.askedNotifications = true
                 self.notificationsGranted = granted
-                self.finishAccessRequest()
             }
-        }
-        if status != .notDetermined {
-            finishAccessRequest()
         }
     }
 
@@ -314,7 +321,7 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
 
     private func finishAccessRequest() {
         guard let call = pendingAccessCall else { return }
-        if manager.authorizationStatus == .notDetermined || !askedNotifications {
+        if manager.authorizationStatus == .notDetermined {
             return
         }
         pendingAccessCall = nil

@@ -83,42 +83,31 @@ class JobGeofencePlugin : Plugin() {
 
     @PluginMethod
     fun requestAccess(call: PluginCall) {
+        // While-in-use only. Waiting here for "Allow all the time" stalls Start
+        // on Android 11+ because that prompt often never calls back.
         if (getPermissionState("location") != PermissionState.GRANTED) {
-            requestPermissionForAlias("location", call, "afterFineLocation")
+            requestPermissionForAlias("location", call, "afterWhileInUse")
             return
         }
-        afterFineLocation(call)
+        call.resolve(accessPayload())
     }
 
     @PermissionCallback
-    private fun afterFineLocation(call: PluginCall) {
-        if (getPermissionState("location") != PermissionState.GRANTED) {
-            call.resolve(accessPayload())
-            return
-        }
+    private fun afterWhileInUse(call: PluginCall) {
+        call.resolve(accessPayload())
+    }
+
+    @PluginMethod
+    fun requestBackgroundAccess(call: PluginCall) {
+        // Resolve before the system dialog so a missing callback cannot stall.
+        call.resolve(accessPayload())
+        val host = activity ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            getPermissionState("location") == PermissionState.GRANTED &&
             getPermissionState("background") != PermissionState.GRANTED
         ) {
-            requestPermissionForAlias("background", call, "afterBackground")
-            return
+            host.requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 4101)
         }
-        afterBackground(call)
-    }
-
-    @PermissionCallback
-    private fun afterBackground(call: PluginCall) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            getPermissionState("notifications") != PermissionState.GRANTED
-        ) {
-            requestPermissionForAlias("notifications", call, "afterNotifications")
-            return
-        }
-        call.resolve(accessPayload())
-    }
-
-    @PermissionCallback
-    private fun afterNotifications(call: PluginCall) {
-        call.resolve(accessPayload())
     }
 
     @PluginMethod

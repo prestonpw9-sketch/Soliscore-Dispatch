@@ -13,7 +13,9 @@ Until those columns exist, the phone still records the shift locally and retries
 
 ## What the phone does
 
-- First Start shows a consent screen: location is recorded only while clocked in.
+- First Start shows a consent screen: location is recorded only while clocked in. Cancelling it says so. While the phone looks for a fix the button stays disabled and reads "Getting your location…".
+- Start uses a fresh GPS fix (no cached position) for up to 30 seconds, then the best fix it got. A reading counts as the shop when the distance minus the accuracy (capped at 100 m) is inside the shop radius. Permission denied, GPS timeout, and "not at the shop" each have their own message.
+- Android asks for location while the app is in use first, starts the shift, then asks for all-the-time. Start does not wait on that second prompt.
 - Start is accepted only inside the shop geofence (Time Card → Shop). Save the shop latitude, longitude, and radius on the phone. An owner save is also queued for `shop_locations`.
 - Driving starts after speed stays at or above the configured threshold (default 10 mph) for 30 seconds, or after the phone has been outside the current shop or job fence for that long.
 - A job (or the shop, on the way back) starts only after the phone has been stopped inside that fence for the dwell time. Default is 4 minutes. The Time Card offers 3, 4, or 5. Driving through a site does not count.

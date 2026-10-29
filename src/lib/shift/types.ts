@@ -67,6 +67,8 @@ export interface Fix {
   longitude: number;
   speedMps: number | null;
   batteryPercent: number | null;
+  /** Meters. Missing means the fix did not report accuracy. */
+  accuracyM?: number | null;
 }
 
 export type StepInput =

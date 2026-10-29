@@ -10,6 +10,10 @@ export class JobGeofenceWeb extends WebPlugin {
     return { location: 'denied', notifications: 'denied' };
   }
 
+  async requestBackgroundAccess() {
+    return { location: 'prompt', notifications: 'prompt' };
+  }
+
   async sync() {
     return { monitoring: 0, dropped: 0, active: false };
   }

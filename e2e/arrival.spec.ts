@@ -47,6 +47,7 @@ test('explains that location is recorded only while clocked in', async ({ page }
   await shot(page, 'shift-consent');
   await dialog.getByRole('button', { name: 'Not now' }).click();
   await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Start cancelled');
   await expect(page.getByRole('listitem', { name: /Shop/ })).toHaveCount(0);
 });
 
@@ -72,8 +73,40 @@ test('refuses to start away from the shop', async ({ page, context }) => {
   await page.goto('/?view=timecard');
   await page.getByRole('button', { name: 'Start shift' }).click();
   await page.getByRole('button', { name: 'Start tracking' }).click();
-  await expect(page.getByRole('status')).toContainText('not at the shop');
+  await expect(page.getByRole('status')).toContainText(/m from the shop/);
+  await expect(page.getByRole('status')).toContainText('accuracy');
   await expect(page.getByRole('listitem').filter({ hasText: 'Shop' })).toHaveCount(0);
+});
+
+test('shows a location spinner and ignores a second tap until a fix arrives', async ({ page, context }) => {
+  await page.clock.install({ time: WEDNESDAY_MORNING });
+  await context.grantPermissions(['geolocation']);
+  await page.addInitScript(() => {
+    const watch = navigator.geolocation.watchPosition.bind(navigator.geolocation);
+    const clear = navigator.geolocation.clearWatch.bind(navigator.geolocation);
+    let pending: number | null = null;
+    navigator.geolocation.watchPosition = (success, error, options) => {
+      (window as unknown as { __releaseGeo?: () => void }).__releaseGeo = () => {
+        pending = watch(success, error, options);
+      };
+      return 1;
+    };
+    navigator.geolocation.clearWatch = () => {
+      if (pending != null) clear(pending);
+    };
+  });
+  await boot(page);
+  await page.goto('/?view=timecard');
+  await page.getByRole('button', { name: 'Start shift' }).click();
+  await page.getByRole('button', { name: 'Start tracking' }).click();
+  const waiting = page.getByRole('button', { name: 'Getting your location…' });
+  await expect(waiting).toBeDisabled();
+  await waiting.click({ force: true });
+  await page.evaluate(() => {
+    (window as unknown as { __releaseGeo?: () => void }).__releaseGeo?.();
+  });
+  await expect(page.getByRole('listitem').filter({ hasText: 'Shop' })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Clock out' })).toBeVisible();
 });
 
 test('does not ask for location on the dashboard before a shift starts', async ({ page, context }) => {

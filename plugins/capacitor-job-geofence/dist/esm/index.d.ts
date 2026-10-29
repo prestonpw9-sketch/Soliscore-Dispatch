@@ -50,6 +50,8 @@ export interface ShiftSample {
 export interface JobGeofencePlugin {
   checkAccess(): Promise<AccessStatus>;
   requestAccess(): Promise<AccessStatus>;
+  /** Asks for background location after Start. Must not be awaited on the start path. */
+  requestBackgroundAccess(): Promise<AccessStatus>;
   sync(options: { sites: JobSiteSpec[]; workHours: WorkHoursSpec }): Promise<SyncResult>;
   stop(): Promise<void>;
   consumePendingArrival(): Promise<PendingArrival>;

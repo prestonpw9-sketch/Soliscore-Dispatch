@@ -21,6 +21,17 @@ import {
   saveShop,
   saveSpeedMph,
 } from '@/lib/shift/storage';
+import {
+  browserStartWatch,
+  consentCancelledMessage,
+  gpsTimeoutMessage,
+  locationUnavailableMessage,
+  notAtShopMessage,
+  otherStartErrorMessage,
+  permissionDeniedMessage,
+  START_FIX_TIMEOUT_MS,
+  watchForStartFix,
+} from '@/lib/shift/locate';
 import { enqueueAndSync, syncOutbox } from '@/lib/shift/sync';
 import { supabase } from '@/lib/supabase';
 import type { Fix, MachineState, ShopLocation, TimeSegment } from '@/lib/shift/types';
@@ -44,6 +55,7 @@ export interface ShiftTracker {
   acceptConsentAndStart: () => void;
   dismissConsent: () => void;
   clockOut: () => void;
+  starting: boolean;
 }
 
 async function readBatteryPercent(): Promise<number | null> {
@@ -65,7 +77,7 @@ async function readBatteryPercent(): Promise<number | null> {
   }
 }
 
-function readPosition(): Promise<{ latitude: number; longitude: number; speedMps: number | null } | null> {
+function readPosition(): Promise<{ latitude: number; longitude: number; speedMps: number | null; accuracyM: number | null } | null> {
   return new Promise(resolve => {
     if (!navigator.geolocation) {
       resolve(null);
@@ -76,9 +88,10 @@ function readPosition(): Promise<{ latitude: number; longitude: number; speedMps
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
         speedMps: Number.isFinite(position.coords.speed) ? position.coords.speed : null,
+        accuracyM: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
       }),
       () => resolve(null),
-      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 12_000 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 8_000 },
     );
   });
 }
@@ -95,6 +108,8 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     () => (loadOutbox().length ? 'pending' : 'synced'),
   );
   const [consentOpen, setConsentOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
   const machineRef = useRef(machine);
   machineRef.current = machine;
   const shopRef = useRef(shop);
@@ -143,49 +158,119 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
   const applyFix = useCallback((type: 'sample' | 'clock-out', fix: Fix) => {
     const prev = machineRef.current;
     const result = step(prev, { type, fix }, config(), () => crypto.randomUUID());
-    if (result.error) return;
+    if (result.error) {
+      setNotice(otherStartErrorMessage(result.error));
+      return;
+    }
     if (result.state === prev) return;
     lastSpeed.current = fix.speedMps;
     publish(prev, result.state);
   }, [config, publish]);
 
   const begin = useCallback(async () => {
-    if (!shopRef.current) {
-      setNotice('Set the shop location before starting. Start happens at the shop.');
+    if (startingRef.current) return;
+    const shopNow = shopRef.current;
+    if (!shopNow) {
+      setNotice(otherStartErrorMessage('no-shop'));
       return;
     }
-    if (isNativeDispatchApp()) {
-      try {
-        const plugin = await loadJobGeofence();
-        await plugin?.requestAccess();
-      } catch (err) {
-        console.error('Location permission failed:', err);
+    if (machineRef.current.shift && !machineRef.current.shift.endedAt) {
+      setNotice(otherStartErrorMessage('already-started'));
+      return;
+    }
+    startingRef.current = true;
+    setStarting(true);
+    setNotice('Getting your location…');
+    try {
+      if (isNativeDispatchApp()) {
+        try {
+          const plugin = await loadJobGeofence();
+          const access = await Promise.race([
+            plugin?.requestAccess() ?? Promise.resolve({ location: 'prompt' as const, notifications: 'prompt' as const }),
+            new Promise<{ location: 'prompt'; notifications: 'prompt' }>(resolve => {
+              window.setTimeout(() => resolve({ location: 'prompt', notifications: 'prompt' }), 20_000);
+            }),
+          ]);
+          if (access?.location === 'denied') {
+            setNotice(permissionDeniedMessage());
+            return;
+          }
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : 'unknown error';
+          setNotice(`Location permission failed (${detail}). Open Settings, Apps, ITDG Dispatch, Permissions, Location, and allow it while using the app.`);
+          return;
+        }
       }
+
+      const located = await watchForStartFix(browserStartWatch(), {
+        timeoutMs: START_FIX_TIMEOUT_MS,
+        accuracyGoalM: shopNow.radiusMeters,
+        schedule: (run, delayMs) => {
+          const timer = window.setTimeout(run, delayMs);
+          return () => window.clearTimeout(timer);
+        },
+      });
+      if (located.ok === false) {
+        if (located.reason === 'denied') setNotice(permissionDeniedMessage());
+        else if (located.reason === 'timeout') setNotice(gpsTimeoutMessage());
+        else setNotice(locationUnavailableMessage());
+        return;
+      }
+
+      const battery = await readBatteryPercent();
+      const fix: Fix = {
+        at: Date.now(),
+        latitude: located.fix.latitude,
+        longitude: located.fix.longitude,
+        speedMps: located.fix.speedMps,
+        accuracyM: located.fix.accuracyM,
+        batteryPercent: battery,
+      };
+      const prev = machineRef.current;
+      const result = step(prev, { type: 'clock-in', fix }, config(), () => crypto.randomUUID());
+      if (result.error === 'not-at-shop') {
+        setNotice(notAtShopMessage(
+          result.distanceM ?? 0,
+          result.accuracyM ?? fix.accuracyM ?? null,
+          shopNow.radiusMeters,
+        ));
+        return;
+      }
+      if (result.error) {
+        setNotice(otherStartErrorMessage(result.error));
+        return;
+      }
+      lastSpeed.current = fix.speedMps;
+      publish(prev, result.state);
+      if (isNativeDispatchApp()) {
+        setNotice('Shift started. Allow all the time when the phone asks so tracking continues with the screen off. While-in-use still records this shift with the app open.');
+        try {
+          const plugin = await loadJobGeofence();
+          const background = plugin?.requestBackgroundAccess();
+          if (background) {
+            void background.catch((err: unknown) => {
+              const detail = err instanceof Error ? err.message : 'unknown error';
+              setNotice(`Shift started, but background location was not requested (${detail}). Tracking continues while the app is open. To allow all the time: Settings, Apps, ITDG Dispatch, Permissions, Location.`);
+            });
+          }
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : 'unknown error';
+          setNotice(`Shift started, but background location was not requested (${detail}). Tracking continues while the app is open.`);
+        }
+      } else {
+        setNotice(null);
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'unknown error';
+      setNotice(`Could not start the shift (${detail}). Try again.`);
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
     }
-    const position = await readPosition();
-    if (!position) {
-      setNotice('Location is off, so the shift cannot start.');
-      return;
-    }
-    const battery = await readBatteryPercent();
-    const fix: Fix = { at: Date.now(), ...position, batteryPercent: battery };
-    const prev = machineRef.current;
-    const result = step(prev, { type: 'clock-in', fix }, config(), () => crypto.randomUUID());
-    if (result.error === 'not-at-shop') {
-      setNotice('You are not at the shop yet. Clock in starts only inside the shop geofence.');
-      return;
-    }
-    if (result.error === 'no-shop') {
-      setNotice('Set the shop location before starting.');
-      return;
-    }
-    if (result.error) return;
-    setNotice(null);
-    lastSpeed.current = fix.speedMps;
-    publish(prev, result.state);
   }, [config, publish]);
 
   const requestStart = useCallback(() => {
+    if (startingRef.current) return;
     if (!loadConsent()) {
       setConsentOpen(true);
       return;
@@ -208,6 +293,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
       latitude: position?.latitude ?? last?.latitude ?? 0,
       longitude: position?.longitude ?? last?.longitude ?? 0,
       speedMps: position?.speedMps ?? 0,
+      accuracyM: position?.accuracyM ?? null,
       batteryPercent: battery,
     };
     applyFix('clock-out', fix);
@@ -302,24 +388,36 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
   }, []);
 
   useEffect(() => {
+    if (!session?.user.id) return undefined;
     let cancelled = false;
-    void supabase.from('shop_locations').select('id, name, latitude, longitude, radius_m').eq('active', true).limit(1)
-      .then(({ data, error }) => {
-        if (cancelled || error || !data?.length) return;
-        const row = data[0] as { id: string; name: string; latitude: number; longitude: number; radius_m: number };
-        const next: ShopLocation = {
-          id: String(row.id),
-          name: row.name || 'Shop',
-          latitude: Number(row.latitude),
-          longitude: Number(row.longitude),
-          radiusMeters: Number(row.radius_m) || 90,
-        };
-        if (!Number.isFinite(next.latitude) || !Number.isFinite(next.longitude)) return;
-        saveShop(next);
-        setShop(next);
-      });
-    return () => { cancelled = true; };
-  }, []);
+    const pullShop = () => {
+      void (async () => {
+        try {
+          const { data, error } = await supabase.from('shop_locations').select('id, name, latitude, longitude, radius_m').eq('active', true).limit(1);
+          if (cancelled || error || !data?.length) return;
+          const row = data[0] as { id: string; name: string; latitude: number; longitude: number; radius_m: number };
+          const next: ShopLocation = {
+            id: String(row.id),
+            name: row.name || 'Shop',
+            latitude: Number(row.latitude),
+            longitude: Number(row.longitude),
+            radiusMeters: Number(row.radius_m) || 90,
+          };
+          if (!Number.isFinite(next.latitude) || !Number.isFinite(next.longitude)) return;
+          saveShop(next);
+          setShop(next);
+        } catch (err) {
+          console.error('Shop location load failed:', err);
+        }
+      })();
+    };
+    pullShop();
+    window.addEventListener('online', pullShop);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', pullShop);
+    };
+  }, [session?.user.id]);
 
   const saveShopAndSync = (next: ShopLocation) => {
     saveShop(next);
@@ -355,8 +453,12 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     },
     requestStart,
     acceptConsentAndStart,
-    dismissConsent: () => setConsentOpen(false),
+    dismissConsent: () => {
+      setConsentOpen(false);
+      setNotice(consentCancelledMessage());
+    },
     clockOut: () => { void clockOut(); },
+    starting,
   };
 }
 

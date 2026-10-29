@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, MapPin } from 'lucide-react';
+import { Clock, Loader2, MapPin } from 'lucide-react';
 import { clampRadius } from '@/lib/geofence/sites';
 import { DEFAULT_WORK_HOURS, formatHourLabel } from '@/lib/geofence/workHours';
 import { segmentMinutes } from '@/lib/shift/machine';
@@ -91,9 +91,12 @@ export default function TimeCardView({ tracker }: Props) {
             <button
               type="button"
               onClick={tracker.requestStart}
-              className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700"
+              disabled={tracker.starting}
+              aria-busy={tracker.starting}
+              className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              Start shift
+              {tracker.starting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {tracker.starting ? 'Getting your location…' : 'Start shift'}
             </button>
           )}
         </div>
