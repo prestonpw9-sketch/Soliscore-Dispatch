@@ -6,6 +6,7 @@ import {
   MessageSquare,
   LayoutDashboard,
   CalendarRange,
+  Clock,
   Users,
   Calculator,
   FileSpreadsheet,
@@ -35,6 +36,7 @@ export type ViewKey =
   | 'takeoff'
   | 'truescale'
   | 'schedule'
+  | 'timecard'
   | 'settings';
 
 import type { Role } from '@/lib/AuthContext';
@@ -45,6 +47,7 @@ import type { Role } from '@/lib/AuthContext';
 const NAV_ITEMS: { key: ViewKey; label: string; icon: typeof LayoutDashboard; roles: Role[] }[] = [
   { key: 'dashboard', label: 'Dispatch Board',     icon: LayoutDashboard, roles: ['owner', 'office', 'crew'] },
   { key: 'schedule',  label: 'Schedule',           icon: CalendarRange,   roles: ['owner', 'office', 'crew'] },
+  { key: 'timecard',  label: 'Time Card',          icon: Clock,           roles: ['owner', 'office', 'crew'] },
   { key: 'customers', label: 'Customers Database', icon: Users,           roles: ['owner'] },
   // Quick Bid Estimator: owners + crew (per Preston). Office is view-only elsewhere.
   { key: 'estimator', label: 'Bid Estimator',      icon: Calculator,      roles: ['owner', 'crew'] },

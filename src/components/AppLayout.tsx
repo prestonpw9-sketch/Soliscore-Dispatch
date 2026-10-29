@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Menu, Plus, Search, Database, RefreshCw,
   Loader2, Calculator, Bell,
@@ -23,6 +23,9 @@ import { useAuth } from '@/lib/AuthContext';
 import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext } from '@/lib/phases';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import DispatchBanner from './DispatchBanner';
+import TimeCardView from './TimeCardView';
+import ArrivalPrompt from './ArrivalPrompt';
+import { useJobSiteArrival } from '@/hooks/useJobSiteArrival';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -33,6 +36,7 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
   takeoff:    { title: 'Full Bid Takeoff', subtitle: 'Full 4-page takeoff for ground-up buildings and houses' },
   truescale:  { title: 'TrueScale',       subtitle: 'Scale blueprints and measure critical dimensions' },
   schedule:   { title: 'Schedule',        subtitle: 'Plan crews across jobs and track daily progress' },
+  timecard:   { title: 'Time Card',       subtitle: 'Clock in when you arrive at a job site' },
   settings:   { title: 'System Settings', subtitle: 'Manage profile configuration parameters' },
 };
 
@@ -54,6 +58,7 @@ const AppLayout: React.FC = () => {
   const viewAccess: Record<string, string[]> = {
     dashboard: ['owner', 'office', 'crew'],
     schedule:  ['owner', 'office', 'crew'],
+    timecard:  ['owner', 'office', 'crew'],
     customers: ['owner'],
     estimator: ['owner', 'crew'],
     takeoff:   ['owner'],
@@ -71,6 +76,13 @@ const AppLayout: React.FC = () => {
   const [selectedJob, setSelectedJob]       = useState<Job | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
   const [toastTone, setToastTone]           = useState<'success' | 'error'>('success');
+  const [timeCardJobId, setTimeCardJobId]   = useState<string | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('job');
+    } catch {
+      return null;
+    }
+  });
 
   const {
     loading,
@@ -352,6 +364,24 @@ const AppLayout: React.FC = () => {
     })();
   };
 
+  const openTimeCard = useCallback((jobId: string) => {
+    setTimeCardJobId(jobId);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'timecard');
+      url.searchParams.set('job', jobId);
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    } catch { /* ignore */ }
+    setView('timecard');
+  }, []);
+
+  const changeView = (next: ViewKey) => {
+    setTimeCardJobId(null);
+    setView(next);
+  };
+
+  const arrival = useJobSiteArrival(jobs, { onOpenTimeCard: openTimeCard });
+
   const isInitialLoad = (loading || !!error) && customers.length === 0;
   const trueScale = view === 'truescale';
 
@@ -359,8 +389,16 @@ const AppLayout: React.FC = () => {
     try { sessionStorage.setItem('itdg-view', view); } catch { /* ignore */ }
     try {
       const url = new URL(window.location.href);
+      let changed = false;
       if (url.searchParams.get('view') !== view) {
         url.searchParams.set('view', view);
+        changed = true;
+      }
+      if (view !== 'timecard' && url.searchParams.has('job')) {
+        url.searchParams.delete('job');
+        changed = true;
+      }
+      if (changed) {
         window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
       }
     } catch { /* ignore */ }
@@ -382,7 +420,7 @@ const AppLayout: React.FC = () => {
     }`}>
       <Sidebar
         activeView={view}
-        onChange={setView}
+        onChange={changeView}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -591,6 +629,10 @@ const AppLayout: React.FC = () => {
                 />
               )}
 
+              {view === 'timecard' && (
+                <TimeCardView jobs={jobs} focusJobId={timeCardJobId} />
+              )}
+
             </>
           )}
         </main>
@@ -623,6 +665,17 @@ const AppLayout: React.FC = () => {
       <SlideOutPanel
         job={selectedJob}
         onClose={() => setSelectedJob(null)}
+      />
+
+      <ArrivalPrompt
+        prompt={arrival.prompt}
+        watch={arrival.watch}
+        onAllow={arrival.allowLocation}
+        onDismiss={arrival.dismiss}
+        onOpenTimeCard={jobId => {
+          arrival.dismiss(jobId);
+          openTimeCard(jobId);
+        }}
       />
 
       {/* Toast */}

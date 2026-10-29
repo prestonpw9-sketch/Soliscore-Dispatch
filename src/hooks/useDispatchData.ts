@@ -9,6 +9,7 @@ import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeO
 import { formatTimeOffSpan, fullyOffLeave, toLocalYMD } from '@/lib/data';
 import { storedPhase } from '@/lib/phases';
 import { completeJobPatch, restoreJobPatch } from '@/lib/warranty';
+import { finiteOrNull } from '@/lib/geofence/sites';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -119,6 +120,9 @@ export const useDispatchData = () => {
         tmHours:           j.tm_hours != null && j.tm_hours !== '' ? Number(j.tm_hours) : null,
         completedAt:       j.completed_at ? String(j.completed_at) : null,
         warrantyUntil:     j.warranty_until ? String(j.warranty_until).slice(0, 10) : null,
+        latitude:          finiteOrNull(j.latitude),
+        longitude:         finiteOrNull(j.longitude),
+        geofenceRadiusM:   finiteOrNull(j.geofence_radius_m),
       }));
       setJobs(liveJobs);
       jobsFetchOkRef.current = true;
