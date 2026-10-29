@@ -65,13 +65,16 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         CAPPluginMethod(name: "startShiftTracking", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopShiftTracking", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "drainSamples", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getBattery", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getBattery", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getCurrentPosition", returnType: CAPPluginReturnPromise)
     ]
 
     private let manager = CLLocationManager()
     private let motion = CMMotionActivityManager()
     private var shiftActive = false
     private var highFrequency = false
+    private var pendingPositionCall: CAPPluginCall?
+    private var pendingPositionTimeout: DispatchWorkItem?
     private let defaults = UserDefaults.standard
     private var pendingAccessCall: CAPPluginCall?
     private var askedNotifications = false
@@ -217,6 +220,45 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         call.resolve(["samples": samples])
     }
 
+    @objc func getCurrentPosition(_ call: CAPPluginCall) {
+        if !CLLocationManager.locationServicesEnabled() {
+            call.reject("services-off")
+            return
+        }
+        let status = manager.authorizationStatus
+        if status == .denied || status == .restricted {
+            call.reject("denied")
+            return
+        }
+        let highAccuracy = call.getBool("enableHighAccuracy", true)
+        let timeoutMs = call.getDouble("timeout", 15000)
+        let maximumAge = call.getDouble("maximumAge", 0)
+        if maximumAge > 0, let last = manager.location,
+           Date().timeIntervalSince(last.timestamp) * 1000 <= maximumAge {
+            call.resolve(locationPayload(last))
+            return
+        }
+        pendingPositionTimeout?.cancel()
+        pendingPositionCall = call
+        manager.desiredAccuracy = highAccuracy ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let pending = self.pendingPositionCall else { return }
+            self.pendingPositionCall = nil
+            if maximumAge > 0, let last = self.manager.location,
+               Date().timeIntervalSince(last.timestamp) * 1000 <= maximumAge {
+                pending.resolve(self.locationPayload(last))
+            } else {
+                pending.reject("timeout")
+            }
+        }
+        pendingPositionTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeoutMs / 1000, execute: work)
+        if status == .notDetermined {
+            manager.requestWhenInUseAuthorization()
+        }
+        manager.requestLocation()
+    }
+
     @objc func getBattery(_ call: CAPPluginCall) {
         if let percent = ShiftSampleQueue.batteryPercent() {
             call.resolve(["percent": percent])
@@ -264,6 +306,12 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
 
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
+        if let pending = pendingPositionCall {
+            pendingPositionCall = nil
+            pendingPositionTimeout?.cancel()
+            pendingPositionTimeout = nil
+            pending.resolve(locationPayload(location))
+        }
         if shiftActive {
             ShiftSampleQueue.append(location)
             let moving = location.speed >= 4.4704
@@ -284,7 +332,34 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
     }
 
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        if let pending = pendingPositionCall {
+            pendingPositionCall = nil
+            pendingPositionTimeout?.cancel()
+            pendingPositionTimeout = nil
+            let denied = (error as? CLError)?.code == .denied
+            pending.reject(denied ? "denied" : "unavailable")
+            return
+        }
         NSLog("Job geofence location error: \(error.localizedDescription)")
+    }
+
+    private func locationPayload(_ location: CLLocation) -> [String: Any] {
+        var payload: [String: Any] = [
+            "latitude": location.coordinate.latitude,
+            "longitude": location.coordinate.longitude,
+            "time": location.timestamp.timeIntervalSince1970 * 1000
+        ]
+        if location.horizontalAccuracy >= 0 {
+            payload["accuracy"] = location.horizontalAccuracy
+        } else {
+            payload["accuracy"] = NSNull()
+        }
+        if location.speed >= 0 {
+            payload["speed"] = location.speed
+        } else {
+            payload["speed"] = NSNull()
+        }
+        return payload
     }
 
     public func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {

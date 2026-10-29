@@ -35,4 +35,8 @@ export class JobGeofenceWeb extends WebPlugin {
   async getBattery() {
     return { percent: null };
   }
+
+  async getCurrentPosition() {
+    throw new Error('plugin-missing');
+  }
 }

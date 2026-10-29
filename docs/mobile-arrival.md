@@ -13,8 +13,8 @@ Until those columns exist, the phone still records the shift locally and retries
 
 ## What the phone does
 
-- First Start shows a consent screen: location is recorded only while clocked in. Cancelling it says so. While the phone looks for a fix the button stays disabled and reads "Getting your location…".
-- Start uses a fresh GPS fix (no cached position) for up to 30 seconds, then the best fix it got. A reading counts as the shop when the distance minus the accuracy (capped at 100 m) is inside the shop radius. Permission denied, GPS timeout, and "not at the shop" each have their own message.
+- First Start shows a consent screen: location is recorded only while clocked in. Cancelling it says so. While the phone looks for a fix the button stays disabled and reads "Getting your location…", and Cancel stops that wait.
+- Start does not trust the Android WebView location timeout. Permission, GPS, the background prompt, and the shop row each sit behind a deadline that uses a short interval plus a one-shot timer, armed before the request starts. High accuracy is tried first. If that times out, Start uses a last-known position (coarse, up to 60 seconds old) and the first watch update. Location services off, permission denied or not granted, a missing plugin, and "not at the shop" each have their own message. A reading counts as the shop when the distance minus the accuracy (capped at 100 m) is inside the shop radius.
 - Android asks for location while the app is in use first, starts the shift, then asks for all-the-time. Start does not wait on that second prompt.
 - Start is accepted only inside the shop geofence (Time Card → Shop). Save the shop latitude, longitude, and radius on the phone. An owner save is also queued for `shop_locations`.
 - Driving starts after speed stays at or above the configured threshold (default 10 mph) for 30 seconds, or after the phone has been outside the current shop or job fence for that long.
@@ -89,7 +89,7 @@ Apple still requires a privacy policy URL on the TestFlight listing. The app alr
 
 Preston's phone is the first device to test. This environment has no Android emulator image and no Xcode, so the native tracker has not been run on hardware. On that phone, confirm:
 
-- The consent screen appears once, then Start works only at the shop.
+- The consent screen appears once, then Start works only at the shop. If GPS never arrives, the "Getting your location…" spinner clears on its own (about 30 seconds) with a specific error, and Cancel clears it sooner. Debug APK `versionCode` 2 installs over `versionCode` 1 when both are signed with the same debug key.
 - A drive over about 10 mph becomes Travel, and a stop of a few minutes inside a job fence becomes On site, with no taps in between.
 - Leaving the site and returning to the shop closes the job and, after the dwell, records Shop again.
 - Airplane mode keeps segments on the phone. Turning service back on syncs them once, without duplicate rows, after the migrations are applied.

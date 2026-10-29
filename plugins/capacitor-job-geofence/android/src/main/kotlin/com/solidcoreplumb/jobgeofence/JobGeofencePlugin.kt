@@ -1,12 +1,21 @@
 package com.solidcoreplumb.jobgeofence
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.location.Location
+import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import org.json.JSONArray
+import java.util.concurrent.atomic.AtomicBoolean
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -95,6 +104,98 @@ class JobGeofencePlugin : Plugin() {
     @PermissionCallback
     private fun afterWhileInUse(call: PluginCall) {
         call.resolve(accessPayload())
+    }
+
+    @PluginMethod
+    @SuppressLint("MissingPermission")
+    fun getCurrentPosition(call: PluginCall) {
+        if (!locationServicesEnabled()) {
+            call.reject("services-off")
+            return
+        }
+        if (getPermissionState("location") != PermissionState.GRANTED) {
+            call.reject("denied")
+            return
+        }
+        val highAccuracy = call.getBoolean("enableHighAccuracy", true) ?: true
+        val timeoutMs = (call.getInt("timeout", 15_000) ?: 15_000).toLong().coerceAtLeast(1L)
+        val maximumAge = (call.getInt("maximumAge", 0) ?: 0).toLong().coerceAtLeast(0L)
+        val client = try {
+            LocationServices.getFusedLocationProviderClient(context)
+        } catch (_: Exception) {
+            call.reject("unavailable")
+            return
+        }
+        val settled = AtomicBoolean(false)
+        val timer = Handler(Looper.getMainLooper())
+        val token = CancellationTokenSource()
+        var lastKnown: Location? = null
+        fun freshEnough(location: Location?): Boolean {
+            if (location == null || maximumAge <= 0L) return false
+            return System.currentTimeMillis() - location.time <= maximumAge
+        }
+        fun finishOk(location: Location) {
+            if (!settled.compareAndSet(false, true)) return
+            timer.removeCallbacksAndMessages(null)
+            token.cancel()
+            val payload = JSObject()
+            payload.put("latitude", location.latitude)
+            payload.put("longitude", location.longitude)
+            payload.put("accuracy", if (location.hasAccuracy()) location.accuracy.toDouble() else JSONObject.NULL)
+            payload.put("speed", if (location.hasSpeed()) location.speed.toDouble() else JSONObject.NULL)
+            payload.put("time", location.time)
+            call.resolve(payload)
+        }
+        fun finishErr(message: String) {
+            if (!settled.compareAndSet(false, true)) return
+            timer.removeCallbacksAndMessages(null)
+            token.cancel()
+            call.reject(message)
+        }
+        // Arm the deadline before any Play Services task. lastLocation and
+        // getCurrentLocation can both hang, and a timer posted inside their
+        // listener would never be scheduled.
+        val timeout = Runnable {
+            token.cancel()
+            val cached = lastKnown?.takeIf { freshEnough(it) }
+            if (cached != null) finishOk(cached) else finishErr("timeout")
+        }
+        timer.postDelayed(timeout, timeoutMs)
+        client.lastLocation.addOnCompleteListener { task ->
+            if (settled.get()) return@addOnCompleteListener
+            val last = if (task.isSuccessful) task.result else null
+            lastKnown = last
+            if (last != null && freshEnough(last)) {
+                finishOk(last)
+                return@addOnCompleteListener
+            }
+            val priority = if (highAccuracy) {
+                Priority.PRIORITY_HIGH_ACCURACY
+            } else {
+                Priority.PRIORITY_BALANCED_POWER_ACCURACY
+            }
+            client.getCurrentLocation(priority, token.token).addOnCompleteListener { freshTask ->
+                if (settled.get()) return@addOnCompleteListener
+                val fresh = if (freshTask.isSuccessful) freshTask.result else null
+                val cached = last?.takeIf { freshEnough(it) }
+                when {
+                    fresh != null -> finishOk(fresh)
+                    cached != null -> finishOk(cached)
+                    freshTask.exception == null -> finishErr("unavailable")
+                    else -> finishErr("timeout")
+                }
+            }
+        }
+    }
+
+    private fun locationServicesEnabled(): Boolean {
+        val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            manager.isLocationEnabled
+        } else {
+            @Suppress("DEPRECATION")
+            manager.isProviderEnabled(LocationManager.GPS_PROVIDER) || manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        }
     }
 
     @PluginMethod

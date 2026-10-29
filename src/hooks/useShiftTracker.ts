@@ -22,15 +22,24 @@ import {
   saveSpeedMph,
 } from '@/lib/shift/storage';
 import {
+  acquireStartFix,
   browserStartWatch,
   consentCancelledMessage,
   gpsTimeoutMessage,
-  locationUnavailableMessage,
+  isCancelled,
+  isTimedOut,
+  locateFailureMessage,
+  locationRequestCancelledMessage,
+  nativeFailureReason,
   notAtShopMessage,
   otherStartErrorMessage,
+  permissionCheckTimeoutMessage,
   permissionDeniedMessage,
-  START_FIX_TIMEOUT_MS,
-  watchForStartFix,
+  pluginMissingMessage,
+  withDeadline,
+  type LocateFailure,
+  type NativePositionResult,
+  type StartFix,
 } from '@/lib/shift/locate';
 import { enqueueAndSync, syncOutbox } from '@/lib/shift/sync';
 import { supabase } from '@/lib/supabase';
@@ -54,6 +63,7 @@ export interface ShiftTracker {
   requestStart: () => void;
   acceptConsentAndStart: () => void;
   dismissConsent: () => void;
+  cancelStart: () => void;
   clockOut: () => void;
   starting: boolean;
 }
@@ -96,6 +106,72 @@ function readPosition(): Promise<{ latitude: number; longitude: number; speedMps
   });
 }
 
+function locateErrorReason(err: unknown): { ok: false; reason: Exclude<LocateFailure, 'cancelled'> } {
+  return { ok: false, reason: nativeFailureReason(err) };
+}
+
+function positionFromPlugin(reading: {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  speed?: number | null;
+  time?: number | null;
+}): StartFix {
+  return {
+    latitude: reading.latitude,
+    longitude: reading.longitude,
+    accuracyM: reading.accuracy ?? null,
+    speedMps: reading.speed ?? null,
+    at: reading.time ?? Date.now(),
+  };
+}
+
+async function readNativePosition(
+  options: { enableHighAccuracy: boolean; maximumAge: number; timeoutMs: number },
+  signal: AbortSignal,
+): Promise<NativePositionResult> {
+  const loaded = await withDeadline(() => loadJobGeofence(), 5_000, signal);
+  if (isCancelled(loaded)) return { ok: false, reason: 'timeout' };
+  if (isTimedOut(loaded) || loaded == null || !loaded.getCurrentPosition) {
+    return { ok: false, reason: 'plugin-missing' };
+  }
+  const plugin = loaded;
+  const reading = await withDeadline(
+    () => plugin.getCurrentPosition({
+      enableHighAccuracy: options.enableHighAccuracy,
+      maximumAge: options.maximumAge,
+      timeout: options.timeoutMs,
+    }).then(
+      value => ({ ok: true as const, fix: positionFromPlugin(value) }),
+      (err: unknown) => locateErrorReason(err),
+    ),
+    options.timeoutMs,
+    signal,
+  );
+  if (isCancelled(reading) || isTimedOut(reading)) return { ok: false, reason: 'timeout' };
+  return reading;
+}
+
+function readCoarseFix(): Promise<StartFix> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('unavailable'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      position => resolve({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracyM: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+        speedMps: Number.isFinite(position.coords.speed) ? position.coords.speed : null,
+        at: Date.now(),
+      }),
+      error => reject(error),
+      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 },
+    );
+  });
+}
+
 export function useShiftTracker(jobs: Job[]): ShiftTracker {
   const { session, isOwner } = useAuth();
   const [machine, setMachine] = useState<MachineState>(() => loadMachine());
@@ -110,6 +186,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
   const [consentOpen, setConsentOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
+  const startAbortRef = useRef<AbortController | null>(null);
   const machineRef = useRef(machine);
   machineRef.current = machine;
   const shopRef = useRef(shop);
@@ -178,46 +255,89 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
       setNotice(otherStartErrorMessage('already-started'));
       return;
     }
+    const abort = new AbortController();
+    startAbortRef.current = abort;
     startingRef.current = true;
     setStarting(true);
     setNotice('Getting your location…');
     try {
       if (isNativeDispatchApp()) {
-        try {
-          const plugin = await loadJobGeofence();
-          const access = await Promise.race([
-            plugin?.requestAccess() ?? Promise.resolve({ location: 'prompt' as const, notifications: 'prompt' as const }),
-            new Promise<{ location: 'prompt'; notifications: 'prompt' }>(resolve => {
-              window.setTimeout(() => resolve({ location: 'prompt', notifications: 'prompt' }), 20_000);
-            }),
-          ]);
-          if (access?.location === 'denied') {
-            setNotice(permissionDeniedMessage());
-            return;
-          }
-        } catch (err) {
-          const detail = err instanceof Error ? err.message : 'unknown error';
-          setNotice(`Location permission failed (${detail}). Open Settings, Apps, ITDG Dispatch, Permissions, Location, and allow it while using the app.`);
+        const loaded = await withDeadline(() => loadJobGeofence(), 5_000, abort.signal);
+        if (isCancelled(loaded)) {
+          setNotice(locationRequestCancelledMessage());
+          return;
+        }
+        if (isTimedOut(loaded) || loaded == null || !loaded.requestAccess) {
+          setNotice(pluginMissingMessage());
+          return;
+        }
+        const plugin = loaded;
+        const access = await withDeadline(
+          () => plugin.requestAccess().then(
+            status => ({ status }),
+            (err: unknown) => ({ failed: locateErrorReason(err) }),
+          ),
+          15_000,
+          abort.signal,
+        );
+        if (isCancelled(access)) {
+          setNotice(locationRequestCancelledMessage());
+          return;
+        }
+        if (isTimedOut(access)) {
+          setNotice(permissionCheckTimeoutMessage());
+          return;
+        }
+        if ('failed' in access) {
+          setNotice(locateFailureMessage(access.failed.reason));
+          return;
+        }
+        if (access.status.location !== 'granted') {
+          setNotice(permissionDeniedMessage());
           return;
         }
       }
 
-      const located = await watchForStartFix(browserStartWatch(), {
-        timeoutMs: START_FIX_TIMEOUT_MS,
-        accuracyGoalM: shopNow.radiusMeters,
-        schedule: (run, delayMs) => {
-          const timer = window.setTimeout(run, delayMs);
-          return () => window.clearTimeout(timer);
+      // Thunk keeps the deadline armed before watchPosition. Passing the
+      // promise itself starts the WebView request first, and that request
+      // can swallow the 30s timer on Android.
+      const located = await withDeadline(() => acquireStartFix({
+        nativePosition: isNativeDispatchApp()
+          ? options => readNativePosition(options, abort.signal)
+          : undefined,
+        watch: browserStartWatch(),
+        coarsePosition: () => {
+          if (!isNativeDispatchApp()) return readCoarseFix();
+          return readNativePosition(
+            { enableHighAccuracy: false, maximumAge: 60_000, timeoutMs: 10_000 },
+            abort.signal,
+          ).then(result => {
+            if (result.ok === false) throw new Error(result.reason);
+            return result.fix;
+          });
         },
-      });
+      }, {
+        accuracyGoalM: shopNow.radiusMeters,
+        highAccuracyMs: 15_000,
+        coarseMs: 10_000,
+        signal: abort.signal,
+        withDeadline,
+      }), 30_000, abort.signal);
+      if (isCancelled(located)) {
+        setNotice(locationRequestCancelledMessage());
+        return;
+      }
+      if (isTimedOut(located)) {
+        setNotice(gpsTimeoutMessage());
+        return;
+      }
       if (located.ok === false) {
-        if (located.reason === 'denied') setNotice(permissionDeniedMessage());
-        else if (located.reason === 'timeout') setNotice(gpsTimeoutMessage());
-        else setNotice(locationUnavailableMessage());
+        setNotice(locateFailureMessage(located.reason));
         return;
       }
 
-      const battery = await readBatteryPercent();
+      const batteryReading = await withDeadline(() => readBatteryPercent(), 3_000, abort.signal);
+      const battery = typeof batteryReading === 'number' ? batteryReading : null;
       const fix: Fix = {
         at: Date.now(),
         latitude: located.fix.latitude,
@@ -246,11 +366,11 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
         setNotice('Shift started. Allow all the time when the phone asks so tracking continues with the screen off. While-in-use still records this shift with the app open.');
         try {
           const plugin = await loadJobGeofence();
-          const background = plugin?.requestBackgroundAccess();
-          if (background) {
-            void background.catch((err: unknown) => {
-              const detail = err instanceof Error ? err.message : 'unknown error';
-              setNotice(`Shift started, but background location was not requested (${detail}). Tracking continues while the app is open. To allow all the time: Settings, Apps, ITDG Dispatch, Permissions, Location.`);
+          if (plugin?.requestBackgroundAccess) {
+            void withDeadline(() => plugin.requestBackgroundAccess(), 8_000).then(result => {
+              if (isTimedOut(result)) {
+                setNotice('Shift started. The background location prompt timed out. Tracking continues while the app is open. To allow all the time: Settings, Apps, ITDG Dispatch, Permissions, Location.');
+              }
             });
           }
         } catch (err) {
@@ -393,7 +513,10 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     const pullShop = () => {
       void (async () => {
         try {
-          const { data, error } = await supabase.from('shop_locations').select('id, name, latitude, longitude, radius_m').eq('active', true).limit(1);
+          const query = supabase.from('shop_locations').select('id, name, latitude, longitude, radius_m').eq('active', true).limit(1);
+          const raced = await withDeadline(() => query, 10_000);
+          if (isTimedOut(raced) || isCancelled(raced)) return;
+          const { data, error } = raced;
           if (cancelled || error || !data?.length) return;
           const row = data[0] as { id: string; name: string; latitude: number; longitude: number; radius_m: number };
           const next: ShopLocation = {
@@ -456,6 +579,9 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     dismissConsent: () => {
       setConsentOpen(false);
       setNotice(consentCancelledMessage());
+    },
+    cancelStart: () => {
+      startAbortRef.current?.abort();
     },
     clockOut: () => { void clockOut(); },
     starting,

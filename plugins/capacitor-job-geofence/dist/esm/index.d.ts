@@ -59,6 +59,17 @@ export interface JobGeofencePlugin {
   stopShiftTracking(): Promise<void>;
   drainSamples(): Promise<{ samples: ShiftSample[] }>;
   getBattery(): Promise<{ percent: number | null }>;
+  getCurrentPosition(options: {
+    enableHighAccuracy: boolean;
+    maximumAge: number;
+    timeout: number;
+  }): Promise<{
+    latitude: number;
+    longitude: number;
+    accuracy: number | null;
+    speed: number | null;
+    time: number;
+  }>;
   addListener(
     eventName: 'arrival',
     listenerFunc: (event: ArrivalEvent) => void,

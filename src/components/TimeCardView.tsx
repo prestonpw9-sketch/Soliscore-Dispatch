@@ -99,6 +99,15 @@ export default function TimeCardView({ tracker }: Props) {
               {tracker.starting ? 'Getting your location…' : 'Start shift'}
             </button>
           )}
+          {tracker.starting && (
+            <button
+              type="button"
+              onClick={tracker.cancelStart}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </section>
 
