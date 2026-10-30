@@ -11,6 +11,7 @@ import {
   dailySummaryText,
   DEFAULT_PAYROLL_SETTINGS,
   payrollCsv,
+  payPeriodFor,
   payrollSettingsFromRow,
   phoenixWorkDate,
   weekStartFor,
@@ -70,6 +71,8 @@ function fullDay(day: string, shiftId: string, user = USER): { shift: PayrollShi
   };
 }
 
+const MON = { ...DEFAULT_PAYROLL_SETTINGS, weekStartDow: 1 };
+
 const NOW = Date.parse(t('2026-11-03', '12:00'));
 
 // ── Dates ──────────────────────────────────────────────────────────────────
@@ -80,6 +83,57 @@ assert.equal(weekStartFor('2026-10-26', 1), '2026-10-26');
 assert.equal(weekStartFor('2026-11-01', 1), '2026-10-26', 'Sunday ends the Mon-Sun week');
 assert.equal(weekStartFor('2026-11-01', 0), '2026-11-01', 'Sunday-start week');
 assert.deepEqual(payrollSettingsFromRow({ week_start_dow: 9, overtime_weekly_hours: 'x' }), DEFAULT_PAYROLL_SETTINGS);
+
+// ── ITDG pay week (Thu-Wed) and biweekly pay period ────────────────────────
+
+assert.equal(DEFAULT_PAYROLL_SETTINGS.weekStartDow, 4, 'default pay week starts Thursday');
+assert.equal(weekStartFor('2026-10-22', 4), '2026-10-22', 'Thursday starts the week');
+assert.equal(weekStartFor('2026-10-28', 4), '2026-10-22', 'Wednesday ends the Thu-Wed week');
+assert.equal(weekStartFor('2026-10-29', 4), '2026-10-29');
+assert.equal(weekStartFor('2026-11-04', 4), '2026-10-29');
+{
+  const p = payPeriodFor('2026-10-29', DEFAULT_PAYROLL_SETTINGS);
+  assert.deepEqual(p, { start: '2026-10-22', end: '2026-11-04', weekStarts: ['2026-10-22', '2026-10-29'] });
+  assert.equal(payPeriodFor('2026-10-22', DEFAULT_PAYROLL_SETTINGS).start, '2026-10-22', 'anchor day');
+  assert.equal(payPeriodFor('2026-11-04', DEFAULT_PAYROLL_SETTINGS).start, '2026-10-22', 'last Wednesday of the period');
+  assert.equal(payPeriodFor('2026-11-05', DEFAULT_PAYROLL_SETTINGS).start, '2026-11-05', 'next period');
+  assert.equal(payPeriodFor('2026-11-18', DEFAULT_PAYROLL_SETTINGS).end, '2026-11-18');
+  assert.equal(payPeriodFor('2026-10-21', DEFAULT_PAYROLL_SETTINGS).start, '2026-10-08', 'before the anchor');
+  // US DST ended Sun Nov 1, 2026; Phoenix stays UTC-7, so the period is exactly 14 x 24 h.
+  const span = Date.parse(`${p.end}T00:00:00-07:00`) - Date.parse(`${p.start}T00:00:00-07:00`);
+  assert.equal(span, 13 * 86_400_000, 'no DST hour lost or gained across Nov 1');
+  assert.equal(phoenixWorkDate('2026-11-01T06:59:00Z'), '2026-10-31', 'Phoenix still UTC-7 after Nov 1');
+  assert.equal(phoenixWorkDate('2026-11-01T07:00:00Z'), '2026-11-01');
+  const row = payrollSettingsFromRow({ week_start_dow: 4, pay_period_length_days: 14, pay_period_anchor_date: '2026-10-22' });
+  assert.equal(row.payPeriodLengthDays, 14);
+  assert.equal(row.payPeriodAnchorDate, '2026-10-22');
+  assert.equal(payrollSettingsFromRow({ pay_period_length_days: 10 }).payPeriodLengthDays, 14, 'non-week lengths rejected');
+}
+
+// Per-week overtime inside a biweekly period: 47.5 h in week 1, 28.5 h in week 2.
+{
+  const shifts: PayrollShiftRow[] = [];
+  const segments: PayrollSegmentRow[] = [];
+  const workDays = [
+    '2026-10-22', '2026-10-23', '2026-10-26', '2026-10-27', '2026-10-28', // Thu Fri Mon Tue Wed
+    '2026-10-29', '2026-10-30', '2026-11-02', // Thu Fri, then Mon after the DST change
+  ];
+  workDays.forEach((day, i) => {
+    const built = fullDay(day, `bi-${i}`);
+    shifts.push({ ...built.shift, end_reason: 'clock_out' });
+    segments.push(...built.segments);
+  });
+  const { weeks, days } = buildPayroll({ shifts, segments, jobs, now: NOW });
+  assert.deepEqual(weeks.map(week => [week.weekStart, week.weekEnd]), [['2026-10-22', '2026-10-28'], ['2026-10-29', '2026-11-04']]);
+  assert.equal(weeks[0].paidMinutes, 5 * 570);
+  assert.equal(weeks[0].overtimeMinutes, 5 * 570 - 2400, 'week 1 over 40 h');
+  assert.equal(days.find(day => day.workDate === '2026-10-28')?.overtimeMinutes, 450, 'Wednesday carries week 1 overtime');
+  assert.equal(weeks[1].paidMinutes, 3 * 570);
+  assert.equal(weeks[1].overtime, false, 'week 2 under 40 h; no overtime carried across weeks');
+  assert.equal(days.find(day => day.workDate === '2026-11-02')?.paidMinutes, 570, 'Nov 2 (after DST ends elsewhere) still 9.5 h');
+  const periodPaid = weeks.reduce((sum, week) => sum + week.paidMinutes, 0);
+  assert.equal(periodPaid, 8 * 570, 'period total');
+}
 
 // ── One day ────────────────────────────────────────────────────────────────
 
@@ -140,7 +194,7 @@ assert.deepEqual(payrollSettingsFromRow({ week_start_dow: 9, overtime_weekly_hou
   shifts.push(next.shift);
   segments.push(...next.segments);
 
-  const { weeks, days } = buildPayroll({ shifts, segments, jobs, now: NOW });
+  const { weeks, days } = buildPayroll({ shifts, segments, jobs, settings: MON, now: NOW });
   assert.equal(weeks.length, 2);
   const first = weeks[0];
   assert.equal(first.weekStart, '2026-10-26');
@@ -159,7 +213,7 @@ assert.deepEqual(payrollSettingsFromRow({ week_start_dow: 9, overtime_weekly_hou
   assert.equal(sunday.weeks[1].weekStart, '2026-11-01');
 
   // Higher threshold: no overtime.
-  const fifty = buildPayroll({ shifts, segments, jobs, settings: { ...DEFAULT_PAYROLL_SETTINGS, overtimeWeeklyHours: 50 }, now: NOW });
+  const fifty = buildPayroll({ shifts, segments, jobs, settings: { ...MON, overtimeWeeklyHours: 50 }, now: NOW });
   assert.equal(fifty.weeks[0].overtime, false);
 }
 
@@ -213,7 +267,7 @@ assert.deepEqual(payrollSettingsFromRow({ week_start_dow: 9, overtime_weekly_hou
   });
   const lines = csv.trim().split('\r\n');
   assert.equal(lines[0].split(',')[0], 'Row');
-  assert.ok(lines[1].startsWith('Day,"Garcia, Luis",2026-10-26,2026-10-26,'), 'comma in name is quoted');
+  assert.ok(lines[1].startsWith('Day,"Garcia, Luis",2026-10-26,2026-10-22,'), 'comma in name is quoted');
   assert.ok(lines[1].includes(',9.50,'), 'paid hours');
   assert.ok(lines[1].includes(',yes,'), 'day approved');
   assert.ok(lines.some(line => line.startsWith('Job,') && line.includes('Congress Site') && line.includes(',5.50,')));

@@ -67,6 +67,24 @@ export default function PayrollSettingsPanel({
               {DOW.map((name, index) => <option key={name} value={index}>{name}</option>)}
             </select>
           </label>
+          <label className="text-xs font-semibold text-slate-500">Pay period
+            <select
+              value={draft.pay_period_length_days}
+              onChange={e => patch({ pay_period_length_days: Number(e.target.value) })}
+              className={inputClass}
+            >
+              <option value={7}>Weekly</option>
+              <option value={14}>Every two weeks</option>
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-slate-500">A pay period started on
+            <input
+              type="date"
+              value={draft.pay_period_anchor_date}
+              onChange={e => patch({ pay_period_anchor_date: e.target.value })}
+              className={inputClass}
+            />
+          </label>
           <label className="text-xs font-semibold text-slate-500">Overtime after (hours / week)
             <input
               type="number"

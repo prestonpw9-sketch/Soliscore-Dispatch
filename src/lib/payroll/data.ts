@@ -23,6 +23,8 @@ export interface PayrollSettingsRow {
   travel_alert_minutes: number;
   daily_summary_enabled: boolean;
   daily_summary_phone: string | null;
+  pay_period_length_days: number;
+  pay_period_anchor_date: string;
 }
 
 export const DEFAULT_SETTINGS_ROW: PayrollSettingsRow = {
@@ -30,11 +32,13 @@ export const DEFAULT_SETTINGS_ROW: PayrollSettingsRow = {
   lunch_start: '11:00',
   lunch_end: '11:30',
   lunch_paid: false,
-  week_start_dow: 1,
+  week_start_dow: 4,
   overtime_weekly_hours: 40,
   travel_alert_minutes: 90,
   daily_summary_enabled: false,
   daily_summary_phone: null,
+  pay_period_length_days: 14,
+  pay_period_anchor_date: '2026-10-22',
 };
 
 export interface PayrollApproval {
@@ -97,11 +101,13 @@ export async function loadPayrollSettings(): Promise<{ row: PayrollSettingsRow; 
       lunch_start: String(raw.lunch_start ?? '11:00').slice(0, 5),
       lunch_end: String(raw.lunch_end ?? '11:30').slice(0, 5),
       lunch_paid: raw.lunch_paid === true,
-      week_start_dow: Number(raw.week_start_dow ?? 1),
+      week_start_dow: Number(raw.week_start_dow ?? 4),
       overtime_weekly_hours: Number(raw.overtime_weekly_hours ?? 40),
       travel_alert_minutes: Number(raw.travel_alert_minutes ?? 90),
       daily_summary_enabled: raw.daily_summary_enabled === true,
       daily_summary_phone: raw.daily_summary_phone ? String(raw.daily_summary_phone) : null,
+      pay_period_length_days: Number(raw.pay_period_length_days ?? 14),
+      pay_period_anchor_date: String(raw.pay_period_anchor_date ?? '2026-10-22').slice(0, 10),
     },
     error: null,
   };

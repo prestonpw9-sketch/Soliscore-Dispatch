@@ -25,9 +25,9 @@ import {
   loadPayrollSettings,
   payrollCsv,
   payrollSettingsFromRow,
+  payPeriodFor,
   phoenixWorkDate,
   removeApproval,
-  weekStartFor,
   type PayrollDay,
   type PayrollLoad,
   type PayrollSettingsRow,
@@ -78,8 +78,11 @@ export default function PayrollView({ jobs }: Props) {
     [settingsRow],
   );
   const [anchor, setAnchor] = useState(() => phoenixWorkDate(new Date()));
-  const weekStart = weekStartFor(anchor, settings.weekStartDow);
-  const weekEnd = addDaysYmd(weekStart, 6);
+  const period = payPeriodFor(anchor, settings);
+  // Names kept from the weekly view: the loaded range is now the pay period.
+  const weekStart = period.start;
+  const weekEnd = period.end;
+  const periodDays = settings.payPeriodLengthDays;
   const [load, setLoad] = useState<PayrollLoad | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +138,8 @@ export default function PayrollView({ jobs }: Props) {
   );
   const weeks = computed.weeks
     .filter(week => worker === 'all' || week.userId === worker)
-    .sort((a, b) => (names[a.userId] ?? a.userId).localeCompare(names[b.userId] ?? b.userId));
+    .sort((a, b) => (names[a.userId] ?? a.userId).localeCompare(names[b.userId] ?? b.userId)
+      || a.weekStart.localeCompare(b.weekStart));
 
   if (!isOwner) {
     return (
@@ -160,13 +164,45 @@ export default function PayrollView({ jobs }: Props) {
 
   const exportCsv = () => {
     const csv = payrollCsv(weeks, { names, approved });
-    downloadText(`payroll_${weekStart}_to_${weekEnd}.csv`, csv);
+    downloadText(`payroll_period_${weekStart}_to_${weekEnd}.csv`, csv);
   };
 
   const print = () => {
-    const html = payrollPrintHtml(`Payroll ${weekStart} to ${weekEnd}`, weeks, names, approved);
+    const html = payrollPrintHtml(`Pay period ${weekStart} to ${weekEnd}`, weeks, names, approved);
     if (!openPrintView(html)) setNotice('The browser blocked the print window. Allow pop-ups for this site and try again.');
   };
+
+  const periodApproved = weeks.length > 0
+    && weeks.every(week => approved.has(approvalKey(week.userId, 'week', week.weekStart)));
+
+  // Approving the pay period approves every pay week (and its days) inside it.
+  const approvePeriod = () => {
+    const byWorker = new Map<string, Array<{ period: 'day' | 'week'; start: string }>>();
+    for (const week of weeks) {
+      const list = byWorker.get(week.userId) ?? [];
+      list.push({ period: 'week', start: week.weekStart }, ...week.days.map(day => ({ period: 'day' as const, start: day.workDate })));
+      byWorker.set(week.userId, list);
+    }
+    void run('period', async () => {
+      for (const [workerId, periods] of byWorker) {
+        const outcome = await approvePeriods(userId, workerId, periods);
+        if (outcome.ok === false) return outcome;
+      }
+      return { ok: true as const };
+    }, 'Pay period approved.');
+  };
+
+  const periodTotals = Array.from(
+    weeks.reduce((map, week) => {
+      const sum = map.get(week.userId) ?? { paid: 0, regular: 0, overtime: 0 };
+      map.set(week.userId, {
+        paid: sum.paid + week.paidMinutes,
+        regular: sum.regular + week.regularMinutes,
+        overtime: sum.overtime + week.overtimeMinutes,
+      });
+      return map;
+    }, new Map<string, { paid: number; regular: number; overtime: number }>()),
+  );
 
   const totals = weeks.reduce(
     (sum, week) => ({ paid: sum.paid + week.paidMinutes, overtime: sum.overtime + week.overtimeMinutes }),
@@ -183,19 +219,19 @@ export default function PayrollView({ jobs }: Props) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            aria-label="Previous week"
-            onClick={() => setAnchor(addDaysYmd(weekStart, -7))}
+            aria-label="Previous pay period"
+            onClick={() => setAnchor(addDaysYmd(weekStart, -periodDays))}
             className="rounded-lg border border-slate-200 p-2 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <div className="min-w-[13rem] text-center text-sm font-bold text-slate-900 dark:text-white">
-            {dayLabel(weekStart)} – {dayLabel(weekEnd)}
+            Pay period {dayLabel(weekStart)} – {dayLabel(weekEnd)}
           </div>
           <button
             type="button"
-            aria-label="Next week"
-            onClick={() => setAnchor(addDaysYmd(weekStart, 7))}
+            aria-label="Next pay period"
+            onClick={() => setAnchor(addDaysYmd(weekStart, periodDays))}
             className="rounded-lg border border-slate-200 p-2 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
           >
             <ChevronRight className="h-4 w-4" />
@@ -205,7 +241,7 @@ export default function PayrollView({ jobs }: Props) {
             onClick={() => setAnchor(phoenixWorkDate(new Date()))}
             className="rounded-lg px-2 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-slate-800"
           >
-            This week
+            This pay period
           </button>
           <select
             aria-label="Worker"
@@ -219,6 +255,14 @@ export default function PayrollView({ jobs }: Props) {
             ))}
           </select>
           <div className="ml-auto flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={approvePeriod}
+              disabled={!weeks.length || busyKey === 'period' || periodApproved}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+            >
+              <CheckCircle2 className="h-4 w-4" /> {periodApproved ? 'Pay period approved' : 'Approve pay period'}
+            </button>
             <button
               type="button"
               onClick={exportCsv}
@@ -248,7 +292,7 @@ export default function PayrollView({ jobs }: Props) {
           {weeks.length} worker{weeks.length === 1 ? '' : 's'} · {formatHours(totals.paid)} h paid
           {totals.overtime ? ` · ${formatHours(totals.overtime)} h overtime` : ''}
           {flagCount ? ` · ${flagCount} flag${flagCount === 1 ? '' : 's'} to review` : ''}
-          {' · '}Pay week starts {DOW[settings.weekStartDow]}; overtime over {settings.overtimeWeeklyHours} h; lunch {settings.lunchPaid ? 'paid' : 'unpaid'}.
+          {' · '}Pay week starts {DOW[settings.weekStartDow]}; {periodDays === 14 ? 'paid every two weeks' : `${periodDays}-day pay period`}; overtime over {settings.overtimeWeeklyHours} h per week; lunch {settings.lunchPaid ? 'paid' : 'unpaid'}.
         </p>
         {load?.setupMessage && (
           <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
@@ -266,6 +310,35 @@ export default function PayrollView({ jobs }: Props) {
           </p>
         )}
       </section>
+
+      {periodTotals.length > 0 && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <h3 className="mb-2 text-sm font-bold text-slate-900 dark:text-white">
+            Pay period totals ({period.weekStarts.map(start => `${dayLabel(start)}–${dayLabel(addDaysYmd(start, 6))}`).join(', ')})
+          </h3>
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="py-1">Worker</th>
+                <th className="py-1 text-right">Regular</th>
+                <th className="py-1 text-right">Overtime</th>
+                <th className="py-1 text-right">Paid</th>
+              </tr>
+            </thead>
+            <tbody>
+              {periodTotals.map(([workerId, sum]) => (
+                <tr key={workerId} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="py-1">{names[workerId] ?? 'Crew member'}</td>
+                  <td className="py-1 text-right tabular-nums">{formatHours(sum.regular)}</td>
+                  <td className="py-1 text-right tabular-nums text-rose-700 dark:text-rose-300">{sum.overtime ? formatHours(sum.overtime) : ''}</td>
+                  <td className="py-1 text-right font-bold tabular-nums">{formatHours(sum.paid)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-2 text-xs text-slate-500">Overtime is counted per pay week (over {settings.overtimeWeeklyHours} h), not across the whole period.</p>
+        </section>
+      )}
 
       {settingsOpen && (
         <PayrollSettingsPanel
@@ -285,7 +358,7 @@ export default function PayrollView({ jobs }: Props) {
         </div>
       ) : weeks.length === 0 ? (
         <p className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">
-          No shifts clocked in this week.
+          No shifts clocked in this pay period.
         </p>
       ) : (
         weeks.map(week => {
@@ -298,6 +371,7 @@ export default function PayrollView({ jobs }: Props) {
             >
               <header className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4 dark:border-slate-800">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">{names[week.userId] ?? 'Crew member'}</h3>
+                <span className="text-xs font-semibold text-slate-500">Week {dayLabel(week.weekStart)} – {dayLabel(week.weekEnd)}</span>
                 <span className="text-sm text-slate-600 dark:text-slate-300">
                   {formatHours(week.paidMinutes)} h paid · {formatHours(week.regularMinutes)} regular
                 </span>

@@ -47,13 +47,20 @@ export interface PayrollSettings {
   weekStartDow: number;
   overtimeWeeklyHours: number;
   travelAlertMinutes: number;
+  /** Pay period length in days (14 = biweekly). A whole number of weeks. */
+  payPeriodLengthDays: number;
+  /** Any first day of a pay period (YYYY-MM-DD, Phoenix). Periods repeat from it. */
+  payPeriodAnchorDate: string;
 }
 
 export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   lunchPaid: false,
-  weekStartDow: 1,
+  // Thursday: ITDG's pay week runs Thu-Wed, paid every two weeks.
+  weekStartDow: 4,
   overtimeWeeklyHours: 40,
   travelAlertMinutes: 90,
+  payPeriodLengthDays: 14,
+  payPeriodAnchorDate: '2026-10-22',
 };
 
 export function payrollSettingsFromRow(row: Record<string, unknown> | null | undefined): PayrollSettings {
@@ -61,11 +68,17 @@ export function payrollSettingsFromRow(row: Record<string, unknown> | null | und
   const dow = Number(row.week_start_dow);
   const overtime = Number(row.overtime_weekly_hours);
   const travel = Number(row.travel_alert_minutes);
+  const length = Number(row.pay_period_length_days);
+  const anchor = typeof row.pay_period_anchor_date === 'string' ? row.pay_period_anchor_date.slice(0, 10) : '';
   return {
     lunchPaid: row.lunch_paid === true,
     weekStartDow: Number.isInteger(dow) && dow >= 0 && dow <= 6 ? dow : DEFAULT_PAYROLL_SETTINGS.weekStartDow,
     overtimeWeeklyHours: Number.isFinite(overtime) && overtime > 0 ? overtime : DEFAULT_PAYROLL_SETTINGS.overtimeWeeklyHours,
     travelAlertMinutes: Number.isFinite(travel) && travel > 0 ? travel : DEFAULT_PAYROLL_SETTINGS.travelAlertMinutes,
+    payPeriodLengthDays: Number.isInteger(length) && length >= 7 && length % 7 === 0
+      ? length
+      : DEFAULT_PAYROLL_SETTINGS.payPeriodLengthDays,
+    payPeriodAnchorDate: /^\d{4}-\d{2}-\d{2}$/.test(anchor) ? anchor : DEFAULT_PAYROLL_SETTINGS.payPeriodAnchorDate,
   };
 }
 
@@ -163,6 +176,36 @@ export function dayOfWeek(ymd: string): number {
 export function weekStartFor(ymd: string, weekStartDow: number): string {
   const back = (dayOfWeek(ymd) - weekStartDow + 7) % 7;
   return addDaysYmd(ymd, -back);
+}
+
+/** Whole days from `fromYmd` to `toYmd` (negative when `toYmd` is earlier). */
+export function daysBetweenYmd(fromYmd: string, toYmd: string): number {
+  const parse = (ymd: string) => {
+    const [year, month, day] = ymd.split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  return Math.round((parse(toYmd) - parse(fromYmd)) / 86_400_000);
+}
+
+export interface PayPeriod {
+  start: string;
+  end: string;
+  /** First day of each pay week inside the period, in order. */
+  weekStarts: string[];
+}
+
+/** The pay period containing `ymd`, counted from the anchor in whole periods. */
+export function payPeriodFor(
+  ymd: string,
+  settings: Pick<PayrollSettings, 'payPeriodLengthDays' | 'payPeriodAnchorDate'>,
+): PayPeriod {
+  const length = settings.payPeriodLengthDays;
+  const offset = daysBetweenYmd(settings.payPeriodAnchorDate, ymd);
+  const index = Math.floor(offset / length);
+  const start = addDaysYmd(settings.payPeriodAnchorDate, index * length);
+  const weekStarts: string[] = [];
+  for (let day = 0; day < length; day += 7) weekStarts.push(addDaysYmd(start, day));
+  return { start, end: addDaysYmd(start, length - 1), weekStarts };
 }
 
 /** First instant of a Phoenix calendar day (Phoenix has no DST: UTC-7). */
