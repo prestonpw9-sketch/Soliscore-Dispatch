@@ -292,3 +292,63 @@ const failLookup = async () => ({ status: 'failed' as const, message: 'no match'
 }
 
 console.log('geocode checks passed');
+
+// ---- Tucson default for addresses with no city ----------------------------
+{
+  const { namesCityOrZip, nearTucson } = await import('../supabase/functions/_shared/geocode.ts');
+  assert.equal(namesCityOrZip('4400 E Broadway'), false);
+  assert.equal(namesCityOrZip('4400 E Broadway, AZ'), false);
+  assert.equal(namesCityOrZip('1234 W Main St, Mesa'), true);
+  assert.equal(namesCityOrZip('1234 W Main St Mesa AZ'), true);
+  assert.equal(namesCityOrZip('500 W Duval Mine Rd Green Valley'), true);
+  assert.equal(namesCityOrZip('100 E Congress St 85701'), true);
+  assert.equal(nearTucson(32.2216, -110.8987), true);
+  assert.equal(nearTucson(33.4079, -111.4984), false, 'Apache Junction is far');
+  assert.equal(nearTucson(31.8698, -110.9937), true, 'Green Valley is near');
+}
+
+{
+  // "4400 E Broadway": tried as Tucson first; Census returns the Tucson match.
+  const { fetchImpl, calls } = fakeFetch({
+    census: (url) => url.searchParams.get('address')?.includes('Tucson')
+      ? censusHit(32.2216, -110.8987, '4400 E BROADWAY BLVD, TUCSON, AZ, 85711')
+      : censusHit(33.4079, -111.4984, '4400 E BROADWAY AVE, APACHE JUNCTION, AZ'),
+  });
+  const result = await geocodeJobAddress('4400 E Broadway', { fetchImpl });
+  assert.equal(result.status, 'ok');
+  if (result.status === 'ok') assert.match(result.matchedAddress, /TUCSON/);
+  assert.equal(calls[0].url.searchParams.get('address'), '4400 E Broadway, Tucson, AZ');
+}
+
+{
+  // No city and the only match anywhere is Apache Junction: failed (Fix location), no pin.
+  const { fetchImpl, calls } = fakeFetch({
+    census: (url) => url.searchParams.get('address')?.includes('Tucson')
+      ? censusNone
+      : censusHit(33.4079, -111.4984, '4400 E BROADWAY AVE, APACHE JUNCTION, AZ'),
+    nominatim: () => [{ lat: '33.4079', lon: '-111.4984', display_name: 'Apache Junction, Arizona' }],
+  });
+  const result = await geocodeJobAddress('4400 E Broadway', { fetchImpl });
+  assert.equal(result.status, 'failed');
+  if (result.status === 'failed') assert.match(result.message, /far from Tucson/);
+  assert.equal(calls[2].url.searchParams.get('address'), '4400 E Broadway, AZ', 'falls back to the address as given');
+}
+
+{
+  // An explicit city geocodes as given, even far from Tucson (DCS in Mesa).
+  const { fetchImpl, calls } = fakeFetch({ census: () => censusHit(33.4152, -111.8315, '1234 W MAIN ST, MESA, AZ, 85201') });
+  const result = await geocodeJobAddress('1234 W Main St, Mesa', { fetchImpl });
+  assert.equal(result.status, 'ok');
+  if (result.status === 'ok') assert.equal(result.latitude, 33.4152);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.searchParams.get('address'), '1234 W Main St, Mesa, AZ');
+}
+
+{
+  // Green Valley is named: looked up as given.
+  const { fetchImpl, calls } = fakeFetch({ census: () => censusHit(31.8698, -110.9937, 'GREEN VALLEY, AZ') });
+  const result = await geocodeJobAddress('500 W Duval Mine Rd, Green Valley', { fetchImpl });
+  assert.equal(result.status, 'ok');
+  assert.equal(calls[0].url.searchParams.get('address'), '500 W Duval Mine Rd, Green Valley, AZ');
+}
+console.log('tucson-default geocode checks passed');

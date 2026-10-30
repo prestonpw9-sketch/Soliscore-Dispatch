@@ -222,7 +222,100 @@ export async function geocodeNominatim(
   return { ok: true, candidates };
 }
 
-/** Census first, then Nominatim. Never throws. */
+/** The shop, roughly. Jobs are around Tucson unless the address names a city. */
+export const TUCSON_CENTER = { latitude: 32.22, longitude: -110.97 } as const;
+/** A no-city match farther than this from Tucson is not trusted. */
+export const TUCSON_RADIUS_KM = 120;
+
+const AZ_CITIES = [
+  'tucson', 'mesa', 'phoenix', 'green valley', 'oro valley', 'marana', 'sahuarita', 'vail',
+  'chandler', 'gilbert', 'tempe', 'scottsdale', 'casa grande', 'apache junction', 'catalina',
+  'sierra vista', 'nogales', 'benson', 'queen creek', 'maricopa', 'glendale', 'peoria', 'surprise',
+  'goodyear', 'avondale', 'florence', 'eloy', 'oracle', 'san tan valley', 'rio rico', 'three points',
+  'picture rocks', 'corona de tucson', 'tombstone', 'bisbee', 'douglas', 'willcox', 'coolidge',
+  'flagstaff', 'prescott', 'yuma', 'kingman', 'tubac', 'arivaca', 'red rock', 'saddlebrooke',
+];
+
+export function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const rad = Math.PI / 180;
+  const dLat = (bLat - aLat) * rad;
+  const dLng = (bLng - aLng) * rad;
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+export function nearTucson(latitude: number, longitude: number): boolean {
+  return distanceKm(TUCSON_CENTER.latitude, TUCSON_CENTER.longitude, latitude, longitude) <= TUCSON_RADIUS_KM;
+}
+
+/**
+ * True when the address names a city, a ZIP, or another state. "4400 E Broadway"
+ * has none, so it is looked up as a Tucson address first.
+ */
+export function namesCityOrZip(raw: unknown): boolean {
+  const address = cleanAddress(raw);
+  if (/\b\d{5}(?:-\d{4})?\s*$/.test(address)) return true;
+  if (namesOtherState(address)) return true;
+  const lower = address.toLowerCase().replace(/[.]/g, '');
+  if (AZ_CITIES.some(city => new RegExp(`\\b${city}\\b`).test(lower))) return true;
+  // "123 Main St, Somewhere" / "123 Main St, Somewhere, AZ": a comma part with letters
+  // that is not just the state.
+  const parts = address.split(',').slice(1).map(p => p.trim()).filter(Boolean);
+  return parts.some(p => /[a-z]/i.test(p) && !/^(az|arizona)(\s+\d{5}(-\d{4})?)?$/i.test(p));
+}
+
+type Lookup =
+  | { found: true; hit: Candidate; source: GeocodeSource }
+  | { found: false; far: Candidate | null };
+
+async function lookupBoth(
+  query: string,
+  allowOutside: boolean,
+  requireNearTucson: boolean,
+  options: GeocodeOptions,
+  problems: string[],
+): Promise<Lookup> {
+  let far: Candidate | null = null;
+  const sources: [GeocodeSource, typeof geocodeCensus][] = [
+    ['census', geocodeCensus],
+    ['nominatim', geocodeNominatim],
+  ];
+  for (const [source, run] of sources) {
+    const name = source === 'census' ? 'Census' : 'Nominatim';
+    const reply = await run(query, options);
+    if (reply.ok === false) {
+      problems.push(reply.message);
+      continue;
+    }
+    if (requireNearTucson) {
+      const local = reply.candidates.filter(c => validCoordinate(c.latitude, c.longitude) && inArizona(c.latitude, c.longitude));
+      const near = local.find(c => nearTucson(c.latitude, c.longitude));
+      if (near) return { found: true, hit: near, source };
+      if (local.length) {
+        far = far ?? local[0];
+        problems.push(`${name} match "${local[0].label}" is far from Tucson.`);
+        continue;
+      }
+      problems.push(reply.candidates.length ? `${name} match was outside Arizona.` : `${name} found no match.`);
+      continue;
+    }
+    const hit = pickCandidate(reply.candidates, allowOutside);
+    if (hit) return { found: true, hit, source };
+    problems.push(reply.candidates.length ? `${name} match was outside Arizona.` : `${name} found no match.`);
+  }
+  return { found: false, far };
+}
+
+/**
+ * Census first, then Nominatim. Never throws.
+ *
+ * No city / ZIP in the address: try it as a Tucson address first, then as
+ * given (with AZ). Only a match within TUCSON_RADIUS_KM of Tucson is accepted;
+ * a farther one (Apache Junction, Phoenix metro) comes back failed so the job
+ * card shows Fix location instead of a wrong pin.
+ * With a city: looked up as given (Mesa, Green Valley, Oro Valley...).
+ */
 export async function geocodeJobAddress(
   rawAddress: unknown,
   options: GeocodeOptions = {},
@@ -231,43 +324,29 @@ export async function geocodeJobAddress(
   if (isPlaceholderAddress(address)) {
     return { status: 'no_address', message: 'No street address to look up.' };
   }
-  const query = withArizonaBias(address);
   const allowOutside = namesOtherState(address);
+  const hasCity = namesCityOrZip(address);
   const problems: string[] = [];
+  const ok = (r: { hit: Candidate; source: GeocodeSource }): JobGeocodeResult => ({
+    status: 'ok',
+    latitude: r.hit.latitude,
+    longitude: r.hit.longitude,
+    matchedAddress: r.hit.label,
+    source: r.source,
+  });
 
   try {
-    const census = await geocodeCensus(query, options);
-    if (census.ok === true) {
-      const hit = pickCandidate(census.candidates, allowOutside);
-      if (hit) {
-        return {
-          status: 'ok',
-          latitude: hit.latitude,
-          longitude: hit.longitude,
-          matchedAddress: hit.label,
-          source: 'census',
-        };
-      }
-      problems.push(census.candidates.length ? 'Census match was outside Arizona.' : 'Census found no match.');
+    if (hasCity) {
+      const r = await lookupBoth(withArizonaBias(address), allowOutside, false, options, problems);
+      if (r.found) return ok(r);
     } else {
-      problems.push(census.message);
-    }
-
-    const osm = await geocodeNominatim(query, options);
-    if (osm.ok === true) {
-      const hit = pickCandidate(osm.candidates, allowOutside);
-      if (hit) {
-        return {
-          status: 'ok',
-          latitude: hit.latitude,
-          longitude: hit.longitude,
-          matchedAddress: hit.label,
-          source: 'nominatim',
-        };
+      const tucson = await lookupBoth(`${address.replace(/,\s*$/, '')}, Tucson, AZ`, false, true, options, problems);
+      if (tucson.found) return ok(tucson);
+      const plain = await lookupBoth(withArizonaBias(address), false, true, options, problems);
+      if (plain.found) return ok(plain);
+      if ((tucson.found === false && tucson.far) || (plain.found === false && plain.far)) {
+        problems.push('No city in the address and the only match is far from Tucson; needs review.');
       }
-      problems.push(osm.candidates.length ? 'Nominatim match was outside Arizona.' : 'Nominatim found no match.');
-    } else {
-      problems.push(osm.message);
     }
   } catch (err) {
     problems.push(err instanceof Error ? err.message : 'Geocoder failed.');
