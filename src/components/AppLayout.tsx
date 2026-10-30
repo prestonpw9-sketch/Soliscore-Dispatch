@@ -5,6 +5,7 @@ import {
   Loader2, Calculator, Bell,
 } from 'lucide-react';
 import Sidebar from './Sidebar';
+import { installNativeBack, setScreenBackHandler, useBackHandler } from '@/lib/nav/backStack';
 import type { ViewKey } from './types';
 import Dashboard from './Dashboard';
 import ScheduleBoard from './ScheduleBoard';
@@ -363,6 +364,20 @@ const AppLayout: React.FC = () => {
   const changeView = (next: ViewKey) => {
     setView(next);
   };
+
+  // Android back / gesture: close the open sheet or dialog first (each one
+  // registers itself), then return to the Dispatch Board, and only exit the
+  // app from the board. Without a listener Capacitor exits right away
+  // because view changes use replaceState (no WebView history).
+  useEffect(() => installNativeBack(), []);
+  useEffect(() => {
+    setScreenBackHandler(() => {
+      if (view !== 'dashboard') { setView('dashboard'); return true; }
+      return false;
+    });
+    return () => setScreenBackHandler(null);
+  }, [view]);
+  useBackHandler(sidebarOpen, () => setSidebarOpen(false));
 
   const shiftTracker = useShiftTracker(jobs);
   useJobGeocodeSweep(jobs, canEdit, todayStr, () => { void refresh(); });

@@ -136,6 +136,19 @@ export default function PayrollView({ jobs }: Props) {
       .sort((a, b) => (names[a] ?? a).localeCompare(names[b] ?? b)),
     [computed.weeks, names],
   );
+  // Open the most recent day that has a shift once per load, so the map and
+  // stops are visible without hunting for the right row.
+  const [autoOpenedFor, setAutoOpenedFor] = useState<PayrollLoad | null>(null);
+  useEffect(() => {
+    if (!load || autoOpenedFor === load) return;
+    setAutoOpenedFor(load);
+    if (expanded) return;
+    const latest = computed.days
+      .filter(day => day.shifts.length > 0 && (worker === 'all' || day.userId === worker))
+      .sort((a, b) => b.workDate.localeCompare(a.workDate) || (b.shifts[0]?.clockIn ?? '').localeCompare(a.shifts[0]?.clockIn ?? ''))[0];
+    if (latest) setExpanded(approvalKey(latest.userId, 'day', latest.workDate));
+  }, [load, autoOpenedFor, expanded, computed.days, worker]);
+
   const weeks = computed.weeks
     .filter(week => worker === 'all' || week.userId === worker)
     .sort((a, b) => (names[a.userId] ?? a.userId).localeCompare(names[b.userId] ?? b.userId)

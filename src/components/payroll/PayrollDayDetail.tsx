@@ -398,7 +398,7 @@ function AddSegment({
 }
 
 function MapSection({ workDate, segments, jobs }: { workDate: string; segments: PayrollSegmentView[]; jobs: Job[] }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   return (
     <div>
       <div className="flex items-center gap-2">

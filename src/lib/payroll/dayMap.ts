@@ -197,3 +197,115 @@ export function distanceM(lat1: number, lng1: number, lat2: number, lng2: number
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * r * Math.asin(Math.sqrt(a));
 }
+
+// ── Readable stops (merged places with names) ──────────────────────────────
+
+/** A job pin or shop within this distance names a point "near <name>". */
+export const NEAR_M = 300;
+/** Consecutive points closer than this are one place on the map. */
+export const SAME_PLACE_M = 60;
+
+export interface DayMapPlace {
+  number: number;
+  lat: number;
+  lng: number;
+  kind: DayMapKind;
+  /** e.g. "Shop", "DCS", "Ended near DCS", "Left Shop". */
+  place: string;
+  /** Short always-visible marker label, e.g. "Shop 11:14a". */
+  label: string;
+  firstAt: string;
+  lastAt: string;
+  /** Minutes spent here (first to last point), or the segment length for a single point. */
+  minutes: number | null;
+  /** Minutes of travel that ended at this place, if any. */
+  travelMinutes: number | null;
+  segmentIds: string[];
+}
+
+export function shortClock(iso: string, timeZone = 'America/Phoenix'): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit', hour12: true })
+    .formatToParts(new Date(iso));
+  const h = parts.find(p => p.type === 'hour')?.value ?? '';
+  const m = parts.find(p => p.type === 'minute')?.value ?? '';
+  const ap = (parts.find(p => p.type === 'dayPeriod')?.value ?? '').toLowerCase().startsWith('p') ? 'p' : 'a';
+  return `${h}:${m}${ap}`;
+}
+
+export function nearestNamed(
+  lat: number,
+  lng: number,
+  pins: DayMapJobPin[],
+  shops: DayMapShop[],
+  withinM = NEAR_M,
+): { name: string; type: 'job' | 'shop'; meters: number } | null {
+  let best: { name: string; type: 'job' | 'shop'; meters: number } | null = null;
+  for (const pin of pins) {
+    const d = distanceM(lat, lng, pin.lat, pin.lng);
+    if (d <= Math.max(withinM, pin.radiusM) && (!best || d < best.meters)) best = { name: pin.name, type: 'job', meters: d };
+  }
+  for (const shop of shops) {
+    const d = distanceM(lat, lng, shop.lat, shop.lng);
+    if (d <= Math.max(withinM, shop.radiusM) && (!best || d < best.meters)) best = { name: shop.name, type: 'shop', meters: d };
+  }
+  return best;
+}
+
+function placeName(stop: DayMapStop, pins: DayMapJobPin[], shops: DayMapShop[]): string {
+  const near = nearestNamed(stop.lat, stop.lng, pins, shops);
+  if (stop.kind === 'job') return stop.jobName?.trim() || (near ? near.name : 'Job');
+  if (stop.kind === 'lunch') return near ? `Lunch near ${near.name}` : 'Lunch';
+  if (stop.kind === 'shop') return near?.type === 'shop' ? near.name : (stop.jobName?.trim() || 'Shop');
+  // Driving: start = where they left, end = where they ended up.
+  if (stop.edge === 'start') return near ? `Left ${near.name}` : 'Started driving';
+  return near ? `Ended near ${near.name}` : 'Stopped driving';
+}
+
+function minutesBetween(a: string, b: string): number {
+  return Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 60000));
+}
+
+/**
+ * Turn raw segment points into readable places: consecutive points at the
+ * same spot merge into one numbered place, each named after the job, shop,
+ * or nearest pinned job/shop within NEAR_M.
+ */
+export function buildPlaces(stops: DayMapStop[], pins: DayMapJobPin[], shops: DayMapShop[]): DayMapPlace[] {
+  const places: DayMapPlace[] = [];
+  let pendingTravel: number | null = null;
+  for (const stop of stops) {
+    const at = stop.edge === 'start' ? stop.startedAt : (stop.endedAt ?? stop.startedAt);
+    const prev = places[places.length - 1];
+    if (prev && distanceM(prev.lat, prev.lng, stop.lat, stop.lng) < SAME_PLACE_M) {
+      prev.lastAt = at;
+      prev.minutes = minutesBetween(prev.firstAt, prev.lastAt) || prev.minutes;
+      if (!prev.segmentIds.includes(stop.segmentId)) prev.segmentIds.push(stop.segmentId);
+      if (stop.kind === 'driving' && stop.edge === 'start') pendingTravel = stop.minutes;
+      continue;
+    }
+    const place = placeName(stop, pins, shops);
+    const isDrivingEnd = stop.kind === 'driving' && stop.edge === 'end';
+    places.push({
+      number: places.length + 1,
+      lat: stop.lat,
+      lng: stop.lng,
+      kind: stop.kind,
+      place,
+      label: `${place} ${shortClock(at)}`,
+      firstAt: at,
+      lastAt: at,
+      minutes: isDrivingEnd ? null : stop.minutes,
+      travelMinutes: isDrivingEnd ? stop.minutes : pendingTravel,
+      segmentIds: [stop.segmentId],
+    });
+    pendingTravel = stop.kind === 'driving' && stop.edge === 'start' ? stop.minutes : null;
+  }
+  return places;
+}
+
+/** Points are "far apart" when the fitted view would span more than this. */
+export function spanKm(points: Array<{ lat: number; lng: number }>): number {
+  const b = boundsOf(points);
+  if (!b) return 0;
+  return distanceM(b[0][0], b[0][1], b[1][0], b[1][1]) / 1000;
+}

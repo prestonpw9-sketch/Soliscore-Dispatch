@@ -25,6 +25,7 @@ import {
   money,
 } from './bid/calc';
 import { makeBlankDocument, makeLineId } from './bid/seed';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,7 @@ export default function BidEstimator() {
   const [proposalOpen, setProposalOpen] = useState(false);
   const [changeOrderOpen, setChangeOrderOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  useBackHandler(pickerOpen, () => setPickerOpen(false));
   const [savedBids, setSavedBids] = useState<SavedBidRow[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const skipDirtyRef = useRef(true); // ignore initial blank document as "dirty"
