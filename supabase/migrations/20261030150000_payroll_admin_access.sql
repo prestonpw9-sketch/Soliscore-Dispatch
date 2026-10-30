@@ -1,5 +1,5 @@
 -- Payroll, everyone's time, and the day map are limited to payroll admins:
--- Preston Watson, Carol Murray, Greg Williamson. Crew keep reading/writing
+-- Preston Watson, Carol Murray, Greg Williamson, Squeaky Wheel. Crew keep reading/writing
 -- their own shifts and segments (Time Card + Start) exactly as before.
 -- Idempotent: safe to run more than once.
 
@@ -10,7 +10,8 @@ update public.user_roles set payroll_admin = true
  where user_id in (
    '2fdd9e29-af29-4d81-8288-7d19241cfc2f', -- Preston Watson
    '7b05bd0a-c260-4d2e-a4a3-2af66fa9d25c', -- Carol Murray
-   '7464ecf7-ed10-429d-8bc2-dab9814b6597'  -- Greg Williamson
+   '7464ecf7-ed10-429d-8bc2-dab9814b6597', -- Greg Williamson
+   'fb7e48b7-a611-48e0-965f-fd84272031a6'  -- Squeaky Wheel (squeaky@solidcoreplumb.com)
  )
    and payroll_admin is distinct from true;
 
