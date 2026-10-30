@@ -20,6 +20,8 @@ interface AuthState {
   isOffice: boolean;  // read-only across the app, no bids
   isCrew: boolean;    // limited: past jobs, blueprints, submittals, photos, quick bid
   canEdit: boolean;   // owner OR crew (office is view-only). NOT a bid-access check.
+  /** Payroll, everyone's time, and the day map (user_roles.payroll_admin). */
+  payrollAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthState>({
@@ -35,6 +37,7 @@ const AuthContext = createContext<AuthState>({
   isOffice: false,
   isCrew: false,
   canEdit: false,
+  payrollAdmin: false,
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -60,6 +63,14 @@ async function fetchRole(userId: string): Promise<RoleLookup> {
   return { role: null, failed: true };
 }
 
+// Server-side flag; RLS enforces it too. Any error (e.g. migration not yet
+// applied) means no access.
+async function fetchPayrollAccess(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('my_payroll_access');
+  if (error) return false;
+  return data === true;
+}
+
 const UNAUTHORIZED_NOTICE =
   'Your account is not authorized to use this app. Contact Preston if you need access.';
 const ROLE_LOOKUP_FAILED_NOTICE =
@@ -68,6 +79,7 @@ const ROLE_LOOKUP_FAILED_NOTICE =
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<Role | null>(null);
+  const [payrollAdmin, setPayrollAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(
@@ -79,7 +91,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     async function resolve(s: Session | null) {
       if (!s) {
-        if (active) { setSession(null); setRole(null); }
+        if (active) { setSession(null); setRole(null); setPayrollAdmin(false); }
         return;
       }
       // A user is allowed in ONLY if they have a role row. No role => rejected.
@@ -96,9 +108,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession(null);
         setRole(null);
       } else {
+        const admin = await fetchPayrollAccess();
+        if (!active) return;
         setAuthNotice(null);
         setSession(s);
         setRole(lookup.role);
+        setPayrollAdmin(admin);
       }
     }
 
@@ -134,6 +149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await supabase.auth.signOut();
     setSession(null);
     setRole(null);
+    setPayrollAdmin(false);
     setAuthNotice(null);
     setPasswordRecovery(false);
   };
@@ -148,7 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         session, role, loading, authNotice, clearAuthNotice,
         passwordRecovery, completePasswordRecovery,
-        signOut, isOwner, isOffice, isCrew, canEdit,
+        signOut, isOwner, isOffice, isCrew, canEdit, payrollAdmin,
       }}
     >
       {children}
