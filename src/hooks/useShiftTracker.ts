@@ -11,12 +11,14 @@ import {
   SHIFT_SPEED_SUSTAIN_MS,
   loadConsent,
   loadDwellMs,
+  loadLunch,
   loadMachine,
   loadOutbox,
   loadShop,
   loadSpeedMph,
   saveConsent,
   saveDwellMs,
+  saveLunch,
   saveMachine,
   saveShop,
   saveSpeedMph,
@@ -40,6 +42,7 @@ import {
   type NativePositionResult,
   type StartFix,
 } from '@/lib/shift/locate';
+import { lunchFromSettingsRow, type LunchConfig } from '@/lib/shift/lunch';
 import { enqueueAndSync, syncOutbox } from '@/lib/shift/sync';
 import { supabase } from '@/lib/supabase';
 import type { Fix, MachineState, ShopLocation, TimeSegment } from '@/lib/shift/types';
@@ -55,6 +58,8 @@ export interface ShiftTracker {
   safety: WorkHoursConfig;
   dwellMinutes: number;
   speedMph: number;
+  /** Company lunch window from payroll_settings. */
+  lunch: LunchConfig;
   saveShop: (shop: ShopLocation) => void;
   saveSafety: (patch: Partial<WorkHoursConfig>) => void;
   saveDwellMinutes: (minutes: number) => void;
@@ -223,6 +228,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
   const [safety, setSafety] = useState<WorkHoursConfig>(() => loadWorkHours());
   const [dwellMs, setDwellMs] = useState(() => loadDwellMs());
   const [speedMph, setSpeedMph] = useState(() => loadSpeedMph());
+  const [lunch, setLunch] = useState<LunchConfig>(() => loadLunch());
   const [notice, setNotice] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'offline'>(
     () => (loadOutbox().length ? 'pending' : 'synced'),
@@ -241,6 +247,8 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
   dwellRef.current = dwellMs;
   const speedRef = useRef(speedMph);
   speedRef.current = speedMph;
+  const lunchRef = useRef(lunch);
+  lunchRef.current = lunch;
   const userId = session?.user.id ?? null;
   const userRef = useRef(userId);
   userRef.current = userId;
@@ -261,6 +269,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     dwellMs: dwellRef.current,
     batteryEveryMs: SHIFT_BATTERY_EVERY_MS,
     safety: safetyRef.current,
+    lunch: lunchRef.current,
   }), []);
 
   const publish = useCallback((prev: MachineState, next: MachineState) => {
@@ -602,6 +611,38 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     };
   }, [session?.user.id]);
 
+  // Lunch window is a company setting. Until this read succeeds once, the
+  // phone does not insert lunch rows (see LUNCH_UNCONFIRMED).
+  useEffect(() => {
+    if (!session?.user.id) return undefined;
+    let cancelled = false;
+    const pullLunch = () => {
+      void (async () => {
+        try {
+          const query = supabase
+            .from('payroll_settings')
+            .select('lunch_enabled, lunch_start, lunch_end, lunch_paid')
+            .limit(1);
+          const raced = await withDeadline(() => query, 10_000);
+          if (isTimedOut(raced) || isCancelled(raced)) return;
+          const { data, error } = raced;
+          if (cancelled || error || !data?.length) return;
+          const next = lunchFromSettingsRow(data[0] as Record<string, unknown>);
+          saveLunch(next);
+          setLunch(next);
+        } catch (err) {
+          console.error('Lunch setting load failed:', err);
+        }
+      })();
+    };
+    pullLunch();
+    window.addEventListener('online', pullLunch);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', pullLunch);
+    };
+  }, [session?.user.id]);
+
   const saveShopAndSync = (next: ShopLocation) => {
     saveShop(next);
     setShop(next);
@@ -620,6 +661,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     safety,
     dwellMinutes: Math.round(dwellMs / 60_000),
     speedMph,
+    lunch,
     saveShop: saveShopAndSync,
     saveSafety: patch => {
       const next = saveWorkHours({ ...safety, ...patch, timeZone: 'America/Phoenix' });

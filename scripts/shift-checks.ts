@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { clampRadius } from '../src/lib/geofence/sites.ts';
 import { DEFAULT_WORK_HOURS } from '../src/lib/geofence/workHours.ts';
+import { DEFAULT_LUNCH } from '../src/lib/shift/lunch.ts';
 import { initialMachine, openSegment, segmentMinutes, step } from '../src/lib/shift/machine.ts';
 import { flushOutbox, mergeAll, mergeOutbox, replayInto, type OutboxRow } from '../src/lib/shift/outbox.ts';
 import { rowsFromTransition } from '../src/lib/shift/rows.ts';
@@ -49,6 +50,7 @@ function config(overrides: Partial<TrackingConfig> = {}): TrackingConfig {
     dwellMs: DEFAULT_DWELL_MS,
     batteryEveryMs: 15 * 60_000,
     safety: { ...DEFAULT_WORK_HOURS },
+    lunch: { ...DEFAULT_LUNCH },
     ...overrides,
   };
 }

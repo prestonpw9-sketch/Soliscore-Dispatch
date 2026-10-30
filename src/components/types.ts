@@ -18,4 +18,5 @@ export type ViewKey =
   | 'truescale'
   | 'schedule'
   | 'timecard'
+  | 'payroll'
   | 'settings';

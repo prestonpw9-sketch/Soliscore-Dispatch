@@ -4,10 +4,12 @@ A shift starts with one clock-in at the shop and runs until clock-out. The phone
 
 The Vercel site is the same Vite build. In a browser tab, tracking runs only while that tab is open and a shift is clocked in. Background tracking is the Capacitor app.
 
-These SQL files are **not applied**. Do not run them until Preston says so.
+These SQL files are **not applied**. Do not run them until Preston says so. Apply them in this order:
 
 - `supabase/migrations/20261029040032_job_site_geofence.sql` adds job coordinates.
 - `supabase/migrations/20261029043709_shift_time_segments.sql` adds the shop, shifts, segments, and battery samples, and caps a job fence at 200 m (about 650 ft).
+- `supabase/migrations/20261029120000_job_geocode_status.sql` adds geocode status columns and the address-change trigger.
+- `supabase/migrations/20261029120100_payroll_lunch_timesheets.sql` adds the lunch segment kind, payroll settings, approvals, the edit audit, and the owner edit functions.
 
 Until those columns exist, the phone still records the shift locally and retries the sync. Nothing in this feature calls the Twilio SMS edge functions or the superintendent texting flow.
 
@@ -28,13 +30,22 @@ Until those columns exist, the phone still records the shift locally and retries
 
 ## Coordinates
 
-Addresses are not geocoded automatically. After the geofence migration is applied, look up one address and paste the result onto the job:
+Job addresses are geocoded automatically once `supabase/migrations/20261029120000_job_geocode_status.sql` is applied and the `geocode-job` edge function is deployed:
 
-```bash
-node --experimental-strip-types scripts/geocode-job-address.ts "100 E Congress St, Tucson, AZ"
-```
+- Creating a job, or changing its address, in the app calls `geocode-job` in the background. The SMS job flow (`super-processor`) schedules the same lookup after its insert; that step returns at once and cannot fail or delay the reply to the superintendent.
+- The lookup runs server-side: US Census Geocoder first, then OpenStreetMap Nominatim, biased to Arizona (", AZ" is added when no state is given, and matches outside Arizona are rejected unless the address names another state).
+- Existing coordinates are never overwritten. Editing the address of a pinned job keeps the pin and marks it **Check pin** (`geocode_status = 'stale'`).
+- Each job card shows **Pinned**, **Locating…**, **Unpinned**, **No address**, or **Check pin**. **Fix location** lets owner / crew edit the address (and re-look it up) or paste `lat, lng`.
+- Older jobs: `node --experimental-strip-types scripts/backfill-job-geocodes.ts --dry-run` (needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; drop `--dry-run` to write).
 
-That command only prints JSON. It does not update the database. The helper is `src/lib/geocodeAddress.ts` (OpenStreetMap Nominatim, one address at a time).
+The one-off printer `scripts/geocode-job-address.ts` still works and still writes nothing.
+
+## Lunch and payroll
+
+- Every shift day, a shift that is open at the lunch start gets a **Lunch** segment (default 11:00–11:30 AM Phoenix, unpaid). The open shop / travel / job segment is split around it, and afterward the phone resumes the same place if it is still inside that fence, otherwise the fence it is in now, otherwise Travel. Clock-out or the safety stop during lunch ends lunch there.
+- The window, paid / unpaid, pay-week start (default Monday), overtime threshold (default 40 h), and travel flag (default 90 min) live in `payroll_settings` and are edited on the owner **Payroll** page. A phone does not insert lunch until it has read that row once, so this build is safe against a database that does not have the `lunch` segment kind yet.
+- The Payroll page (owners only) lists each worker's days with clock-in / out, end reason, shop / travel / on-site hours per job, lunch deducted, paid total, weekly overtime, and flags (auto-stopped with no clock-out, travel over the limit, unpinned job, still clocked in from a previous day). Owners can edit, reassign, add, or remove segments and correct clock times; each change is written to `payroll_edit_audit` with the original row and clears that day's and week's approval. Days and weeks can be approved, exported to CSV, and printed.
+- `payroll-daily-summary` (SMS to the owner) is off by default.
 
 ## One-time setup
 

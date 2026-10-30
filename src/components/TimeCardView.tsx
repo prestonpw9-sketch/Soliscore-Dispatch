@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Clock, Loader2, MapPin } from 'lucide-react';
 import { clampRadius } from '@/lib/geofence/sites';
 import { DEFAULT_WORK_HOURS, formatHourLabel } from '@/lib/geofence/workHours';
+import { formatClockMinutes } from '@/lib/shift/lunch';
 import { segmentMinutes } from '@/lib/shift/machine';
 import type { ShopLocation, TimeSegment } from '@/lib/shift/types';
 import type { ShiftTracker } from '@/hooks/useShiftTracker';
@@ -25,6 +26,7 @@ function formatMinutes(minutes: number): string {
 function segmentLabel(segment: TimeSegment): string {
   if (segment.kind === 'driving') return 'Travel';
   if (segment.kind === 'shop') return 'Shop';
+  if (segment.kind === 'lunch') return 'Lunch';
   return `On site · ${segment.jobName || 'Job'}`;
 }
 
@@ -41,7 +43,10 @@ export default function TimeCardView({ tracker }: Props) {
     .filter(segment => segment.kind === 'driving')
     .reduce((sum, segment) => sum + segmentMinutes(segment, now), 0);
   const onSite = tracker.segments
-    .filter(segment => segment.kind !== 'driving')
+    .filter(segment => segment.kind === 'shop' || segment.kind === 'job')
+    .reduce((sum, segment) => sum + segmentMinutes(segment, now), 0);
+  const lunch = tracker.segments
+    .filter(segment => segment.kind === 'lunch')
     .reduce((sum, segment) => sum + segmentMinutes(segment, now), 0);
 
   const saveDraft = () => {
@@ -65,7 +70,14 @@ export default function TimeCardView({ tracker }: Props) {
         </p>
         <p className="mt-2 text-sm font-medium text-slate-800 dark:text-slate-100">
           Travel {formatMinutes(travel)} · On site {formatMinutes(onSite)}
+          {lunch > 0 ? ` · Lunch ${formatMinutes(lunch)}${tracker.lunch.paid ? '' : ' (unpaid)'}` : ''}
         </p>
+        {tracker.lunch.enabled && (
+          <p className="mt-1 text-xs text-slate-500">
+            Lunch {formatClockMinutes(tracker.lunch.startMinute)}–{formatClockMinutes(tracker.lunch.endMinute)} Phoenix time is recorded automatically
+            {tracker.lunch.paid ? ' (paid).' : ' and is unpaid.'}
+          </p>
+        )}
         {tracker.notice && (
           <p role="status" className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
             {tracker.notice}

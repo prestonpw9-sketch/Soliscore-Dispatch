@@ -1,5 +1,6 @@
 import { distanceMeters } from '../geofence/distance.ts';
 import { clampRadius, type JobSite } from '../geofence/sites.ts';
+import { lunchWindowOn, lunchWindowsBetween } from './lunch.ts';
 import { safetyStopAt } from './safety.ts';
 import {
   MPH_TO_MPS,
@@ -200,8 +201,12 @@ function beginSegment(
     id: ids(),
     shiftId: state.shift.id,
     kind,
-    jobId: place?.kind === 'job' ? place.jobId : null,
-    jobName: kind === 'driving' ? null : (place?.name ?? (kind === 'shop' ? 'Shop' : null)),
+    jobId: kind === 'job' && place?.kind === 'job' ? place.jobId : null,
+    jobName: kind === 'driving'
+      ? null
+      : kind === 'lunch'
+        ? 'Lunch'
+        : (place?.name ?? (kind === 'shop' ? 'Shop' : null)),
     startedAt: iso(at),
     endedAt: null,
     startLatitude: fix.latitude,
@@ -273,6 +278,93 @@ function placeForOpen(open: TimeSegment, places: Place[]): Place | null {
   return null;
 }
 
+/**
+ * Where to pick up after lunch. Same place as before lunch if the phone is
+ * still inside it; otherwise whichever fence it is in now; otherwise Travel.
+ * A shop or job segment whose fence is no longer in today's list resumes as
+ * it was while the phone is not moving.
+ */
+function resumeAfterLunch(
+  state: MachineState,
+  at: number,
+  fix: Fix,
+  places: Place[],
+  thresholdMps: number,
+  ids: () => string,
+): MachineState {
+  const lunchIndex = state.segments.length - 1;
+  const before = lunchIndex > 0 ? state.segments[lunchIndex - 1] : null;
+  const atFix: Fix = { ...fix, at };
+  const closed = closeOpen(state, at, atFix, fix.batteryPercent);
+
+  if (before && (before.kind === 'shop' || before.kind === 'job')) {
+    const prePlace = placeForOpen(before, places);
+    if (prePlace && inside(fix, prePlace)) {
+      return beginSegment(closed, at, atFix, before.kind, prePlace, ids);
+    }
+    if (!prePlace && (fix.speedMps ?? 0) < thresholdMps && !nearestPlace(fix, places)) {
+      const same: Place = {
+        key: before.kind === 'shop' ? 'shop' : `job:${before.jobId ?? ''}`,
+        kind: before.kind,
+        jobId: before.jobId,
+        name: before.jobName ?? (before.kind === 'shop' ? 'Shop' : 'Job'),
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        radiusMeters: 0,
+      };
+      return beginSegment(closed, at, atFix, before.kind, same, ids);
+    }
+  }
+  const here = nearestPlace(fix, places);
+  if (here) return beginSegment(closed, at, atFix, here.kind, here, ids);
+  return beginSegment(closed, at, atFix, 'driving', null, ids);
+}
+
+/**
+ * Insert any lunch window that has started by `untilMs`, and end an open
+ * lunch whose window is over. Runs before the location logic on every step,
+ * so a phone that was asleep through lunch still records it.
+ */
+function catchUpLunch(
+  state: MachineState,
+  untilMs: number,
+  fix: Fix,
+  config: TrackingConfig,
+  places: Place[],
+  thresholdMps: number,
+  ids: () => string,
+): MachineState {
+  const lunch = config.lunch;
+  if (!lunch?.enabled || !state.shift || state.shift.endedAt) return state;
+  let next = state;
+
+  const open = openSegment(next);
+  if (open?.kind === 'lunch') {
+    const began = Date.parse(open.startedAt);
+    const end = Math.max(lunchWindowOn(began, lunch).end, began);
+    if (untilMs < end) return next;
+    next = resumeAfterLunch(next, end, fix, places, thresholdMps, ids);
+  }
+
+  const shiftStart = Date.parse(next.shift!.startedAt);
+  for (const window of lunchWindowsBetween(shiftStart, untilMs, lunch)) {
+    const taken = next.segments.some(segment => {
+      if (segment.kind !== 'lunch') return false;
+      const began = Date.parse(segment.startedAt);
+      return began >= window.start && began < window.end;
+    });
+    if (taken) continue;
+    // Never rewrite segments that already started after the window opened.
+    if (next.segments.some(segment => Date.parse(segment.startedAt) > window.start)) continue;
+    const startFix: Fix = { ...fix, at: window.start };
+    next = closeOpen(next, window.start, startFix, fix.batteryPercent);
+    next = beginSegment(next, window.start, startFix, 'lunch', null, ids);
+    if (untilMs < window.end) break;
+    next = resumeAfterLunch(next, window.end, fix, places, thresholdMps, ids);
+  }
+  return next;
+}
+
 export function step(
   state: MachineState,
   input: StepInput,
@@ -319,24 +411,36 @@ export function step(
     return { state, error: input.type === 'clock-out' ? 'not-started' : null };
   }
 
+  const stopAt = safetyStopAt(Date.parse(state.shift.startedAt), config.safety);
+  const lunchUntil = input.type === 'clock-out' ? fix.at : Math.min(fix.at, stopAt);
+  const withLunch = catchUpLunch(state, lunchUntil, fix, config, places, threshold, ids);
+
   if (input.type === 'clock-out') {
-    return { state: finishShift(state, fix.at, fix, 'clock_out', ids, config.batteryEveryMs), error: null };
+    return { state: finishShift(withLunch, fix.at, fix, 'clock_out', ids, config.batteryEveryMs), error: null };
   }
 
-  const stopAt = safetyStopAt(Date.parse(state.shift.startedAt), config.safety);
   if (fix.at >= stopAt) {
     const stopFix: Fix = { ...fix, at: stopAt };
     return {
-      state: finishShift(state, stopAt, stopFix, 'auto_stop', ids, config.batteryEveryMs),
+      state: finishShift(withLunch, stopAt, stopFix, 'auto_stop', ids, config.batteryEveryMs),
       error: null,
     };
   }
 
-  const open = openSegment(state);
-  if (!open) return { state: rememberFix(state, fix), error: null };
+  const open = openSegment(withLunch);
+  if (!open) return { state: rememberFix(withLunch, fix), error: null };
 
-  const speed = speedMps(state, fix);
-  let next = state;
+  const speed = speedMps(withLunch, fix);
+  let next = withLunch;
+
+  if (open.kind === 'lunch') {
+    // Location still updates during lunch; segments do not switch until it ends.
+    next = rememberFix(next, fix);
+    if (next.shift) {
+      next = pushBattery(next, fix.at, fix.batteryPercent, next.shift.id, ids, config.batteryEveryMs, false);
+    }
+    return { state: next, error: null };
+  }
 
   if (open.kind === 'driving') {
     if (speed >= threshold) {
@@ -384,7 +488,7 @@ export function step(
   return { state: next, error: null };
 }
 
-/** Travel rows are driving. On-site rows are shop or a job. */
+/** Travel rows are driving. On-site rows are shop or a job. Lunch is its own row. */
 export function segmentMinutes(segment: TimeSegment, nowMs: number): number {
   const start = Date.parse(segment.startedAt);
   const end = segment.endedAt ? Date.parse(segment.endedAt) : nowMs;

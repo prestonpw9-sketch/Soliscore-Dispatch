@@ -10,7 +10,9 @@
     "test:e2e": "playwright test",
     "test:edge-security": "node --experimental-strip-types scripts/edge-security-checks.ts",
     "test:geofence": "node --experimental-strip-types scripts/geofence-checks.ts",
-    "test:shift": "node --experimental-strip-types scripts/shift-checks.ts && node --experimental-strip-types scripts/start-locate-checks.ts",
+    "test:shift": "node --experimental-strip-types scripts/shift-checks.ts && node --experimental-strip-types scripts/start-locate-checks.ts && node --experimental-strip-types scripts/lunch-checks.ts",
+    "test:geocode": "node --experimental-strip-types scripts/geocode-checks.ts",
+    "test:payroll": "node --experimental-strip-types scripts/payroll-checks.ts",
     "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio"
   },
   "dependencies": {

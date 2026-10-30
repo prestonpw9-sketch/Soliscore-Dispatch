@@ -4,6 +4,7 @@ import { PLUMBING_PHASES, type PlumbingPhase } from '@/components/PhaseDropdown'
 import { canChangePhase, isPlumbingPhase, phaseGateContext } from '@/lib/phases';
 import { avatarGradientClass } from '@/lib/avatarStyle';
 import InspectionPassedToggle from './InspectionPassedToggle';
+import JobLocationFix, { JobPinBadge } from './JobLocationFix';
 
 // ── Phase colors ───────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ interface JobCardProps {
   onInspectionChange?: (jobId: string, passed: boolean) => void;
   /** Owner / crew only: mark this job (phase row) completed. */
   onComplete?: (jobId: string) => void;
+  /** Owner / crew only: shows Fix location; called after a new address or pin is saved. */
+  onLocationFixed?: () => void;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -51,8 +54,10 @@ const JobCard: React.FC<JobCardProps> = ({
   onPhaseChange,
   onInspectionChange,
   onComplete,
+  onLocationFixed,
 }) => {
   const [phase, setPhase] = useState(() => job?.phase || 'Rough-In');
+  const [fixing, setFixing] = useState(false);
 
   // Sync if upstream data changes
   useEffect(() => {
@@ -104,7 +109,15 @@ const JobCard: React.FC<JobCardProps> = ({
           </svg>
           <span className="truncate">{address}</span>
         </div>
+        {job && (
+          <div className="mt-1.5">
+            <JobPinBadge job={job} onFix={onLocationFixed ? () => setFixing(true) : undefined} />
+          </div>
+        )}
       </div>
+      {fixing && job && onLocationFixed && (
+        <JobLocationFix job={job} onClose={() => setFixing(false)} onSaved={onLocationFixed} />
+      )}
 
       {/* Description */}
       <div className="bg-slate-50 dark:bg-white/5 rounded-lg p-3 text-xs text-slate-600 dark:text-slate-300 border border-slate-100 dark:border-white/10">

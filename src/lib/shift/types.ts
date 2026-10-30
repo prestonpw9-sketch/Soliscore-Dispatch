@@ -1,7 +1,8 @@
 import type { JobSite } from '../geofence/sites.ts';
 import type { WorkHoursConfig } from '../geofence/workHours.ts';
+import type { LunchConfig } from './lunch.ts';
 
-export type SegmentKind = 'shop' | 'driving' | 'job';
+export type SegmentKind = 'shop' | 'driving' | 'job' | 'lunch';
 export type ShiftEndReason = 'clock_out' | 'auto_stop';
 
 export interface ShopLocation {
@@ -25,6 +26,8 @@ export interface TrackingConfig {
   batteryEveryMs: number;
   /** Closes a forgotten shift. Does not block clock-in. */
   safety: WorkHoursConfig;
+  /** Automatic lunch window. Disabled until the server settings are read. */
+  lunch: LunchConfig;
 }
 
 export interface Shift {

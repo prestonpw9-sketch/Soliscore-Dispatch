@@ -215,6 +215,22 @@ const tools = [
   },
 ];
 
+/**
+ * Post-insert job geocode. Non-blocking and never throws: the module is
+ * loaded lazily, so even a load error there cannot break this SMS function,
+ * and the TwiML reply never waits on it.
+ */
+function geocodeJobInBackground(client: ReturnType<typeof createClient>, jobId: unknown): void {
+  try {
+    const task = import("../_shared/geocodeAfterInsert.ts")
+      .then((mod) => mod.runJobGeocode(client, jobId))
+      .catch((err) => console.error("geocode after SMS insert failed", err));
+    (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime?.waitUntil?.(task);
+  } catch (err) {
+    console.error("geocode after SMS insert was not scheduled", err);
+  }
+}
+
 type JobInsert = {
   customer_phone: string;
   title: string;
@@ -448,6 +464,8 @@ serve(async (req) => {
             console.error("log_job insert failed:", dbError);
             anyFailed = true;
           } else {
+            // Non-blocking: returns at once and never throws.
+            geocodeJobInBackground(supabase, inserted?.id);
             await recordScheduleAlert(supabase, {
               job_id: inserted?.id ?? null,
               title,
@@ -515,6 +533,8 @@ serve(async (req) => {
             console.error("schedule_job insert failed:", dbError);
             anyFailed = true;
           } else {
+            // Non-blocking: returns at once and never throws.
+            geocodeJobInBackground(supabase, inserted?.id);
             await recordScheduleAlert(supabase, {
               job_id: inserted?.id ?? null,
               title,

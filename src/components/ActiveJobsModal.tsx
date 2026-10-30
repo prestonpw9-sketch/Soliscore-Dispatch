@@ -7,6 +7,7 @@ import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext }
 import InspectionPassedToggle from './InspectionPassedToggle';
 import { dispatchToday } from '@/lib/data';
 import { completeJobPatch } from '@/lib/warranty';
+import { requestJobGeocode } from '@/lib/jobGeocode';
 
 interface Job {
   id: number;
@@ -125,6 +126,8 @@ const ActiveJobsModal: React.FC<Props> = ({ isOpen, onClose, onJobsChanged }) =>
       .single();
     if (insertError) { setError(insertError.message); }
     else if (data) {
+      // Pin the address in the background; the job is already saved.
+      void requestJobGeocode([data.id]);
       setJobs(prev => [...prev, {
         ...data,
         phase: normalizePhase(data.phase),

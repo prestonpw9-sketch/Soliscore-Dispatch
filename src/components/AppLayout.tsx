@@ -25,6 +25,8 @@ import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import DispatchBanner from './DispatchBanner';
 import TimeCardView from './TimeCardView';
 import { useShiftTracker } from '@/hooks/useShiftTracker';
+import { useJobGeocodeSweep } from '@/hooks/useJobGeocodeSweep';
+import PayrollView from './payroll/PayrollView';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -36,6 +38,7 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
   truescale:  { title: 'TrueScale',       subtitle: 'Scale blueprints and measure critical dimensions' },
   schedule:   { title: 'Schedule',        subtitle: 'Plan crews across jobs and track daily progress' },
   timecard:   { title: 'Time Card',       subtitle: 'Shop, travel, and job time from clock-in to clock-out' },
+  payroll:    { title: 'Payroll',         subtitle: 'Timesheets, overtime, approvals, and export' },
   settings:   { title: 'System Settings', subtitle: 'Manage profile configuration parameters' },
 };
 
@@ -58,6 +61,7 @@ const AppLayout: React.FC = () => {
     dashboard: ['owner', 'office', 'crew'],
     schedule:  ['owner', 'office', 'crew'],
     timecard:  ['owner', 'office', 'crew'],
+    payroll:   ['owner'],
     customers: ['owner'],
     estimator: ['owner', 'crew'],
     takeoff:   ['owner'],
@@ -360,6 +364,7 @@ const AppLayout: React.FC = () => {
   };
 
   const shiftTracker = useShiftTracker(jobs);
+  useJobGeocodeSweep(jobs, canEdit, todayStr, () => { void refresh(); });
 
   const isInitialLoad = (loading || !!error) && customers.length === 0;
   const trueScale = view === 'truescale';
@@ -524,6 +529,8 @@ const AppLayout: React.FC = () => {
             <BidEstimator />
           ) : view === 'truescale' ? (
             <TrueScaleView jobs={jobs} onSendToEstimator={() => setView('estimator')} />
+          ) : view === 'payroll' ? (
+            <PayrollView jobs={jobs} />
           ) : loading && customers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-slate-500">
               <Loader2 className="w-10 h-10 animate-spin text-blue-600" />

@@ -1,3 +1,4 @@
+import { LUNCH_UNCONFIRMED, sanitizeLunch, type LunchConfig } from './lunch.ts';
 import { initialMachine } from './machine.ts';
 import type { OutboxRow } from './outbox.ts';
 import type { MachineState } from './types.ts';
@@ -15,6 +16,7 @@ const STATE_KEY = 'itdg-shift-state';
 const OUTBOX_KEY = 'itdg-shift-outbox';
 const DWELL_KEY = 'itdg-shift-dwell-ms';
 const SPEED_KEY = 'itdg-shift-speed-mph';
+const LUNCH_KEY = 'itdg-shift-lunch';
 
 function readJson(key: string): unknown {
   try {
@@ -115,6 +117,17 @@ export function loadSpeedMph(): number {
 
 export function saveSpeedMph(speedMph: number): void {
   writeJson(SPEED_KEY, speedMph);
+}
+
+/** Last lunch window read from payroll_settings. Off until the server confirms it. */
+export function loadLunch(): LunchConfig {
+  const raw = readJson(LUNCH_KEY);
+  if (!raw) return { ...LUNCH_UNCONFIRMED };
+  return sanitizeLunch(raw, LUNCH_UNCONFIRMED);
+}
+
+export function saveLunch(lunch: LunchConfig): void {
+  writeJson(LUNCH_KEY, lunch);
 }
 
 export const SHIFT_SPEED_SUSTAIN_MS = DEFAULT_SPEED_SUSTAIN_MS;
