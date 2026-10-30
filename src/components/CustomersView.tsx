@@ -20,6 +20,7 @@ import {
   phaseCompletePercent,
   phaseToMilestone,
 } from '@/lib/billing';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,7 @@ const CustomersView: React.FC<Props> = ({
   const [typeFilter, setTypeFilter]   = useState<'all' | 'Residential' | 'Commercial'>('all');
   const [selected, setSelected]       = useState<Customer | null>(null);
   const [showBuilderModal, setShowBuilderModal] = useState(false);
+  useBackHandler(showBuilderModal, () => setShowBuilderModal(false));
   const [newBuilder, setNewBuilder]   = useState<NewCustomerForm>(EMPTY_FORM);
   const [saveError, setSaveError]     = useState<string | null>(null);
   const [saving, setSaving]           = useState(false);

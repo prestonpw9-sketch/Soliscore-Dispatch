@@ -4,6 +4,7 @@ import {
   HardHat, X, CalendarDays, ClipboardList, Loader2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface Technician {
   id: string;
@@ -108,6 +109,7 @@ export default function TechSchedule() {
       return day >= start && day <= end;
     });
 
+  useBackHandler(selectedWeekStart !== null, () => closePanel());
   const closePanel = () => {
     setSelectedWeekStart(null);
     triggerRef.current?.focus();
@@ -247,7 +249,7 @@ export default function TechSchedule() {
             tabIndex={-1}
             className="relative w-full max-w-2xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col overflow-hidden outline-none"
           >
-            <div className="flex items-center justify-between p-6 border-b border-slate-200 bg-slate-50 shrink-0">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200 bg-slate-50 shrink-0" style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))' }}>
               <div>
                 <h2 id="week-panel-title" className="text-xl font-black text-slate-900">Weekly Dispatch</h2>
                 <p className="text-slate-500 font-medium text-sm mt-1">Week of {monthLabel} {selectedWeekStart}</p>

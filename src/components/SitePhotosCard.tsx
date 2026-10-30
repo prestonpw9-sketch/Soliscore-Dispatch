@@ -12,6 +12,7 @@ import {
   getPhotoThumbnailUrl,
   parsePhotoPath,
 } from '@/lib/sitePhotos';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ export const SitePhotosCard: React.FC<Props> = ({ jobs }) => {
   const [uploadError, setUploadError]   = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState('');
   const [viewer, setViewer]             = useState<StorageFile | null>(null);
+  useBackHandler(!!viewer, () => setViewer(null));
 
   const fetchPhotos = useCallback(async () => {
     setFetchError(null);

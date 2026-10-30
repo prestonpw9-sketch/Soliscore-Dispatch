@@ -14,6 +14,7 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import { Circle, MapContainer, Marker, Polyline, Popup, TileLayer } from 'react-leaflet';
 import { Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useBackHandler } from '@/lib/nav/backStack';
 import type { Job } from '@/lib/data';
 import {
   KIND_COLOR,
@@ -94,6 +95,7 @@ export default function PayrollDayMap({ workDate, segments, jobs }: Props) {
   const [base, setBase] = useState<Base>('street');
   const [full, setFull] = useState(false);
   const [map, setMap] = useState<L.Map | null>(null);
+  useBackHandler(full, () => setFull(false));
 
   const ids = useMemo(() => segments.map(s => s.id).sort().join(','), [segments]);
 

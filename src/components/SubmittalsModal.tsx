@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import type { Job } from '@/lib/data';
 import { fetchAllSubmittals, type SubmittalRecord } from '@/lib/submittals';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface Submittal extends SubmittalRecord {}
 
@@ -131,11 +132,12 @@ const SubmittalsModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
     });
   };
 
+  useBackHandler(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div

@@ -15,6 +15,7 @@ import {
   groupPhotosByJob,
   parsePhotoPath,
 } from '@/lib/sitePhotos';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface SitePhoto {
   id: string;
@@ -181,11 +182,13 @@ const SitePhotosModal: React.FC<Props> = ({ isOpen, onClose, jobs, onCountChange
 
   const canUpload = Boolean(selectedJobId) && !uploading;
 
+  useBackHandler(isOpen, onClose);
+  useBackHandler(!!viewer, () => setViewer(null));
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div

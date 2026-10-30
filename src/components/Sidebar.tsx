@@ -42,6 +42,7 @@ export type ViewKey =
   | 'settings';
 
 import type { Role } from '@/lib/AuthContext';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 // Which roles can see each nav item.
 // owner = full access (Preston, Greg, Carol, …), office = read-only everywhere except bids,
@@ -102,6 +103,8 @@ export default function Sidebar({
     void markAlertsSeen();
     setSmsOpen(false);
   };
+  useBackHandler(smsOpen, closeSms);
+  useBackHandler(aiOpen, () => setAiOpen(false));
 
   const handleSmsOpen = () => {
     setSmsOpen(prev => {
@@ -303,7 +306,7 @@ export default function Sidebar({
       {/* SMS Panel — centered fullscreen modal overlay */}
       {smsOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-6 overflow-y-auto"
+          className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-slate-950/70 backdrop-blur-sm p-0 sm:p-6 overflow-y-auto"
           onClick={e => { if (e.target === e.currentTarget) closeSms(); }}
         >
           <SMSPanel
