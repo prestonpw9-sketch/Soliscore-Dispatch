@@ -51,7 +51,7 @@ const NAV_ITEMS: { key: ViewKey; label: string; icon: typeof LayoutDashboard; ro
   { key: 'schedule',  label: 'Schedule',           icon: CalendarRange,   roles: ['owner', 'office', 'crew'] },
   { key: 'timecard',  label: 'Time Card',          icon: Clock,           roles: ['owner', 'office', 'crew'] },
   // Payroll timesheets: OWNERS ONLY.
-  { key: 'payroll',   label: 'Payroll',            icon: Wallet,          roles: ['owner'] },
+  { key: 'payroll',   label: 'Payroll',            icon: Wallet,          roles: ['owner', 'office', 'crew'] }, // + payrollAdmin
   { key: 'customers', label: 'Customers Database', icon: Users,           roles: ['owner'] },
   // Quick Bid Estimator: owners + crew (per Preston). Office is view-only elsewhere.
   { key: 'estimator', label: 'Bid Estimator',      icon: Calculator,      roles: ['owner', 'crew'] },
@@ -90,7 +90,7 @@ export default function Sidebar({
     markInboxSeen,
     markAlertsSeen,
   } = useDispatchInbox();
-  const { session, signOut, role } = useAuth();
+  const { session, signOut, role, payrollAdmin } = useAuth();
   const { resolved, setMode } = useTheme();
   const config             = AI_PROVIDER_CONFIGS[activeProvider];
 
@@ -168,7 +168,7 @@ export default function Sidebar({
 
         {/* Main nav — filtered by the signed-in user's role */}
         <nav className="flex-1 min-h-0 px-3 py-4 space-y-1 overflow-y-auto">
-          {NAV_ITEMS.filter(item => role && item.roles.includes(role)).map(item => {
+          {NAV_ITEMS.filter(item => role && item.roles.includes(role) && (item.key !== 'payroll' || payrollAdmin)).map(item => {
             const Icon = item.icon;
             const isActive = activeView === item.key;
             const activeColor = item.key === 'takeoff' ? 'bg-teal-600 text-white' : 'bg-blue-600 text-white';

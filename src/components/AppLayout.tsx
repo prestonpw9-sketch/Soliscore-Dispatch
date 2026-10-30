@@ -45,7 +45,7 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
 // ── Component ──────────────────────────────────────────────────────────────
 
 const AppLayout: React.FC = () => {
-  const { role, canEdit } = useAuth();
+  const { role, canEdit, payrollAdmin } = useAuth();
   const [view, setView]                     = useState<ViewKey>(() => {
     try {
       const q = new URLSearchParams(window.location.search).get('view');
@@ -61,14 +61,15 @@ const AppLayout: React.FC = () => {
     dashboard: ['owner', 'office', 'crew'],
     schedule:  ['owner', 'office', 'crew'],
     timecard:  ['owner', 'office', 'crew'],
-    payroll:   ['owner'],
+    payroll:   ['owner', 'office', 'crew'], // plus payrollAdmin, checked below
     customers: ['owner'],
     estimator: ['owner', 'crew'],
     takeoff:   ['owner'],
     truescale: ['owner', 'crew'],
     settings:  ['owner', 'office', 'crew'],
   };
-  const canSeeView = (v: string) => !!role && (viewAccess[v]?.includes(role) ?? false);
+  const canSeeView = (v: string) =>
+    !!role && (viewAccess[v]?.includes(role) ?? false) && (v !== 'payroll' || payrollAdmin);
   const { today: todayStr, weekDates } = useDispatchWeek();
   const [sidebarOpen, setSidebarOpen]       = useState(false);
   const [modalOpen, setModalOpen]           = useState(false);
