@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, Plus, Trash2 } from 'lucide-react';
 import type { Job } from '@/lib/data';
 import {
@@ -15,6 +15,8 @@ import {
   type PayrollSegmentKind,
   type PayrollSegmentView,
 } from '@/lib/payroll/data';
+
+const PayrollDayMap = lazy(() => import('./PayrollDayMap'));
 
 interface Props {
   day: PayrollDay;
@@ -124,6 +126,8 @@ export default function PayrollDayDetail({ day, jobs, names, audit, onChanged }:
           />
         ))}
       </div>
+
+      <MapSection workDate={day.workDate} segments={day.segments} jobs={jobs} />
 
       <div>
         <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">Segments</h4>
@@ -389,6 +393,27 @@ function AddSegment({
         Add
       </button>
       <button type="button" onClick={() => setOpen(false)} className="text-xs text-slate-500">Cancel</button>
+    </div>
+  );
+}
+
+function MapSection({ workDate, segments, jobs }: { workDate: string; segments: PayrollSegmentView[]; jobs: Job[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">Map</h4>
+        <button type="button" onClick={() => setOpen(o => !o)} className="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400">
+          {open ? 'Hide map' : 'Show map'}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2">
+          <Suspense fallback={<p className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading map…</p>}>
+            <PayrollDayMap workDate={workDate} segments={segments} jobs={jobs} />
+          </Suspense>
+        </div>
+      )}
     </div>
   );
 }
