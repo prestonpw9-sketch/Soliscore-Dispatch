@@ -17,4 +17,6 @@ export type ViewKey =
   | 'takeoff'
   | 'truescale'
   | 'schedule'
+  | 'timecard'
+  | 'payroll'
   | 'settings';

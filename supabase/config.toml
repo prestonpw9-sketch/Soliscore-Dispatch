@@ -48,3 +48,19 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/twilio-status/deno.json"
 entrypoint = "./functions/twilio-status/index.ts"
+
+# Server-side job address geocoding (US Census, Nominatim fallback, Arizona bias).
+# Called by the app with the signed-in user's JWT; the function also checks the
+# user_roles row (owner / crew) itself.
+[functions.geocode-job]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/geocode-job/index.ts"
+
+# Daily owner payroll SMS summary. Disabled by default: leave enabled = false
+# until Preston wants it, then also tick "Send each evening" on the Payroll page
+# and schedule a POST with the x-payroll-summary-secret header.
+[functions.payroll-daily-summary]
+enabled = false
+verify_jwt = false
+entrypoint = "./functions/payroll-daily-summary/index.ts"

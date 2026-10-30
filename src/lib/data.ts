@@ -47,6 +47,16 @@ export interface Job {
   completedAt?: string | null;
   /** Warranty coverage end date (YYYY-MM-DD). Defaults to completion + 1 year. */
   warrantyUntil?: string | null;
+  /** WGS84 latitude. Null until the address is geocoded. */
+  latitude?: number | null;
+  /** WGS84 longitude. Null until the address is geocoded. */
+  longitude?: number | null;
+  /** Arrival radius in meters. Default 90 when the column is empty. */
+  geofenceRadiusM?: number | null;
+  /** pending / ok / manual / failed / no_address / stale. Null before the geocode migration. */
+  geocodeStatus?: 'pending' | 'ok' | 'manual' | 'failed' | 'no_address' | 'stale' | null;
+  /** Address the geocoder matched. */
+  geocodedAddress?: string | null;
 }
 
 // Full-day service categories selected on a job (jobs.service_type).

@@ -324,6 +324,7 @@ const Dashboard: React.FC<Props> = ({
                                 onPhaseChange={onPhaseChange}
                                 onInspectionChange={onInspectionChange}
                                 onComplete={canEdit ? onCompleteJob : undefined}
+                                onLocationFixed={canEdit && onJobsChanged ? () => { void onJobsChanged(); } : undefined}
                                 onClick={() => onJobClick?.(job)}
                               />
                             </div>

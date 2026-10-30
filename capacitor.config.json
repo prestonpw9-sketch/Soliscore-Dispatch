@@ -1,0 +1,11 @@
+{
+  "appId": "com.solidcoreplumb.dispatch",
+  "appName": "ITDG Dispatch",
+  "webDir": "dist",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "auto"
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

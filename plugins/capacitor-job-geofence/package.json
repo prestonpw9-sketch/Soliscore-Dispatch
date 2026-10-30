@@ -1,0 +1,30 @@
+{
+  "name": "capacitor-job-geofence",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Background job-site geofencing for ITDG Dispatch. Android uses Play Services GeofencingClient. iOS uses CLLocationManager region monitoring.",
+  "type": "module",
+  "main": "dist/esm/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": [
+    "dist/",
+    "android/src/main/",
+    "android/build.gradle",
+    "ios/Sources/",
+    "Package.swift",
+    "CapacitorJobGeofence.podspec"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "license": "UNLICENSED"
+}

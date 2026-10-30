@@ -9,15 +9,22 @@
     "preview": "vite preview",
     "test:e2e": "playwright test",
     "test:edge-security": "node --experimental-strip-types scripts/edge-security-checks.ts",
+    "test:geofence": "node --experimental-strip-types scripts/geofence-checks.ts",
+    "test:shift": "node --experimental-strip-types scripts/shift-checks.ts && node --experimental-strip-types scripts/start-locate-checks.ts && node --experimental-strip-types scripts/lunch-checks.ts",
+    "test:geocode": "node --experimental-strip-types scripts/geocode-checks.ts",
+    "test:payroll": "node --experimental-strip-types scripts/payroll-checks.ts",
     "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/geolocation": "^8.2.4",
     "@supabase/supabase-js": "^2.106.2",
     "@tanstack/react-query": "^5.17.19",
     "@types/node": "^25.9.1",
     "@vitejs/plugin-react": "^4.2.1",
     "axios": "^1.16.1",
+    "capacitor-job-geofence": "file:plugins/capacitor-job-geofence",
     "clsx": "^2.1.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.312.0",
@@ -30,6 +37,9 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/ios": "^8.6.0",
     "@playwright/test": "^1.64.1",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",

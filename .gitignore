@@ -8,8 +8,8 @@ node_modules
 *.pem
 *.p12
 
-# build output
-dist
+# Vite build output (repo root only; the local Capacitor plugin commits its JS entry)
+/dist
 
 # playwright
 /test-results/
@@ -29,6 +29,18 @@ Thumbs.db
 
 # supabase CLI local state
 supabase/.temp/
+
+# Capacitor native build output
+android/.gradle/
+android/**/build/
+android/local.properties
+android/captures/
+android/app/src/main/assets/public
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+ios/App/App/public
+*.xcuserstate
 
 # tsc now runs with noEmit; no compiled JS should land in src.
 # (If you ever add a real .js source file, force-add it: git add -f path.js)

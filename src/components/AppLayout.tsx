@@ -23,6 +23,10 @@ import { useAuth } from '@/lib/AuthContext';
 import { canChangePhase, phaseBlockedMessage, normalizePhase, phaseGateContext } from '@/lib/phases';
 import { useAIProviderContext } from '@/services/ai/aiProviderFactory';
 import DispatchBanner from './DispatchBanner';
+import TimeCardView from './TimeCardView';
+import { useShiftTracker } from '@/hooks/useShiftTracker';
+import { useJobGeocodeSweep } from '@/hooks/useJobGeocodeSweep';
+import PayrollView from './payroll/PayrollView';
 
 // ── Page titles ────────────────────────────────────────────────────────────
 
@@ -33,6 +37,8 @@ const titles: Record<ViewKey, { title: string; subtitle: string }> = {
   takeoff:    { title: 'Full Bid Takeoff', subtitle: 'Full 4-page takeoff for ground-up buildings and houses' },
   truescale:  { title: 'TrueScale',       subtitle: 'Scale blueprints and measure critical dimensions' },
   schedule:   { title: 'Schedule',        subtitle: 'Plan crews across jobs and track daily progress' },
+  timecard:   { title: 'Time Card',       subtitle: 'Shop, travel, and job time from clock-in to clock-out' },
+  payroll:    { title: 'Payroll',         subtitle: 'Timesheets, overtime, approvals, and export' },
   settings:   { title: 'System Settings', subtitle: 'Manage profile configuration parameters' },
 };
 
@@ -54,6 +60,8 @@ const AppLayout: React.FC = () => {
   const viewAccess: Record<string, string[]> = {
     dashboard: ['owner', 'office', 'crew'],
     schedule:  ['owner', 'office', 'crew'],
+    timecard:  ['owner', 'office', 'crew'],
+    payroll:   ['owner'],
     customers: ['owner'],
     estimator: ['owner', 'crew'],
     takeoff:   ['owner'],
@@ -71,7 +79,6 @@ const AppLayout: React.FC = () => {
   const [selectedJob, setSelectedJob]       = useState<Job | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
   const [toastTone, setToastTone]           = useState<'success' | 'error'>('success');
-
   const {
     loading,
     error,
@@ -352,6 +359,13 @@ const AppLayout: React.FC = () => {
     })();
   };
 
+  const changeView = (next: ViewKey) => {
+    setView(next);
+  };
+
+  const shiftTracker = useShiftTracker(jobs);
+  useJobGeocodeSweep(jobs, canEdit, todayStr, () => { void refresh(); });
+
   const isInitialLoad = (loading || !!error) && customers.length === 0;
   const trueScale = view === 'truescale';
 
@@ -359,8 +373,16 @@ const AppLayout: React.FC = () => {
     try { sessionStorage.setItem('itdg-view', view); } catch { /* ignore */ }
     try {
       const url = new URL(window.location.href);
+      let changed = false;
       if (url.searchParams.get('view') !== view) {
         url.searchParams.set('view', view);
+        changed = true;
+      }
+      if (view !== 'timecard' && url.searchParams.has('job')) {
+        url.searchParams.delete('job');
+        changed = true;
+      }
+      if (changed) {
         window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
       }
     } catch { /* ignore */ }
@@ -382,7 +404,7 @@ const AppLayout: React.FC = () => {
     }`}>
       <Sidebar
         activeView={view}
-        onChange={setView}
+        onChange={changeView}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -507,6 +529,8 @@ const AppLayout: React.FC = () => {
             <BidEstimator />
           ) : view === 'truescale' ? (
             <TrueScaleView jobs={jobs} onSendToEstimator={() => setView('estimator')} />
+          ) : view === 'payroll' ? (
+            <PayrollView jobs={jobs} />
           ) : loading && customers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-slate-500">
               <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
@@ -589,6 +613,10 @@ const AppLayout: React.FC = () => {
                   onCreateCustomer={handleCreateCustomer}
                   onRefresh={refresh}
                 />
+              )}
+
+              {view === 'timecard' && (
+                <TimeCardView tracker={shiftTracker} />
               )}
 
             </>

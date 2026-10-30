@@ -9,6 +9,8 @@ import type { Job, JobStatus, Customer, Technician, TechDailyPriority, TechTimeO
 import { formatTimeOffSpan, fullyOffLeave, toLocalYMD } from '@/lib/data';
 import { storedPhase } from '@/lib/phases';
 import { completeJobPatch, restoreJobPatch } from '@/lib/warranty';
+import { finiteOrNull } from '@/lib/geofence/sites';
+import { anyPinned, normalizeGeocodeStatus, requestJobGeocode } from '@/lib/jobGeocode';
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -119,6 +121,12 @@ export const useDispatchData = () => {
         tmHours:           j.tm_hours != null && j.tm_hours !== '' ? Number(j.tm_hours) : null,
         completedAt:       j.completed_at ? String(j.completed_at) : null,
         warrantyUntil:     j.warranty_until ? String(j.warranty_until).slice(0, 10) : null,
+        latitude:          finiteOrNull(j.latitude),
+        longitude:         finiteOrNull(j.longitude),
+        geofenceRadiusM:   finiteOrNull(j.geofence_radius_m),
+        // undefined = column not there yet (migration not applied); null = not looked up.
+        geocodeStatus:     'geocode_status' in j ? normalizeGeocodeStatus(j.geocode_status) : undefined,
+        geocodedAddress:   j.geocoded_address ? String(j.geocoded_address) : null,
       }));
       setJobs(liveJobs);
       jobsFetchOkRef.current = true;
@@ -491,6 +499,12 @@ export const useDispatchData = () => {
     }
     // Seed a job_tasks row for every assigned crew member (task blank, span = job range).
     const newJobId = inserted?.id;
+    // Pin the address in the background; the job is already saved.
+    if (newJobId != null) {
+      void requestJobGeocode([newJobId]).then(outcomes => {
+        if (anyPinned(outcomes)) void refresh();
+      });
+    }
     if (newJobId && crew.length) {
       const taskError = await syncJobTasksForCrew(newJobId, crew, startDate, endDate, techTimeOff);
       if (taskError) {
@@ -531,6 +545,7 @@ export const useDispatchData = () => {
     const projectId = jobData.projectId || null;
     const tmEnabled = Boolean(jobData.tmEnabled) || jobData.phase === 'T&M';
 
+    const previousAddress = jobsRef.current.find(j => j.id === jobId)?.address;
     const { error: sbError } = await supabase.from('jobs').update({
       title:        jobData.customerName,
       location:     jobData.address ?? 'Tucson, AZ',
@@ -566,6 +581,13 @@ export const useDispatchData = () => {
     );
     if (taskError) {
       console.error('Error syncing job_tasks:', taskError);
+    }
+    // Address changed: look it up in the background. A job that already has
+    // a pin keeps it (the server marks it stale for review).
+    if ((jobData.address ?? 'Tucson, AZ') !== previousAddress) {
+      void requestJobGeocode([jobId]).then(outcomes => {
+        if (anyPinned(outcomes)) void refresh();
+      });
     }
     await refresh();
     return { ok: true };
