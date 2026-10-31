@@ -51,6 +51,13 @@ export interface PayrollSettings {
   payPeriodLengthDays: number;
   /** Any first day of a pay period (YYYY-MM-DD, Phoenix). Periods repeat from it. */
   payPeriodAnchorDate: string;
+  /**
+   * Company lunch window, minutes after Phoenix midnight. When set and lunch
+   * is unpaid, any part of a shift inside the window counts as lunch even if
+   * the phone never wrote a lunch row (for example a shift that clocked in
+   * during the window). Null turns the carve-out off.
+   */
+  lunchWindow?: { startMinute: number; endMinute: number } | null;
 }
 
 export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
@@ -61,7 +68,27 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   travelAlertMinutes: 90,
   payPeriodLengthDays: 14,
   payPeriodAnchorDate: '2026-10-22',
+  lunchWindow: { startMinute: 11 * 60, endMinute: 11 * 60 + 30 },
 };
+
+function clockMinutes(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const match = /^(\d{1,2}):(\d{2})/.exec(raw.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function lunchWindowFromRow(row: Record<string, unknown>): PayrollSettings['lunchWindow'] {
+  if (row.lunch_enabled === false) return null;
+  const startMinute = clockMinutes(row.lunch_start);
+  const endMinute = clockMinutes(row.lunch_end);
+  if (startMinute == null || endMinute == null) return DEFAULT_PAYROLL_SETTINGS.lunchWindow;
+  if (endMinute <= startMinute) return null;
+  return { startMinute, endMinute };
+}
 
 export function payrollSettingsFromRow(row: Record<string, unknown> | null | undefined): PayrollSettings {
   if (!row) return { ...DEFAULT_PAYROLL_SETTINGS };
@@ -79,6 +106,7 @@ export function payrollSettingsFromRow(row: Record<string, unknown> | null | und
       ? length
       : DEFAULT_PAYROLL_SETTINGS.payPeriodLengthDays,
     payPeriodAnchorDate: /^\d{4}-\d{2}-\d{2}$/.test(anchor) ? anchor : DEFAULT_PAYROLL_SETTINGS.payPeriodAnchorDate,
+    lunchWindow: lunchWindowFromRow(row),
   };
 }
 
@@ -228,14 +256,52 @@ export function formatHours(minutes: number): string {
 
 // ── Core ───────────────────────────────────────────────────────────────────
 
-function clipMs(segment: PayrollSegmentRow, shift: PayrollShiftRow, nowMs: number): number {
+/**
+ * Each segment's paid span inside its shift. Rows can overlap when a phone
+ * opened a new segment without closing the last one, or never closed one at
+ * clock-out. Every row is cut to the shift's clock-in/clock-out and ends no
+ * later than the next row starts, so no minute is counted twice. An open row
+ * runs to the shift end (or now, while the shift is still open).
+ */
+export function segmentSpans(
+  ordered: PayrollSegmentRow[],
+  shift: PayrollShiftRow,
+  nowMs: number,
+): Array<{ start: number; end: number }> {
   const shiftStart = Date.parse(shift.started_at);
   const shiftEnd = shift.ended_at ? Date.parse(shift.ended_at) : nowMs;
-  const start = Math.max(Date.parse(segment.started_at), shiftStart);
-  const rawEnd = segment.ended_at ? Date.parse(segment.ended_at) : shiftEnd;
-  const end = Math.min(rawEnd, shiftEnd);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
-  return end - start;
+  return ordered.map((segment, index) => {
+    const start = Math.max(Date.parse(segment.started_at), shiftStart);
+    let end = Math.min(segment.ended_at ? Date.parse(segment.ended_at) : shiftEnd, shiftEnd);
+    const next = ordered[index + 1];
+    if (next) {
+      const nextStart = Math.max(Date.parse(next.started_at), shiftStart);
+      if (Number.isFinite(nextStart)) end = Math.min(end, nextStart);
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return { start: 0, end: 0 };
+    return { start, end };
+  });
+}
+
+/** Lunch windows (ms) on every Phoenix day the span touches. */
+function lunchWindowsFor(startMs: number, endMs: number, settings: PayrollSettings): Array<[number, number]> {
+  const window = settings.lunchWindow;
+  if (!window || !(endMs > startMs)) return [];
+  const out: Array<[number, number]> = [];
+  let ymd = phoenixWorkDate(startMs);
+  const last = phoenixWorkDate(endMs);
+  for (let guard = 0; guard < 14 && ymd <= last; guard += 1) {
+    const midnight = Date.parse(phoenixDayStartIso(ymd));
+    out.push([midnight + window.startMinute * 60_000, midnight + window.endMinute * 60_000]);
+    ymd = addDaysYmd(ymd, 1);
+  }
+  return out;
+}
+
+function overlapMs(start: number, end: number, windows: Array<[number, number]>): number {
+  let total = 0;
+  for (const [a, b] of windows) total += Math.max(0, Math.min(end, b) - Math.max(start, a));
+  return total;
 }
 
 function jobKey(segment: PayrollSegmentRow): string {
@@ -331,9 +397,22 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
     const ordered = [...(segmentsByShift.get(shift.id) ?? [])]
       .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
     const flaggedJobs = new Set<string>();
+    const spans = segmentSpans(ordered, shift, nowMs);
+    const shiftSpanEnd = shift.ended_at ? Date.parse(shift.ended_at) : nowMs;
+    const lunchWindows = lunchWindowsFor(Date.parse(shift.started_at), shiftSpanEnd, settings);
 
     ordered.forEach((segment, index) => {
-      const ms = clipMs(segment, shift, nowMs);
+      const span = spans[index];
+      let ms = span.end - span.start;
+      // Company lunch is carved out of work rows even when the phone wrote no
+      // lunch row (e.g. clocked in during the window).
+      if (segment.kind !== 'lunch' && ms > 0) {
+        const carved = overlapMs(span.start, span.end, lunchWindows);
+        if (carved > 0) {
+          ms -= carved;
+          day!.msLunch += carved;
+        }
+      }
       const minutes = Math.round(ms / 60_000);
       if (segment.owner_edited_at) day!.edited = true;
 
