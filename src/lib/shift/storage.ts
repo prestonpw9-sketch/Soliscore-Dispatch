@@ -12,7 +12,7 @@ import {
 
 const SHOP_KEY = 'itdg-shop';
 const CONSENT_KEY = 'itdg-shift-consent';
-const STATE_KEY = 'itdg-shift-state';
+export const STATE_KEY = 'itdg-shift-state';
 const OUTBOX_KEY = 'itdg-shift-outbox';
 const DWELL_KEY = 'itdg-shift-dwell-ms';
 const SPEED_KEY = 'itdg-shift-speed-mph';

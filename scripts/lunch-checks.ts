@@ -29,6 +29,7 @@ import {
 
 const SHOP = { latitude: 32.22, longitude: -110.97 };
 const JOB = { latitude: 32.22 + (8_000 / 111_320), longitude: -110.97 };
+const LEAVING_SHOP = { latitude: 32.22 + (400 / 111_320), longitude: -110.97 };
 const JOB_B = { latitude: 32.22 - (8_000 / 111_320), longitude: -110.97 };
 const NOWHERE = { latitude: 32.22, longitude: -110.97 + (5_000 / 94_000) };
 
@@ -127,7 +128,7 @@ const kinds = (state: MachineState) => state.segments.map(segment => segment.kin
 function onJob(): MachineState {
   let s = run(initialMachine(), 'clock-in', fix(at('08:00'), SHOP));
   s = run(s, 'sample', fix(at('08:10'), SHOP, 30));
-  s = run(s, 'sample', fix(at('08:10') + DEFAULT_SPEED_SUSTAIN_MS, SHOP, 30));
+  s = run(s, 'sample', fix(at('08:10') + DEFAULT_SPEED_SUSTAIN_MS, LEAVING_SHOP, 30));
   assert.equal(openSegment(s)?.kind, 'driving');
   s = run(s, 'sample', fix(at('08:29'), JOB, 30));
   s = run(s, 'sample', fix(at('08:30'), JOB));

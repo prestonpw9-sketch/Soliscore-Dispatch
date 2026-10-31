@@ -15,6 +15,7 @@ import {
   loadMachine,
   loadOutbox,
   loadShop,
+  STATE_KEY,
   loadSpeedMph,
   saveConsent,
   saveDwellMs,
@@ -43,6 +44,7 @@ import {
   type StartFix,
 } from '@/lib/shift/locate';
 import { lunchFromSettingsRow, type LunchConfig } from '@/lib/shift/lunch';
+import { reconcile, repairLocal, type ServerSegmentRow, type ServerShiftRow } from '@/lib/shift/reconcile';
 import { enqueueAndSync, syncOutbox } from '@/lib/shift/sync';
 import { supabase } from '@/lib/supabase';
 import type { Fix, MachineState, ShopLocation, TimeSegment } from '@/lib/shift/types';
@@ -223,7 +225,7 @@ function readCoarseFix(): Promise<StartFix> {
 
 export function useShiftTracker(jobs: Job[]): ShiftTracker {
   const { session, isOwner } = useAuth();
-  const [machine, setMachine] = useState<MachineState>(() => loadMachine());
+  const [machine, setMachine] = useState<MachineState>(() => repairLocal(loadMachine()));
   const [shop, setShop] = useState<ShopLocation | null>(() => loadShop());
   const [safety, setSafety] = useState<WorkHoursConfig>(() => loadWorkHours());
   const [dwellMs, setDwellMs] = useState(() => loadDwellMs());
@@ -564,6 +566,92 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
       }
     };
   }, [applyFix, machine.shift?.id, machine.shift?.endedAt]);
+
+  // Another tab or window wrote the shift: use its copy so two copies never
+  // keep writing separate segments for one shift.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STATE_KEY) return;
+      const next = repairLocal(loadMachine());
+      machineRef.current = next;
+      setMachine(next);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Line the phone's copy up with the server on sign-in and whenever the app
+  // comes back to the front: shows Stop for a shift that is open on the
+  // server, and closes a shift the owner already ended.
+  useEffect(() => {
+    const uid = session?.user.id;
+    if (!uid) return undefined;
+    let cancelled = false;
+    const check = () => {
+      void (async () => {
+        try {
+          if (loadOutbox().length) {
+            const status = await syncOutbox();
+            if (status !== 'synced') return; // server copy would be stale
+          }
+          const local = machineRef.current;
+          const openQuery = supabase
+            .from('shifts')
+            .select('id, started_at, ended_at, end_reason, battery_start, battery_end, start_latitude, start_longitude')
+            .eq('user_id', uid)
+            .is('ended_at', null)
+            .order('started_at', { ascending: false })
+            .limit(1);
+          const openRaced = await withDeadline(() => openQuery, 10_000);
+          if (cancelled || isTimedOut(openRaced) || isCancelled(openRaced) || openRaced.error) return;
+          const openShift = (openRaced.data?.[0] as ServerShiftRow | undefined) ?? null;
+
+          let localShiftRow: ServerShiftRow | null = null;
+          if (local.shift && !local.shift.endedAt) {
+            const own = supabase
+              .from('shifts')
+              .select('id, started_at, ended_at, end_reason')
+              .eq('id', local.shift.id)
+              .limit(1);
+            const ownRaced = await withDeadline(() => own, 10_000);
+            if (cancelled || isTimedOut(ownRaced) || isCancelled(ownRaced) || ownRaced.error) return;
+            localShiftRow = (ownRaced.data?.[0] as ServerShiftRow | undefined) ?? null;
+          }
+
+          let openSegments: ServerSegmentRow[] = [];
+          if (openShift && !(local.shift && !local.shift.endedAt)) {
+            const segQuery = supabase
+              .from('time_segments')
+              .select('id, shift_id, kind, job_id, job_name, started_at, ended_at, start_latitude, start_longitude, end_latitude, end_longitude, battery_start, battery_end')
+              .eq('shift_id', openShift.id)
+              .order('started_at', { ascending: true });
+            const segRaced = await withDeadline(() => segQuery, 10_000);
+            if (cancelled || isTimedOut(segRaced) || isCancelled(segRaced) || segRaced.error) return;
+            openSegments = (segRaced.data ?? []) as ServerSegmentRow[];
+          }
+
+          if (cancelled || machineRef.current !== local) return; // moved on meanwhile
+          const next = reconcile(local, { localShiftRow, openShift, openSegments }, Date.now());
+          if (!next) return;
+          // Publishing closes any rows the server still has open.
+          publish(local, next);
+          if (next.shift && !next.shift.endedAt) setNotice('Picked up your open shift from the server.');
+          else setNotice('This shift was already clocked out.');
+        } catch (err) {
+          console.error('Shift check with the server failed:', err);
+        }
+      })();
+    };
+    check();
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', check);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', check);
+    };
+  }, [session?.user.id, publish]);
 
   useEffect(() => {
     const refresh = () => { void syncOutbox().then(setSyncStatus); };
