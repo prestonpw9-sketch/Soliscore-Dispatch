@@ -2,6 +2,7 @@ package com.solidcoreplumb.jobgeofence
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.AlarmClock
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -27,6 +29,7 @@ import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import org.json.JSONObject
 import java.time.ZoneId
+import java.util.Calendar
 
 @CapacitorPlugin(
     name = "JobGeofence",
@@ -355,6 +358,96 @@ class JobGeofencePlugin : Plugin() {
         val percent = ShiftSampleQueue.batteryPercent(context)
         if (percent == null) payload.put("percent", JSONObject.NULL) else payload.put("percent", percent)
         call.resolve(payload)
+    }
+
+    /**
+     * Opt-in clock-in reminder: a real repeating alarm in the phone's Clock app.
+     * Google Clock reuses an existing alarm with the same time, days, and
+     * label, so turning the setting on twice does not stack alarms. A new
+     * time adds a second alarm; the app tells the worker to delete the old one.
+     */
+    @PluginMethod
+    fun setClockInReminder(call: PluginCall) {
+        val hour = (call.getInt("hour", 6) ?: 6).coerceIn(0, 23)
+        val minute = (call.getInt("minute", 0) ?: 0).coerceIn(0, 59)
+        val label = call.getString("label")?.trim().takeUnless { it.isNullOrEmpty() } ?: "ITDG Dispatch clock in"
+        val days = ArrayList<Int>()
+        val raw = call.getArray("weekdays")
+        if (raw != null) {
+            for (index in 0 until raw.length()) {
+                // 1 = Monday … 7 = Sunday → java.util.Calendar day constants.
+                when (raw.optInt(index)) {
+                    1 -> days.add(Calendar.MONDAY)
+                    2 -> days.add(Calendar.TUESDAY)
+                    3 -> days.add(Calendar.WEDNESDAY)
+                    4 -> days.add(Calendar.THURSDAY)
+                    5 -> days.add(Calendar.FRIDAY)
+                    6 -> days.add(Calendar.SATURDAY)
+                    7 -> days.add(Calendar.SUNDAY)
+                }
+            }
+        }
+        if (days.isEmpty()) {
+            days.addAll(listOf(Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY))
+        }
+        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_HOUR, hour)
+            putExtra(AlarmClock.EXTRA_MINUTES, minute)
+            putExtra(AlarmClock.EXTRA_MESSAGE, label)
+            putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, days)
+            putExtra(AlarmClock.EXTRA_VIBRATE, true)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+        }
+        if (!launchClock(intent)) {
+            call.reject("no-clock-app")
+            return
+        }
+        val payload = JSObject()
+        payload.put("method", "clock-app")
+        call.resolve(payload)
+    }
+
+    /**
+     * Android has no public way for an app to delete or disable a Clock alarm.
+     * ACTION_DISMISS_ALARM only dismisses the next ring of a repeating alarm
+     * (and can bring Clock to the front), so it is not used. The app tells the
+     * worker to delete the alarm in Clock instead.
+     */
+    @PluginMethod
+    fun cancelClockInReminder(call: PluginCall) {
+        val payload = JSObject()
+        payload.put("removed", false)
+        call.resolve(payload)
+    }
+
+    /** Clock alarms can't be skipped for one day by another app. */
+    @PluginMethod
+    fun skipClockInReminderToday(call: PluginCall) {
+        val payload = JSObject()
+        payload.put("skipped", false)
+        call.resolve(payload)
+    }
+
+    @PluginMethod
+    fun openClockAlarms(call: PluginCall) {
+        if (launchClock(Intent(AlarmClock.ACTION_SHOW_ALARMS))) {
+            call.resolve()
+        } else {
+            call.reject("no-clock-app")
+        }
+    }
+
+    private fun launchClock(intent: Intent): Boolean {
+        val host = activity
+        if (host == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            (host ?: context).startActivity(intent)
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
     }
 
     private fun clampedSite(row: JSONObject): JSONObject {

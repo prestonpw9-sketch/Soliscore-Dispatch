@@ -1,5 +1,5 @@
 import { initialMachine } from './machine.ts';
-import type { MachineState, Shift, TimeSegment } from './types.ts';
+import type { ClockInFlag, ClockInInfo, MachineState, Shift, TimeSegment } from './types.ts';
 
 /**
  * The phone keeps the running shift in local storage. If that copy is lost
@@ -17,6 +17,10 @@ export interface ServerShiftRow {
   battery_end?: number | null;
   start_latitude?: number | null;
   start_longitude?: number | null;
+  clock_in_tapped_at?: string | null;
+  clock_in_flags?: string[] | null;
+  clock_in_note?: string | null;
+  start_job_id?: number | string | null;
 }
 
 export interface ServerSegmentRow {
@@ -33,6 +37,21 @@ export interface ServerSegmentRow {
   end_longitude?: number | null;
   battery_start?: number | null;
   battery_end?: number | null;
+  backfilled?: boolean | null;
+}
+
+const CLOCK_IN_FLAGS = new Set<ClockInFlag>(['late_clock_in', 'backdated', 'off_site_start', 'no_location']);
+
+/** Server shift row → the phone's clock-in info. Null for a normal start. */
+export function clockInFromRow(row: ServerShiftRow): ClockInInfo | null {
+  if (!row.clock_in_tapped_at) return null;
+  const flags = (row.clock_in_flags ?? []).filter((flag): flag is ClockInFlag => CLOCK_IN_FLAGS.has(flag as ClockInFlag));
+  return {
+    tappedAt: new Date(row.clock_in_tapped_at).toISOString(),
+    flags,
+    note: row.clock_in_note ?? null,
+    startJobId: row.start_job_id == null ? null : String(row.start_job_id),
+  };
 }
 
 /** A server shift open longer than this is stale, not something to resume. */
@@ -79,6 +98,7 @@ function segmentFromRow(row: ServerSegmentRow): TimeSegment {
     endLongitude: row.end_longitude ?? null,
     batteryStart: row.battery_start ?? null,
     batteryEnd: row.battery_end ?? null,
+    ...(row.backfilled ? { backfilled: true } : {}),
   };
 }
 
@@ -124,8 +144,9 @@ export function reconcile(local: MachineState, server: ServerView, nowMs: number
       endReason: null,
       batteryStart: open.battery_start ?? null,
       batteryEnd: null,
-      startLatitude: open.start_latitude ?? 0,
-      startLongitude: open.start_longitude ?? 0,
+      startLatitude: open.start_latitude ?? null,
+      startLongitude: open.start_longitude ?? null,
+      clockIn: clockInFromRow(open),
     };
     const segments = normalizeSegments(server.openSegments.map(segmentFromRow), shift);
     const last = segments[segments.length - 1];

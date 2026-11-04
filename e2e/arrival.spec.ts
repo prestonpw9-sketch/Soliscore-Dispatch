@@ -65,7 +65,7 @@ test('starts a shop segment at the shop without another tap', async ({ page, con
   await expect(page.getByRole('button', { name: 'Start shift' })).toBeVisible();
 });
 
-test('refuses to start away from the shop', async ({ page, context }) => {
+test('away from the shop still starts after asking', async ({ page, context }) => {
   await page.clock.install({ time: WEDNESDAY_MORNING });
   await context.setGeolocation({ latitude: 0, longitude: 0 });
   await context.grantPermissions(['geolocation']);
@@ -73,8 +73,13 @@ test('refuses to start away from the shop', async ({ page, context }) => {
   await page.goto('/?view=timecard');
   await page.getByRole('button', { name: 'Start shift' }).click();
   await page.getByRole('button', { name: 'Start tracking' }).click();
-  await expect(page.getByRole('status')).toContainText(/m from the shop/);
-  await expect(page.getByRole('status')).toContainText('accuracy');
+  const prompt = page.getByRole('dialog', { name: 'Start your shift' });
+  await expect(prompt).toContainText(/from the shop/);
+  await expect(prompt).toContainText('You can still clock in');
+  await prompt.getByRole('button', { name: 'Start now' }).click();
+  await expect(prompt).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Clock out' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Travel' })).toBeVisible();
   await expect(page.getByRole('listitem').filter({ hasText: 'Shop' })).toHaveCount(0);
 });
 

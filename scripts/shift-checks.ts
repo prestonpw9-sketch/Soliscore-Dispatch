@@ -90,12 +90,17 @@ const ids = idsFrom();
 const cfg = config();
 let state = initialMachine();
 
-const away = step(state, { type: 'clock-in', fix: fix(eightAm, 0, 0, 0, 90) }, cfg, ids);
-assert.equal(away.error, 'not-at-shop');
-assert.equal(away.state.shift, null);
+// Clock-in is never blocked by location: away from the shop starts on Travel.
+const away = step(state, { type: 'clock-in', fix: fix(eightAm, 0, 0, 0, 90) }, cfg, idsFrom(5_000));
+assert.equal(away.error, null);
+assert.equal(away.offSite, true);
+assert.ok(away.state.shift);
+assert.equal(openSegment(away.state)?.kind, 'driving');
 
-const noShop = step(state, { type: 'clock-in', fix: fix(eightAm, SHOP.latitude, SHOP.longitude, 0, 90) }, config({ shop: null }), ids);
-assert.equal(noShop.error, 'no-shop');
+// No shop configured yet: still starts, off-site.
+const noShop = step(state, { type: 'clock-in', fix: fix(eightAm, SHOP.latitude, SHOP.longitude, 0, 90) }, config({ shop: null }), idsFrom(5_100));
+assert.equal(noShop.error, null);
+assert.equal(noShop.offSite, true);
 
 state = apply(state, { type: 'clock-in', fix: fix(eightAm, SHOP.latitude, SHOP.longitude, 0, 90) }, cfg, ids);
 assert.equal(state.shift?.endReason, null);
