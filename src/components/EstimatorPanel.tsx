@@ -1,6 +1,7 @@
 import React, { ReactNode, useEffect } from 'react';
 import { X } from 'lucide-react';
 import ExcelImporter from '../components/ExcelImporter';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface EstimatorPanelProps {
   open: boolean;
@@ -14,13 +15,14 @@ export default function EstimatorPanel({ open, onClose, children }: EstimatorPan
     return () => { document.body.style.overflow = 'unset'; };
   }, [open]);
 
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-[60] flex justify-end bg-slate-900/40 backdrop-blur-sm">
       <div className="w-full max-w-5xl bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
 
-        <div className="flex items-center justify-between p-4 border-b bg-slate-50 shrink-0">
+        <div className="flex items-center justify-between p-4 border-b bg-slate-50 shrink-0" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
           <h2 className="text-xl font-bold text-slate-800">Quick Bid Estimator</h2>
           <button
             type="button"

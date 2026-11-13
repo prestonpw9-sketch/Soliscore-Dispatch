@@ -15,11 +15,13 @@
     "test:payroll": "node --experimental-strip-types scripts/payroll-checks.ts",
     "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio",
     "test:daymap": "node --experimental-strip-types scripts/day-map-checks.ts",
+    "test:back": "node --experimental-strip-types scripts/back-checks.ts",
     "test:late-clockin": "node --experimental-strip-types scripts/late-clockin-checks.ts",
     "test:reminder": "node --experimental-strip-types scripts/clock-in-reminder-checks.ts"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",
+    "@capacitor/app": "^8.1.2",
     "@capacitor/core": "^8.6.0",
     "@capacitor/geolocation": "^8.2.4",
     "@supabase/supabase-js": "^2.106.2",

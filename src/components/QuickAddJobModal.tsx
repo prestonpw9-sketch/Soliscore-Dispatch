@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { X, MapPin, Sparkles, Loader2, User, CalendarDays, Check, Users, Wrench } from 'lucide-react';
+import { X, ArrowLeft, MapPin, Sparkles, Loader2, User, CalendarDays, Check, Users, Wrench } from 'lucide-react';
 import type { Customer, Technician, Job, JobType, Priority, JobStatus, TechTimeOff } from '@/lib/data';
 import { SERVICE_TYPES, clipWorkRangeAroundTimeOff, formatTimeOffSpan, fullyOffLeave, dispatchToday } from '@/lib/data';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 
 // ── Guard functions ────────────────────────────────────────────────────────
@@ -154,6 +155,7 @@ const QuickAddJobModal: React.FC<Props> = ({
   }, [open]);
 
 
+  useBackHandler(open, onClose);
   if (!open) return null;
 
 
@@ -288,23 +290,34 @@ const QuickAddJobModal: React.FC<Props> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4"
+      className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white dark:bg-slate-900 rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl"
+        className="bg-white dark:bg-slate-900 sm:rounded-2xl w-full max-w-lg h-full sm:h-auto max-h-full sm:max-h-[90vh] overflow-y-auto overscroll-contain shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex items-center justify-between z-10">
-          <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-            Schedule New Job
+        <div
+          className="sticky top-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 py-3 sm:py-4 flex items-center gap-2 z-10"
+          style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            className="sm:hidden flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white active:bg-slate-700 dark:bg-slate-700"
+          >
+            <ArrowLeft className="w-5 h-5" /> Back
+          </button>
+          <h3 className="flex-1 truncate text-lg font-bold text-slate-900 dark:text-slate-100">
+            {defaults?.id ? 'Job Details' : 'Schedule New Job'}
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500"
+            aria-label="Close"
+            className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-600 dark:text-slate-300"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -676,13 +689,13 @@ const QuickAddJobModal: React.FC<Props> = ({
               onClick={onClose}
               className="flex-1 px-4 py-2.5 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-bold transition-colors"
             >
-              Cancel
+              {defaults?.id ? 'Back' : 'Cancel'}
             </button>
             <button
               type="submit"
               className="flex-1 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-bold shadow-sm transition-colors"
             >
-              Create Job
+              {defaults?.id ? 'Save Job' : 'Create Job'}
             </button>
           </div>
         </form>

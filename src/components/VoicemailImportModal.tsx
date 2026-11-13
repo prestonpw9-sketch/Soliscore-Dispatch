@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Voicemail, FileText, Loader2, Sparkles } from 'lucide-react';
 import type { Call } from '@/lib/data';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ const VoicemailImportModal: React.FC<Props> = ({
     return () => document.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   const handleImport = () => {

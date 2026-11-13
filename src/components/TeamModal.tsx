@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/AuthContext';
 import type { TechTimeOff } from '@/lib/data';
 import { isTechOffOnDay, dispatchToday } from '@/lib/data';
 import { formatPhoneDisplay, normalizeToE164, smsHref, telHref } from '@/lib/phone';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface Technician {
   id: string;
@@ -169,6 +170,7 @@ const TeamModal: React.FC<Props> = ({
     });
   }, [technicians, search]);
 
+  useBackHandler(isOpen, onClose);
   if (!isOpen) return null;
 
   const handleHire = async (e: React.FormEvent) => {
@@ -331,7 +333,7 @@ const TeamModal: React.FC<Props> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) handleClose(); }}
     >
       <div

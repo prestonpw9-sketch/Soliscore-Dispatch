@@ -3,6 +3,7 @@
  * Run: npm run test:daymap
  */
 import assert from 'node:assert/strict';
+import { buildPlaces, nearestNamed, shortClock, spanKm } from '../src/lib/payroll/dayMap.ts';
 import { boundsOf, buildJobPins, buildShops, buildStops, type DayMapSegmentInput } from '../src/lib/payroll/dayMap.ts';
 
 const segs: DayMapSegmentInput[] = [
@@ -42,3 +43,34 @@ assert.equal(boundsOf([]), null);
 assert.deepEqual(boundsOf([{ lat: 1, lng: 2 }, { lat: 3, lng: -4 }]), [[1, -4], [3, 2]]);
 
 console.log('day-map checks passed');
+
+// ── Readable places: Preston's Oct 29 pattern ─────────────────────────────
+
+const oct29: DayMapSegmentInput[] = [
+  { id: 'shop', kind: 'shop', job_id: null, job_name: 'Shop', started_at: '2026-10-29T18:14:00Z', ended_at: '2026-10-29T19:50:00Z',
+    start_latitude: 32.1734, start_longitude: -110.9216, end_latitude: 32.17342, end_longitude: -110.92158 },
+  { id: 'drive', kind: 'driving', job_id: null, job_name: null, started_at: '2026-10-29T19:50:00Z', ended_at: '2026-10-30T00:00:00Z',
+    start_latitude: 32.17341, start_longitude: -110.92161, end_latitude: 33.4227, end_longitude: -111.6579 },
+];
+const oShops = buildShops([{ id: 's', name: 'ITDG Shop', latitude: 32.1734, longitude: -110.9216, radius_m: 120 }]);
+const oPins = buildJobPins([{ id: '99', customerName: 'DCS', latitude: 33.4235, longitude: -111.6570, date: '2026-10-29' }], oct29, '2026-10-29');
+const places = buildPlaces(buildStops(oct29), oPins, oShops);
+assert.deepEqual(places.map(p => p.label), ['ITDG Shop 11:14a', 'Ended near DCS 5:00p'], 'shop + driving start merge; end named near DCS');
+assert.equal(places[0].minutes, 96, 'time at shop 11:14–12:50');
+assert.equal(places[1].travelMinutes, 250, 'travel 12:50–5:00');
+assert.equal(shortClock('2026-10-29T20:55:00Z'), '1:55p');
+assert.equal(nearestNamed(33.4227, -111.6579, oPins, oShops)?.name, 'DCS');
+assert.equal(nearestNamed(33.44, -111.6579, oPins, oShops), null, '~2 km away is not "near"');
+assert.ok(spanKm(places) > 100, 'Tucson to Mesa is far apart');
+
+// Unpinned stop with no nearby job keeps a plain label.
+const lone = buildPlaces(buildStops([oct29[1]]), [], []);
+assert.deepEqual(lone.map(p => p.place), ['Started driving', 'Stopped driving']);
+
+// On-site segment uses the job name.
+const onsite = buildPlaces(buildStops([{ id: 'j', kind: 'job', job_id: 99, job_name: 'DCS', started_at: '2026-10-29T20:55:00Z', ended_at: '2026-10-29T23:00:00Z',
+  start_latitude: 33.4235, start_longitude: -111.657, end_latitude: 33.4236, end_longitude: -111.6571 }]), oPins, oShops);
+assert.equal(onsite[0].label, 'DCS 1:55p');
+assert.equal(onsite[0].minutes, 125);
+
+console.log('day-map readable-place checks passed');

@@ -7,6 +7,7 @@ import {
   formatCurrency,
   type ChangeOrderData,
 } from './generatePdf';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface Props {
   open: boolean;
@@ -61,6 +62,7 @@ const ChangeOrderModal: React.FC<Props> = ({ open, onClose, doc, ensureSaved }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only seed when opened
   }, [open]);
 
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   const total = additionalMaterials + additionalLabor;

@@ -12,6 +12,7 @@ import {
   groupBlueprintsByJob,
   parseBlueprintPath,
 } from '@/lib/blueprints';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface BlueprintFile {
   id: string;
@@ -158,11 +159,12 @@ const BlueprintsModal: React.FC<Props> = ({
 
   const canUpload = canEdit && Boolean(selectedJobId) && !uploading;
 
+  useBackHandler(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div

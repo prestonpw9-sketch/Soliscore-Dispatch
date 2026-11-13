@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/AuthContext';
-import { X, Send, Bot, Smartphone, MessageSquare, Trash2, Phone, CalendarPlus } from 'lucide-react';
+import { X, Send, Bot, Smartphone, MessageSquare, Trash2, Phone, CalendarPlus, ArrowLeft } from 'lucide-react';
+import { useBackHandler } from '@/lib/nav/backStack';
 import { formatPhoneDisplay, phonesMatch } from '@/lib/phone';
 import { formatBoardSpan } from '@/lib/jobDate';
 import type { ScheduleAlert } from '@/hooks/useDispatchInbox';
@@ -38,6 +39,8 @@ export default function SMSPanel({ onClose, scheduledAlerts = [], onSelectThread
   const [deleting, setDeleting] = useState(false);
   const [directory, setDirectory] = useState<DirectoryTech[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Phone: a thread is its own screen; back returns to the list first.
+  useBackHandler(!!activePhone, () => setActivePhone(null));
 
   // Close on Escape — safety net so the panel is never a dead end.
   useEffect(() => {
@@ -101,7 +104,9 @@ export default function SMSPanel({ onClose, scheduledAlerts = [], onSelectThread
     const typedData = (data ?? []) as DispatchMessage[];
     setMessages(typedData);
 
-    if (!activePhone && typedData.length > 0) {
+    // Desktop opens the newest thread; on a phone start at the list.
+    const wide = typeof window === 'undefined' || window.matchMedia?.('(min-width: 640px)').matches !== false;
+    if (!activePhone && typedData.length > 0 && wide) {
       setActivePhone(typedData[typedData.length - 1].phone_number);
     }
   };
@@ -195,21 +200,22 @@ export default function SMSPanel({ onClose, scheduledAlerts = [], onSelectThread
   };
 
   return (
-    <div className="flex h-[800px] max-h-full w-full max-w-6xl mx-auto bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
-      <div className="w-1/3 border-r border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col">
-        <div className="p-5 bg-slate-900 dark:bg-slate-950 text-white shrink-0">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
+    <div className="flex h-full sm:h-[800px] max-h-full w-full max-w-6xl mx-auto bg-white dark:bg-slate-900 sm:rounded-2xl shadow-2xl overflow-hidden sm:border border-slate-200 dark:border-slate-800">
+      <div className={`${activePhone ? 'hidden sm:flex' : 'flex'} w-full sm:w-1/3 min-w-0 border-r border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex-col`}>
+        <div className="p-4 sm:p-5 bg-slate-900 dark:bg-slate-950 text-white shrink-0" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+          <div className="flex justify-between items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <MessageSquare className="w-5 h-5 text-indigo-400" />
               <span className="font-black text-lg tracking-tight">Comm Matrix</span>
             </div>
             <button
             onClick={onClose}
-            className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-slate-300 hover:text-white"
+            className="shrink-0 flex items-center gap-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-white text-sm font-bold"
             title="Close Message Matrix"
+            aria-label="Close"
             type="button"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" /> <span className="sm:hidden">Close</span>
             </button>
           </div>
           <a
@@ -315,12 +321,19 @@ export default function SMSPanel({ onClose, scheduledAlerts = [], onSelectThread
         </div>
       </div>
 
-      <div className="w-2/3 flex flex-col bg-slate-50/30 dark:bg-slate-900 relative">
+      <div className={`${activePhone ? 'flex' : 'hidden sm:flex'} w-full sm:w-2/3 min-w-0 flex-col bg-slate-50/30 dark:bg-slate-900 relative`}>
         {activePhone ? (
           <>
-            <div className="px-6 py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-sm z-10 shrink-0 gap-3">
-              <div className="min-w-0">
-                <div className="font-black text-slate-900 dark:text-white text-xl tracking-tight truncate">
+            <div className="px-3 sm:px-6 py-3 sm:py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-sm z-10 shrink-0 gap-2 sm:gap-3" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+              <button
+                type="button"
+                onClick={() => setActivePhone(null)}
+                className="sm:hidden shrink-0 flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white active:bg-slate-700"
+              >
+                <ArrowLeft className="w-5 h-5" /> Back
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className="font-black text-slate-900 dark:text-white text-base sm:text-xl tracking-tight truncate">
                   {activePhone ? labelForPhone(activePhone) : ''}
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -340,13 +353,21 @@ export default function SMSPanel({ onClose, scheduledAlerts = [], onSelectThread
                     Clear
                   </button>
                 )}
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-full border border-emerald-200 dark:border-emerald-500/20 shadow-sm">
+                <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-full border border-emerald-200 dark:border-emerald-500/20 shadow-sm">
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                   </span>
                   AI Active Routing
                 </div>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="Close messages"
+                  className="sm:hidden p-2 rounded-lg border border-slate-300 text-slate-700 dark:border-slate-600 dark:text-slate-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
             </div>
 

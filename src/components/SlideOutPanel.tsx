@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Job } from '@/lib/data';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 interface SlideOutPanelProps {
   job: Job | null;
@@ -10,6 +11,7 @@ export default function SlideOutPanel({
   job,
   onClose,
 }: SlideOutPanelProps) {
+  useBackHandler(!!job, onClose);
   if (!job) return null;
 
   return (
@@ -22,7 +24,7 @@ export default function SlideOutPanel({
       />
 
       <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right border-l border-gray-200">
-        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gray-50">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gray-50" style={{ paddingTop: 'max(1.25rem, env(safe-area-inset-top))' }}>
           <h2 className="text-xl font-bold text-gray-900">Dispatch Details</h2>
           <button
             type="button"

@@ -8,6 +8,7 @@ import {
   saveManualJobPin,
   type PinState,
 } from '@/lib/jobGeocode';
+import { useBackHandler } from '@/lib/nav/backStack';
 
 const PIN_LABEL: Record<PinState, string> = {
   pinned: 'Pinned',
@@ -84,6 +85,7 @@ export default function JobLocationFix({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  useBackHandler(true, onClose);
   const [address, setAddress] = useState(job.address ?? '');
   const [coords, setCoords] = useState('');
   const [busy, setBusy] = useState<'address' | 'coords' | null>(null);
