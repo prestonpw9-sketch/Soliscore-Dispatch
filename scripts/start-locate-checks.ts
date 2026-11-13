@@ -80,9 +80,13 @@ const tight = step(initialMachine(), {
     accuracyM: 20,
   },
 }, cfg, ids);
-assert.equal(tight.error, 'not-at-shop');
+// Outside the fence no longer blocks: it starts, flagged off-site, on Travel.
+assert.equal(tight.error, null);
+assert.equal(tight.offSite, true);
+assert.equal(tight.state.segments[0]?.kind, 'driving');
 assert.ok((tight.distanceM ?? 0) > 140);
 assert.equal(tight.accuracyM, 20);
+assert.equal(coarse.offSite, false, 'the accuracy credit still counts as at the shop');
 assert.match(notAtShopMessage(tight.distanceM ?? 0, 20, 90), /m from the shop \(±20 m accuracy\)/);
 
 assert.match(gpsTimeoutMessage(), /GPS timed out/);

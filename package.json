@@ -14,7 +14,9 @@
     "test:geocode": "node --experimental-strip-types scripts/geocode-checks.ts",
     "test:payroll": "node --experimental-strip-types scripts/payroll-checks.ts",
     "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio",
-    "test:daymap": "node --experimental-strip-types scripts/day-map-checks.ts"
+    "test:daymap": "node --experimental-strip-types scripts/day-map-checks.ts",
+    "test:late-clockin": "node --experimental-strip-types scripts/late-clockin-checks.ts",
+    "test:reminder": "node --experimental-strip-types scripts/clock-in-reminder-checks.ts"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",

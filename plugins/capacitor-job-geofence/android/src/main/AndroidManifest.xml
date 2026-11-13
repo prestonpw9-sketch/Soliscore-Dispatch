@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Opt-in clock-in reminder: adds an alarm to the Clock app (normal permission, no prompt). -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <application>
         <receiver
