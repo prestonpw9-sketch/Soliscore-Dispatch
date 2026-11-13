@@ -109,7 +109,10 @@ assert.equal(again.error, 'already-started');
 state = apply(state, { type: 'sample', fix: fix(eightAm + 1_000, SHOP.latitude, SHOP.longitude, 12, 90) }, cfg, ids);
 assert.equal(openSegment(state)?.kind, 'shop');
 
+// Fast but still inside the shop fence: not Travel yet.
 state = apply(state, { type: 'sample', fix: fix(eightAm + 1_000 + DEFAULT_SPEED_SUSTAIN_MS, SHOP.latitude, SHOP.longitude, 12, 88) }, cfg, ids);
+assert.equal(openSegment(state)?.kind, 'shop', 'speed inside the fence is not enough');
+state = apply(state, { type: 'sample', fix: fix(eightAm + 2_000 + DEFAULT_SPEED_SUSTAIN_MS, SHOP.latitude + 0.003, SHOP.longitude, 12, 88) }, cfg, ids);
 assert.equal(openSegment(state)?.kind, 'driving');
 assert.equal(state.segments[0]?.kind, 'shop');
 assert.equal(state.segments[0]?.endedAt, new Date(eightAm + 1_000).toISOString());
@@ -260,3 +263,43 @@ assert.equal(replaced.length, 1);
 assert.equal(replaced[0]?.record.ended_at, 'later');
 
 console.log('shift checks passed');
+
+// ── Segment integrity (Preston's Oct 29-30 test data) ──────────────────────
+{
+  // A restored state with two open rows: clock-out closes both.
+  let s = apply(initialMachine(), { type: 'clock-in', fix: fix(eightAm, SHOP.latitude, SHOP.longitude, 0, 80) }, cfg, idsFrom(900));
+  s = { ...s, segments: [...s.segments, { ...s.segments[0], id: 'stray', startedAt: new Date(eightAm + 60_000).toISOString() }] };
+  s = { ...s, segments: [{ ...s.segments[1] }, { ...s.segments[0] }].reverse() };
+  s = apply(s, { type: 'clock-out', fix: fix(eightAm + 3_600_000, SHOP.latitude, SHOP.longitude, 0, 70) }, cfg, idsFrom(910));
+  assert.ok(s.segments.every(segment => segment.endedAt), 'clock-out closes every open segment');
+
+  // A queued native sample from before clock-in is ignored.
+  let t = apply(initialMachine(), { type: 'clock-in', fix: fix(eightAm, SHOP.latitude, SHOP.longitude, 0, 80) }, cfg, idsFrom(920));
+  const before = t.segments.length;
+  t = apply(t, { type: 'sample', fix: fix(eightAm - 2 * 3_600_000, JOB.latitude, JOB.longitude, 30, 80) }, cfg, idsFrom(930));
+  assert.equal(t.segments.length, before, 'sample from before clock-in does nothing');
+  assert.ok(t.segments.every(segment => Date.parse(segment.startedAt) >= eightAm), 'no segment before clock-in');
+
+  // Parked at the shop with GPS wobbling 40 m every 5 s: stays Shop.
+  let j = apply(initialMachine(), { type: 'clock-in', fix: fix(eightAm, SHOP.latitude, SHOP.longitude, 0, 80) }, cfg, idsFrom(940));
+  for (let i = 1; i <= 120; i += 1) {
+    const wobble = (i % 2 ? 40 : -40) / 111_320;
+    j = apply(j, { type: 'sample', fix: { ...fix(eightAm + i * 5_000, SHOP.latitude + wobble, SHOP.longitude, null, 80), accuracyM: 20 } }, cfg, idsFrom(1000 + i * 3));
+  }
+  assert.equal(openSegment(j)?.kind, 'shop', 'GPS jitter at the shop is not Travel');
+  assert.equal(j.segments.length, 1);
+
+  // Drifted 130 m out of the shop fence and sitting still: back to Shop after the dwell time.
+  const drift = SHOP.latitude + 130 / 111_320;
+  let d = apply(initialMachine(), { type: 'clock-in', fix: fix(eightAm, SHOP.latitude, SHOP.longitude, 0, 80) }, cfg, idsFrom(1500));
+  for (let i = 1; i <= 40; i += 1) {
+    d = apply(d, { type: 'sample', fix: fix(eightAm + i * 30_000, drift, SHOP.longitude, 0, 80) }, cfg, idsFrom(1600 + i * 3));
+  }
+  assert.equal(openSegment(d)?.kind, 'shop', 'a still phone just outside the shop goes back to Shop');
+  const starts = d.segments.map(segment => Date.parse(segment.startedAt));
+  for (let i = 1; i < d.segments.length; i += 1) {
+    assert.ok(d.segments[i - 1].endedAt, 'only the last segment is open');
+    assert.ok(Date.parse(d.segments[i - 1].endedAt!) <= starts[i], 'segments never overlap');
+  }
+}
+console.log('segment integrity checks passed');

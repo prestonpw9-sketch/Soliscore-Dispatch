@@ -41,6 +41,7 @@ export function initialMachine(): MachineState {
     motionSince: null,
     outsideSince: null,
     dwell: null,
+    still: null,
     lastBatteryAt: null,
     batterySamples: [],
   };
@@ -51,6 +52,15 @@ export function openSegment(state: MachineState): TimeSegment | null {
   if (!last || last.endedAt) return null;
   return last;
 }
+
+/** GPS noise floor for speed math. Phones wander 20-50 m while sitting still. */
+export const JITTER_FLOOR_M = 35;
+/** Being outside the fence has to last this long before Travel starts. */
+export const OUTSIDE_EXIT_MS = 2 * 60_000;
+/** While on Travel, sitting within this many meters for the dwell time is a stop. */
+export const STILL_RADIUS_M = 120;
+/** A stop this close to a fence (beyond its radius) goes back to that place. */
+export const STILL_SNAP_M = 150;
 
 function iso(ms: number): string {
   return new Date(ms).toISOString();
@@ -141,9 +151,17 @@ function speedMps(state: MachineState, fix: Fix): number {
       fix.latitude,
       fix.longitude,
     );
-    implied = meters / ((fix.at - state.lastSample.at) / 1000);
+    // Subtract the error circles so a fix that wobbles 40 m in 5 s is not
+    // read as 18 mph.
+    const noise = Math.max(
+      JITTER_FLOOR_M,
+      (fix.accuracyM ?? 0) + (state.lastSample.accuracyM ?? 0),
+    );
+    implied = Math.max(0, meters - noise) / ((fix.at - state.lastSample.at) / 1000);
   }
-  return Math.max(reported, implied);
+  // A reported speed from a coarse fix is noise too.
+  const trusted = fix.accuracyM != null && fix.accuracyM > 100 ? 0 : reported;
+  return Math.max(trusted, implied);
 }
 
 function pushBattery(
@@ -175,17 +193,25 @@ function pushBattery(
   };
 }
 
+/**
+ * Close every open segment at `at`. Normally only the last row is open, but a
+ * state restored from an older build (or a second tab) can hold more than
+ * one; leaving any of them open lets it run forever on the server.
+ */
 function closeOpen(state: MachineState, at: number, fix: Fix, battery: number | null): MachineState {
-  const open = openSegment(state);
-  if (!open) return state;
-  const closed: TimeSegment = {
-    ...open,
-    endedAt: iso(at),
-    endLatitude: fix.latitude,
-    endLongitude: fix.longitude,
-    batteryEnd: percent(battery),
-  };
-  return { ...state, segments: [...state.segments.slice(0, -1), closed] };
+  if (!state.segments.some(segment => !segment.endedAt)) return state;
+  const segments = state.segments.map(segment => {
+    if (segment.endedAt) return segment;
+    const end = Math.max(at, Date.parse(segment.startedAt));
+    return {
+      ...segment,
+      endedAt: iso(end),
+      endLatitude: fix.latitude,
+      endLongitude: fix.longitude,
+      batteryEnd: percent(battery),
+    };
+  });
+  return { ...state, segments };
 }
 
 function beginSegment(
@@ -197,6 +223,15 @@ function beginSegment(
   ids: () => string,
 ): MachineState {
   if (!state.shift) return state;
+  // Never start before clock-in or before the row it follows, and never
+  // leave the previous row open.
+  const floor = Math.max(
+    Date.parse(state.shift.startedAt),
+    ...state.segments.map(item => Date.parse(item.startedAt)).filter(Number.isFinite),
+  );
+  at = Math.max(at, floor);
+  fix = { ...fix, at };
+  state = closeOpen(state, at, fix, fix.batteryPercent);
   const segment: TimeSegment = {
     id: ids(),
     shiftId: state.shift.id,
@@ -222,6 +257,7 @@ function beginSegment(
     motionSince: null,
     outsideSince: null,
     dwell: null,
+    still: null,
   };
 }
 
@@ -259,15 +295,27 @@ function finishShift(
     motionSince: null,
     outsideSince: null,
     dwell: null,
-    lastSample: { at: fix.at, latitude: fix.latitude, longitude: fix.longitude },
+    still: null,
+    lastSample: { at: fix.at, latitude: fix.latitude, longitude: fix.longitude, accuracyM: fix.accuracyM ?? null },
   };
 }
 
 function rememberFix(state: MachineState, fix: Fix): MachineState {
   return {
     ...state,
-    lastSample: { at: fix.at, latitude: fix.latitude, longitude: fix.longitude },
+    lastSample: { at: fix.at, latitude: fix.latitude, longitude: fix.longitude, accuracyM: fix.accuracyM ?? null },
   };
+}
+
+/** Closest place whose fence, grown by `extraM`, contains the fix. */
+function placeWithin(fix: Fix, places: Place[], extraM: number): Place | null {
+  let best: { place: Place; distance: number } | null = null;
+  for (const place of places) {
+    const distance = distanceMeters(fix.latitude, fix.longitude, place.latitude, place.longitude);
+    if (distance > place.radiusMeters + extraM) continue;
+    if (!best || distance < best.distance) best = { place, distance };
+  }
+  return best?.place ?? null;
 }
 
 function placeForOpen(open: TimeSegment, places: Place[]): Place | null {
@@ -411,6 +459,14 @@ export function step(
     return { state, error: input.type === 'clock-out' ? 'not-started' : null };
   }
 
+  // Samples queued by the native tracker before this clock-in, or delivered
+  // out of order, must not move segments.
+  if (input.type === 'sample') {
+    const shiftStart = Date.parse(state.shift.startedAt);
+    if (fix.at < shiftStart) return { state, error: null };
+    if (state.lastSample && fix.at < state.lastSample.at) return { state, error: null };
+  }
+
   const stopAt = safetyStopAt(Date.parse(state.shift.startedAt), config.safety);
   const lunchUntil = input.type === 'clock-out' ? fix.at : Math.min(fix.at, stopAt);
   const withLunch = catchUpLunch(state, lunchUntil, fix, config, places, threshold, ids);
@@ -444,11 +500,30 @@ export function step(
 
   if (open.kind === 'driving') {
     if (speed >= threshold) {
-      next = { ...next, dwell: null, motionSince: null, outsideSince: null };
+      next = { ...next, dwell: null, motionSince: null, outsideSince: null, still: null };
     } else {
       const place = nearestPlace(fix, places);
+      // Track how long the phone has sat in one spot.
+      const still = next.still
+        && distanceMeters(next.still.latitude, next.still.longitude, fix.latitude, fix.longitude) <= STILL_RADIUS_M
+        ? next.still
+        : { latitude: fix.latitude, longitude: fix.longitude, since: fix.at };
+      next = { ...next, still };
       if (!place) {
         next = { ...next, dwell: null };
+        // Parked just outside a fence (GPS drift at the shop): after the dwell
+        // time, go back to that place instead of logging hours of Travel.
+        if (fix.at - still.since >= config.dwellMs) {
+          // Only the shop or the place just left: snapping to any nearby job
+          // would let a big fence swallow the neighbor.
+          const before = [...next.segments].reverse().find(item => item.kind === 'shop' || item.kind === 'job');
+          const candidates = places.filter(item => item.kind === 'shop'
+            || (before?.kind === 'job' && item.kind === 'job' && item.jobId === before.jobId));
+          const near = placeWithin(fix, candidates, STILL_SNAP_M);
+          if (near) {
+            next = switchTo(next, still.since, { ...fix, at: still.since }, near.kind, near, ids);
+          }
+        }
       } else if (!next.dwell || next.dwell.placeKey !== place.key) {
         next = { ...next, dwell: { placeKey: place.key, since: fix.at } };
       } else if (fix.at - next.dwell.since >= config.dwellMs) {
@@ -460,19 +535,24 @@ export function step(
     const here = placeForOpen(open, places);
     const stillInside = here ? inside(fix, here) : false;
     if (speed >= threshold) {
+      // Moving fast counts once the phone is also outside the fence, so GPS
+      // wobble while parked at the shop does not start Travel.
       const since = next.motionSince ?? fix.at;
       if (next.motionSince == null) {
         next = { ...next, motionSince: fix.at, outsideSince: null };
-      } else if (fix.at - since >= config.speedSustainMs) {
+      }
+      if (!stillInside && fix.at - since >= config.speedSustainMs) {
         next = switchTo(next, since, { ...fix, at: since }, 'driving', null, ids);
       }
     } else {
       next = { ...next, motionSince: null };
-      if (!stillInside) {
+      // Sitting still just past the fence is GPS drift, not leaving.
+      const nearby = stillInside || (here ? placeWithin(fix, [here], STILL_SNAP_M) != null : false);
+      if (!nearby) {
         const since = next.outsideSince ?? fix.at;
         if (next.outsideSince == null) {
           next = { ...next, outsideSince: fix.at };
-        } else if (fix.at - since >= config.speedSustainMs) {
+        } else if (fix.at - since >= Math.max(config.speedSustainMs, OUTSIDE_EXIT_MS)) {
           next = switchTo(next, since, { ...fix, at: since }, 'driving', null, ids);
         }
       } else {

@@ -234,7 +234,8 @@ assert.equal(weekStartFor('2026-11-04', 4), '2026-10-29');
   const today = days.find(day => day.userId === 'user-b');
   assert.ok(old?.anomalies.some(anomaly => anomaly.kind === 'open_shift'), 'still clocked in from yesterday');
   assert.equal(today?.anomalies.length, 0, 'open shift today is normal');
-  assert.equal(today?.shopMinutes, 5 * 60, 'segment clipped to clock-in and counted to now');
+  assert.equal(today?.shopMinutes, 5 * 60 - 30, 'segment clipped to clock-in, counted to now, company lunch carved out');
+  assert.equal(today?.lunchDeductedMinutes, 30);
 }
 
 {
@@ -290,3 +291,37 @@ assert.equal(weekStartFor('2026-11-04', 4), '2026-10-29');
 }
 
 console.log('payroll checks passed');
+
+// ── Overlapping / unclosed rows (Preston's Oct 29-30 test data) ────────────
+
+{
+  const P = 'preston';
+  const shifts: PayrollShiftRow[] = [
+    { id: 'oct29', user_id: P, started_at: '2026-10-29T18:14:54.661Z', ended_at: '2026-10-30T00:00:00Z', end_reason: 'auto_stop' },
+    { id: 'tap1', user_id: P, started_at: '2026-10-30T03:40:43.670Z', ended_at: '2026-10-30T03:40:51.967Z', end_reason: 'clock_out' },
+    { id: 'oct30', user_id: P, started_at: '2026-10-30T19:39:27.999Z', ended_at: '2026-10-31T02:36:06.750Z', end_reason: 'clock_out' },
+    { id: 'tap2', user_id: P, started_at: '2026-10-31T02:33:40.430Z', ended_at: '2026-10-31T02:33:48.721Z', end_reason: 'clock_out' },
+  ];
+  const row = (id: string, shift: string, kind: PayrollSegmentRow['kind'], a: string, b: string | null): PayrollSegmentRow => ({
+    id, shift_id: shift, user_id: P, kind, job_id: null, job_name: null, started_at: a, ended_at: b,
+  });
+  const segments: PayrollSegmentRow[] = [
+    row('a', 'oct29', 'shop', '2026-10-29T18:14:54.661Z', '2026-10-29T19:50:07.994Z'),
+    row('b', 'oct29', 'driving', '2026-10-29T19:50:07.994Z', '2026-10-30T00:00:00Z'),
+    row('c', 'tap1', 'shop', '2026-10-30T01:02:39.948Z', '2026-10-30T03:40:51.967Z'),
+    row('d', 'tap1', 'shop', '2026-10-30T03:40:43.670Z', null),
+    row('e', 'oct30', 'shop', '2026-10-30T19:39:27.999Z', null),
+    row('f', 'oct30', 'shop', '2026-10-30T20:25:53.855Z', '2026-10-30T23:09:29.895Z'),
+    row('g', 'oct30', 'driving', '2026-10-30T23:09:29.895Z', null),
+    row('h', 'tap2', 'shop', '2026-10-31T02:33:40.430Z', '2026-10-31T02:33:48.721Z'),
+  ];
+  const later = Date.parse('2026-10-31T20:00:00Z');
+  const { weeks, days } = buildPayroll({ shifts, segments, now: later });
+  const oct29 = days.find(day => day.workDate === '2026-10-29');
+  const oct30 = days.find(day => day.workDate === '2026-10-30');
+  assert.equal(oct29?.lunchDeductedMinutes, 15, 'clocked in 11:14, lunch 11:15-11:30 carved out');
+  assert.equal(oct29?.paidMinutes, 330, 'Oct 29: 11:14-5:00 less lunch');
+  assert.equal(oct30?.paidMinutes, 417, 'Oct 30: 12:39-7:36, no double count of the overlapping shop rows');
+  assert.equal(weeks[0].paidMinutes, 747, 'about 12.45 h, not 18.82');
+}
+console.log('overlap checks passed');

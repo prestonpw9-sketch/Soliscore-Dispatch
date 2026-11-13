@@ -84,10 +84,12 @@ export type StepError = 'not-at-shop' | 'no-shop' | 'already-started' | 'not-sta
 export interface MachineState {
   shift: Shift | null;
   segments: TimeSegment[];
-  lastSample: { at: number; latitude: number; longitude: number } | null;
+  lastSample: { at: number; latitude: number; longitude: number; accuracyM?: number | null } | null;
   motionSince: number | null;
   outsideSince: number | null;
   dwell: { placeKey: string; since: number } | null;
+  /** Where and since when the phone has been sitting still while on Travel. */
+  still?: { latitude: number; longitude: number; since: number } | null;
   lastBatteryAt: number | null;
   batterySamples: BatterySample[];
 }
