@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Building2, Bell, Database, KeyRound, HardHat, Save } from 'lucide-react';
 import { useTheme, type ThemeMode } from '@/lib/ThemeContext';
+import ClockInReminderSetting from './ClockInReminderSetting';
 
 const SettingsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'profile' | 'preferences' | 'integrations'>('profile');
@@ -57,6 +58,7 @@ const SettingsView: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveTab('preferences')}
+              aria-label="Preferences"
               className={`flex-1 md:flex-none flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors border-b-2 md:border-b-0 md:border-l-2 ${
                 activeTab === 'preferences'
                   ? 'border-teal-500 bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-400'
@@ -183,6 +185,8 @@ const SettingsView: React.FC = () => {
                   <Bell className="w-5 h-5 text-teal-600" /> Notifications & Display
                 </h3>
                 <div className="space-y-4">
+                  <ClockInReminderSetting />
+
                   <div className="flex items-center justify-between p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
                     <div>
                       <div className="font-medium text-slate-900 dark:text-white text-sm">

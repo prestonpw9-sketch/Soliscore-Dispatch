@@ -2,6 +2,7 @@ import Capacitor
 import CoreLocation
 import CoreMotion
 import Foundation
+import UIKit
 import UserNotifications
 
 private let iosRegionLimit = 20
@@ -66,7 +67,11 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         CAPPluginMethod(name: "stopShiftTracking", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "drainSamples", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getBattery", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getCurrentPosition", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getCurrentPosition", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setClockInReminder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancelClockInReminder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "skipClockInReminderToday", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openClockAlarms", returnType: CAPPluginReturnPromise)
     ]
 
     private let manager = CLLocationManager()
@@ -88,6 +93,13 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         manager.pausesLocationUpdatesAutomatically = true
         UNUserNotificationCenter.current().delegate = self
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appBecameActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        restoreSkippedReminder()
         restore()
         if !sites.isEmpty {
             startArming()
@@ -371,7 +383,157 @@ public class JobGeofencePlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDe
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        // Clock-in reminder while a shift is already running: stay quiet.
+        if notification.request.content.userInfo["clockInReminder"] as? Bool == true && shiftActive {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound])
+    }
+
+    // MARK: Clock-in reminder
+    //
+    // iPhone apps can't add alarms to the Clock app, so the opt-in reminder
+    // (at the time the worker picked, 6:00 AM by default) is one repeating
+    // calendar notification per weekday. Setting it again replaces them. Apple
+    // weekday numbers: 1 = Sunday … 7 = Saturday.
+
+    private static let reminderPrefix = "clockin-reminder-"
+    private static let reminderKey = "clockInReminder"
+    private static let reminderSkipKey = "clockInReminderSkip"
+
+    @objc func setClockInReminder(_ call: CAPPluginCall) {
+        let hour = min(max(call.getInt("hour", 6), 0), 23)
+        let minute = min(max(call.getInt("minute", 0), 0), 59)
+        let title = call.getString("title", "Clock in")
+        let body = call.getString("body", "Time to clock in. Open ITDG Dispatch and tap Start.")
+        // JS sends 1 = Monday … 7 = Sunday.
+        var weekdays = (call.getArray("weekdays") ?? []).compactMap { intValue($0 as Any?) }
+            .filter { $0 >= 1 && $0 <= 7 }
+            .map { $0 % 7 + 1 }
+        if weekdays.isEmpty {
+            weekdays = [2, 3, 4, 5, 6]
+        }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            DispatchQueue.main.async {
+                self.askedNotifications = true
+                self.notificationsGranted = granted
+                guard granted else {
+                    call.reject("notifications-denied")
+                    return
+                }
+                self.removeReminderRequests()
+                self.defaults.removeObject(forKey: Self.reminderSkipKey)
+                let config: [String: Any] = [
+                    "hour": hour,
+                    "minute": minute,
+                    "weekdays": weekdays,
+                    "title": title,
+                    "body": body
+                ]
+                self.defaults.set(config, forKey: Self.reminderKey)
+                for weekday in weekdays {
+                    self.addReminderRequest(weekday: weekday, config: config)
+                }
+                call.resolve(["method": "notification"])
+            }
+        }
+    }
+
+    @objc func cancelClockInReminder(_ call: CAPPluginCall) {
+        removeReminderRequests()
+        defaults.removeObject(forKey: Self.reminderKey)
+        defaults.removeObject(forKey: Self.reminderSkipKey)
+        call.resolve(["removed": true])
+    }
+
+    /// Already clocked in before the reminder: drop today's. It is re-added
+    /// once today's time has passed (next app launch or return to the app).
+    @objc func skipClockInReminderToday(_ call: CAPPluginCall) {
+        restoreSkippedReminder()
+        guard let config = defaults.dictionary(forKey: Self.reminderKey) else {
+            call.resolve(["skipped": false])
+            return
+        }
+        let now = Date()
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: now)
+        let weekdays = config["weekdays"] as? [Int] ?? []
+        guard weekdays.contains(weekday), let due = todayAt(config, now: now), now < due else {
+            call.resolve(["skipped": false])
+            return
+        }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: [Self.reminderPrefix + String(weekday)]
+        )
+        defaults.set(["day": localDayKey(now), "weekday": weekday], forKey: Self.reminderSkipKey)
+        call.resolve(["skipped": true])
+    }
+
+    @objc func openClockAlarms(_ call: CAPPluginCall) {
+        call.reject("unsupported")
+    }
+
+    @objc private func appBecameActive() {
+        restoreSkippedReminder()
+    }
+
+    private func restoreSkippedReminder() {
+        guard let skip = defaults.dictionary(forKey: Self.reminderSkipKey) else { return }
+        guard let config = defaults.dictionary(forKey: Self.reminderKey),
+              let weekday = skip["weekday"] as? Int else {
+            defaults.removeObject(forKey: Self.reminderSkipKey)
+            return
+        }
+        let now = Date()
+        let sameDay = (skip["day"] as? String) == localDayKey(now)
+        if sameDay, let due = todayAt(config, now: now), now < due {
+            return
+        }
+        // Today's time has passed, so the repeating trigger next fires next week.
+        addReminderRequest(weekday: weekday, config: config)
+        defaults.removeObject(forKey: Self.reminderSkipKey)
+    }
+
+    private func addReminderRequest(weekday: Int, config: [String: Any]) {
+        var match = DateComponents()
+        match.weekday = weekday
+        match.hour = config["hour"] as? Int ?? 6
+        match.minute = config["minute"] as? Int ?? 0
+        let content = UNMutableNotificationContent()
+        content.title = config["title"] as? String ?? "Clock in"
+        content.body = config["body"] as? String ?? "Time to clock in."
+        content.sound = .default
+        content.userInfo = ["clockInReminder": true]
+        let trigger = UNCalendarNotificationTrigger(dateMatching: match, repeats: true)
+        let request = UNNotificationRequest(
+            identifier: Self.reminderPrefix + String(weekday),
+            content: content,
+            trigger: trigger
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func removeReminderRequests() {
+        let ids = (1...7).map { Self.reminderPrefix + String($0) }
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: ids)
+        center.removeDeliveredNotifications(withIdentifiers: ids)
+    }
+
+    private func todayAt(_ config: [String: Any], now: Date) -> Date? {
+        return Calendar.current.date(
+            bySettingHour: config["hour"] as? Int ?? 6,
+            minute: config["minute"] as? Int ?? 0,
+            second: 0,
+            of: now
+        )
+    }
+
+    private func localDayKey(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 
     public func userNotificationCenter(

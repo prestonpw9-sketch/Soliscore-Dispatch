@@ -23,6 +23,7 @@ export interface BridgeGeolocation {
 
 export interface BridgeShell {
   isNativePlatform?: () => boolean;
+  getPlatform?: () => string;
   isPluginAvailable?: (name: string) => boolean;
   Plugins?: {
     JobGeofence?: JobGeofencePlugin;
@@ -38,6 +39,13 @@ function nativeShell(): BridgeShell | undefined {
 /** True only inside the Capacitor Android or iOS shell. */
 export function isNativeDispatchApp(): boolean {
   return nativeShell()?.isNativePlatform?.() === true;
+}
+
+/** 'android' or 'ios' inside the native shell, otherwise null. */
+export function nativeDispatchPlatform(): 'android' | 'ios' | null {
+  if (!isNativeDispatchApp()) return null;
+  const platform = nativeShell()?.getPlatform?.();
+  return platform === 'android' || platform === 'ios' ? platform : null;
 }
 
 function bridgePlugin<T>(cap: BridgeShell | null | undefined, name: 'JobGeofence' | 'Geolocation', plugin: T | undefined): T | null {

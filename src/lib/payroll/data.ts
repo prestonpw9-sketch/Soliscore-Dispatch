@@ -291,6 +291,27 @@ export async function editShift(args: {
   return result(error);
 }
 
+/**
+ * Payroll admin fixes a flagged (late / backdated / off-site) clock-in: start
+ * time and picked job, and marks it reviewed. Audited like every other edit.
+ */
+export async function reviewClockIn(args: {
+  shiftId: string;
+  startedAt?: string;
+  startJobId?: number | null;
+  clearStartJob?: boolean;
+  note?: string;
+}): Promise<Result> {
+  const { error } = await supabase.rpc('payroll_review_clock_in', {
+    p_shift_id: args.shiftId,
+    p_started_at: args.startedAt ?? null,
+    p_start_job_id: args.startJobId ?? null,
+    p_clear_start_job: args.clearStartJob ?? false,
+    p_note: args.note?.trim() || null,
+  });
+  return result(error);
+}
+
 export async function savePayrollSettings(userId: string, row: PayrollSettingsRow): Promise<Result> {
   const { error } = await supabase.from('payroll_settings').update({
     ...row,
