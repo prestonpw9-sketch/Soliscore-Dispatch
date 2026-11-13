@@ -3,7 +3,7 @@
  * so scripts/day-map-checks.ts can run them under plain Node.
  */
 
-export type DayMapKind = 'shop' | 'driving' | 'job' | 'lunch';
+export type DayMapKind = 'shop' | 'driving' | 'job' | 'lunch' | 'unverified';
 
 export interface DayMapSegmentInput {
   id: string;
@@ -78,6 +78,7 @@ export const KIND_COLOR: Record<DayMapKind, string> = {
   driving: '#f59e0b',
   job: '#16a34a',
   lunch: '#a855f7',
+  unverified: '#64748b',
 };
 
 export const KIND_NAME: Record<DayMapKind, string> = {
@@ -85,6 +86,7 @@ export const KIND_NAME: Record<DayMapKind, string> = {
   driving: 'Travel',
   job: 'On site',
   lunch: 'Lunch',
+  unverified: 'Unverified',
 };
 
 export const DEFAULT_RADIUS_M = 90;
@@ -256,6 +258,7 @@ function placeName(stop: DayMapStop, pins: DayMapJobPin[], shops: DayMapShop[]):
   if (stop.kind === 'job') return stop.jobName?.trim() || (near ? near.name : 'Job');
   if (stop.kind === 'lunch') return near ? `Lunch near ${near.name}` : 'Lunch';
   if (stop.kind === 'shop') return near?.type === 'shop' ? near.name : (stop.jobName?.trim() || 'Shop');
+  if (stop.kind === 'unverified') return near ? `Unverified near ${near.name}` : (stop.jobName?.trim() || 'Unverified');
   // Driving: start = where they left, end = where they ended up.
   if (stop.edge === 'start') return near ? `Left ${near.name}` : 'Started driving';
   return near ? `Ended near ${near.name}` : 'Stopped driving';

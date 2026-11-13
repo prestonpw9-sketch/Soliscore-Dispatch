@@ -10,10 +10,14 @@ import {
   insertSegment,
   isoToPhoenixHhmm,
   phoenixLocalToIso,
+  reviewClockIn,
+  CLOCK_IN_FLAG_TEXT,
+  CLOCK_OUT_FLAG_TEXT,
   type PayrollAuditRow,
   type PayrollDay,
   type PayrollSegmentKind,
   type PayrollSegmentView,
+  type PayrollShiftSummary,
 } from '@/lib/payroll/data';
 
 const PayrollDayMap = lazy(() => import('./PayrollDayMap'));
@@ -31,6 +35,7 @@ const KIND_LABEL: Record<PayrollSegmentKind, string> = {
   driving: 'Travel',
   job: 'On site',
   lunch: 'Lunch',
+  unverified: 'Unverified',
 };
 
 const inputClass =
@@ -111,17 +116,34 @@ export default function PayrollDayDetail({ day, jobs, names, audit, onChanged }:
 
       <div>
         <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">Clock in / out</h4>
+        {day.shifts.filter(isFlagged).map(shift => (
+          <ClockInReview
+            key={`review-${shift.id}`}
+            shift={shift}
+            workDate={day.workDate}
+            jobOptions={jobOptions}
+            busy={busy === `review-${shift.id}`}
+            onSave={args => act(
+              `review-${shift.id}`,
+              () => reviewClockIn({ shiftId: shift.id, ...args }),
+              'Clock-in reviewed.',
+            )}
+          />
+        ))}
         {day.shifts.map(shift => (
           <ShiftEditor
             key={shift.id}
             workDate={day.workDate}
             clockIn={shift.clockIn}
             clockOut={shift.clockOut}
+            needsReview={isFlagged(shift) && !shift.clockInReviewed}
             busy={busy === shift.id}
             onSave={(startedAt, endedAt, note) => act(
               shift.id,
               () => editShift({ shiftId: shift.id, startedAt, endedAt, note }),
-              'Clock times saved.',
+              isFlagged(shift) && !shift.clockInReviewed
+                ? 'Clock times saved. Clock-in marked reviewed.'
+                : 'Clock times saved.',
             )}
           />
         ))}
@@ -186,16 +208,107 @@ export default function PayrollDayDetail({ day, jobs, names, audit, onChanged }:
   );
 }
 
+/** Flagged clock-in, or a clock-out the server got late / ahead of its clock. */
+function isFlagged(shift: PayrollShiftSummary): boolean {
+  return shift.clockInFlags.length > 0 || shift.clockOutFlags.length > 0;
+}
+
+/**
+ * A late, backdated, or off-site start, or a flagged clock-out. A payroll
+ * admin can move the start, change the job picked at clock-in, and mark it
+ * reviewed (the clock-out is fixed with Save clock times below). Unverified
+ * or backfilled segments are fixed in the segment list below.
+ */
+function ClockInReview({
+  shift,
+  workDate,
+  jobOptions,
+  busy,
+  onSave,
+}: {
+  shift: PayrollShiftSummary;
+  workDate: string;
+  jobOptions: Array<{ id: string; label: string }>;
+  busy: boolean;
+  onSave: (args: { startedAt?: string; startJobId?: number | null; clearStartJob?: boolean; note: string }) => Promise<void>;
+}) {
+  const original = isoToPhoenixHhmm(shift.clockIn);
+  const [start, setStart] = useState(original);
+  const [jobId, setJobId] = useState(shift.startJobId ?? '');
+  const [note, setNote] = useState('');
+  const flags = [
+    ...shift.clockInFlags.map(flag => CLOCK_IN_FLAG_TEXT[flag]),
+    ...shift.clockOutFlags.map(flag => CLOCK_OUT_FLAG_TEXT[flag]),
+  ].join(' · ');
+  const missingJob = jobId && !jobOptions.some(option => option.id === jobId);
+  return (
+    <div
+      className={`mt-1 rounded-xl border px-3 py-2 text-sm ${shift.clockInReviewed
+        ? 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50'
+        : 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950'}`}
+    >
+      <p className="font-semibold text-amber-900 dark:text-amber-100">
+        <AlertTriangle className="mr-1 inline h-4 w-4 align-text-bottom" aria-hidden="true" />
+        {flags}
+        {shift.clockInReviewed && <span className="ml-2 text-xs font-bold uppercase text-slate-500">reviewed</span>}
+      </p>
+      <p className="mt-0.5 text-xs text-slate-700 dark:text-slate-300">
+        Clock-in {formatPhoenixClock(shift.clockIn)}
+        {shift.tappedAt && shift.tappedAt !== shift.clockIn ? ` · tapped Start ${formatPhoenixClock(shift.tappedAt)}` : ''}
+        {shift.receivedAt ? ` · server received ${formatPhoenixClock(shift.receivedAt)}` : ''}
+        {shift.clockInNote ? ` · ${shift.clockInNote}` : ''}
+      </p>
+      {shift.clockOutFlags.length > 0 && (
+        <p className="mt-0.5 text-xs text-slate-700 dark:text-slate-300">
+          Clock-out {formatPhoenixClock(shift.clockOut)} · server received {formatPhoenixClock(shift.clockOutReceivedAt)}
+        </p>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1">Start
+          <input type="time" aria-label="Reviewed start" value={start} onChange={e => setStart(e.target.value)} className={inputClass} />
+        </label>
+        <select aria-label="Clock-in job" value={jobId} onChange={e => setJobId(e.target.value)} className={`${inputClass} max-w-[16rem]`}>
+          <option value="">No job</option>
+          {missingJob && <option value={jobId}>Job {jobId}</option>}
+          {jobOptions.map(option => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </select>
+        <input placeholder="Reason (optional)" value={note} onChange={e => setNote(e.target.value)} className={`${inputClass} w-48`} />
+        <button
+          type="button"
+          disabled={busy || !start || !shift.clockOut}
+          title={shift.clockOut ? undefined : 'Review after clock-out'}
+          onClick={() => {
+            void onSave({
+              startedAt: start !== original ? phoenixLocalToIso(workDate, start) : undefined,
+              startJobId: jobId ? Number(jobId) : null,
+              clearStartJob: !jobId,
+              note,
+            });
+          }}
+          className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+        >
+          {busy && <Loader2 className="h-3 w-3 animate-spin" />} {shift.clockInReviewed ? 'Save' : 'Save & mark reviewed'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ShiftEditor({
   workDate,
   clockIn,
   clockOut,
+  needsReview,
   busy,
   onSave,
 }: {
   workDate: string;
   clockIn: string;
   clockOut: string | null;
+  /** Flagged clock-in not reviewed yet: saving clock times also reviews it. */
+  needsReview: boolean;
   busy: boolean;
   onSave: (startedAt: string, endedAt: string | undefined, note: string) => Promise<void>;
 }) {
@@ -215,10 +328,12 @@ function ShiftEditor({
         type="button"
         disabled={busy || !start}
         onClick={() => { void onSave(phoenixLocalToIso(workDate, start), end ? phoenixLocalToIso(workDate, end) : undefined, note); }}
+        title={needsReview ? 'Saving clock times also marks the clock-in reviewed' : undefined}
         className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
       >
         {busy && <Loader2 className="h-3 w-3 animate-spin" />} Save clock times
       </button>
+      {needsReview && <span className="text-xs text-slate-500">Also marks the clock-in reviewed.</span>}
     </div>
   );
 }
@@ -291,6 +406,9 @@ function SegmentEditor({
       <input type="time" aria-label="End" value={end} disabled={locked} onChange={e => setEnd(e.target.value)} className={inputClass} />
       <span className="tabular-nums text-slate-500">{formatHours(segment.minutes)} h</span>
       {segment.owner_edited_at && <span className="text-[10px] font-bold uppercase text-sky-700 dark:text-sky-300">edited</span>}
+      {segment.backfilled && !segment.owner_edited_at && (
+        <span title="Rebuilt from saved location points after a late clock-in" className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-300">backfilled</span>
+      )}
       {!locked && (
         <>
           <input placeholder="Reason" value={note} onChange={e => setNote(e.target.value)} className={`${inputClass} w-32`} />
@@ -360,7 +478,7 @@ function AddSegment({
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
       <select aria-label="New segment kind" value={kind} onChange={e => setKind(e.target.value as PayrollSegmentKind)} className={inputClass}>
-        {(Object.keys(KIND_LABEL) as PayrollSegmentKind[]).map(value => (
+        {(Object.keys(KIND_LABEL) as PayrollSegmentKind[]).filter(value => value !== 'unverified').map(value => (
           <option key={value} value={value}>{KIND_LABEL[value]}</option>
         ))}
       </select>

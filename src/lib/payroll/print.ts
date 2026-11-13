@@ -35,6 +35,7 @@ export function payrollPrintHtml(
         <td class="n">${formatHours(day.shopMinutes)}</td>
         <td class="n">${formatHours(day.travelMinutes)}</td>
         <td class="n">${formatHours(day.onsiteMinutes)}</td>
+        <td class="n">${day.unverifiedMinutes ? `<span class="f">${formatHours(day.unverifiedMinutes)}</span>` : formatHours(0)}</td>
         <td class="n">${formatHours(day.lunchDeductedMinutes)}</td>
         <td class="n"><b>${formatHours(day.paidMinutes)}</b></td>
         <td class="n">${day.overtimeMinutes ? formatHours(day.overtimeMinutes) : ''}</td>
@@ -47,11 +48,11 @@ export function payrollPrintHtml(
       <table>
         <thead><tr>
           <th>Date</th><th>In</th><th>Out</th><th>End</th><th>Shop</th><th>Travel</th><th>On site</th>
-          <th>Lunch ded.</th><th>Paid</th><th>OT</th><th>Appr.</th><th>Jobs / flags</th>
+          <th>Unverified</th><th>Lunch ded.</th><th>Paid</th><th>OT</th><th>Appr.</th><th>Jobs / flags</th>
         </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr>
-          <td colspan="8">Week total${week.overtime ? ' — OVERTIME' : ''}${weekApproved ? ' — approved' : ''}</td>
+          <td colspan="9">Week total${week.overtime ? ' — OVERTIME' : ''}${weekApproved ? ' — approved' : ''}</td>
           <td class="n"><b>${formatHours(week.paidMinutes)}</b></td>
           <td class="n">${week.overtimeMinutes ? formatHours(week.overtimeMinutes) : ''}</td>
           <td colspan="2">Regular ${formatHours(week.regularMinutes)} h</td>
@@ -77,7 +78,7 @@ export function payrollPrintHtml(
   @media print { body { margin: 0; } }
 </style></head><body>
 <h1>${escapeHtml(title)}</h1>
-<p>Hours are decimal. Times are America/Phoenix. Lunch deducted is unpaid time removed from the day.</p>
+<p>Hours are decimal. Times are America/Phoenix. Lunch deducted is unpaid time removed from the day. Unverified is paid time with no location (late or backdated clock-in), already included in Paid.</p>
 ${sections || '<p>No shifts in this period.</p>'}
 </body></html>`;
 }

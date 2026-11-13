@@ -1,3 +1,4 @@
+import { sanitizeLateStart, type LateStartConfig } from './lateStart.ts';
 import { LUNCH_UNCONFIRMED, sanitizeLunch, type LunchConfig } from './lunch.ts';
 import { initialMachine } from './machine.ts';
 import type { OutboxRow } from './outbox.ts';
@@ -12,11 +13,12 @@ import {
 
 const SHOP_KEY = 'itdg-shop';
 const CONSENT_KEY = 'itdg-shift-consent';
-const STATE_KEY = 'itdg-shift-state';
+export const STATE_KEY = 'itdg-shift-state';
 const OUTBOX_KEY = 'itdg-shift-outbox';
 const DWELL_KEY = 'itdg-shift-dwell-ms';
 const SPEED_KEY = 'itdg-shift-speed-mph';
 const LUNCH_KEY = 'itdg-shift-lunch';
+const LATE_START_KEY = 'itdg-shift-late-start';
 
 function readJson(key: string): unknown {
   try {
@@ -128,6 +130,15 @@ export function loadLunch(): LunchConfig {
 
 export function saveLunch(lunch: LunchConfig): void {
   writeJson(LUNCH_KEY, lunch);
+}
+
+/** Late clock-in rules read from payroll_settings. Not ready until the server confirms them. */
+export function loadLateStart(): LateStartConfig {
+  return sanitizeLateStart(readJson(LATE_START_KEY));
+}
+
+export function saveLateStart(config: LateStartConfig): void {
+  writeJson(LATE_START_KEY, config);
 }
 
 export const SHIFT_SPEED_SUSTAIN_MS = DEFAULT_SPEED_SUSTAIN_MS;

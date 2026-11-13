@@ -432,6 +432,7 @@ export default function PayrollView({ jobs }: Props) {
                       <th className="px-3 py-2 text-right">Shop</th>
                       <th className="px-3 py-2 text-right">Travel</th>
                       <th className="px-3 py-2 text-right">On site</th>
+                      <th className="px-3 py-2 text-right" title="Paid time with no location (late or backdated clock-in). Check it in the day view.">Unverified</th>
                       <th className="px-3 py-2 text-right">Lunch ded.</th>
                       <th className="px-3 py-2 text-right">Paid</th>
                       <th className="px-3 py-2 text-right">OT</th>
@@ -523,6 +524,9 @@ function DayRows({
         <td className="px-3 py-2 text-right tabular-nums">{formatHours(day.shopMinutes)}</td>
         <td className="px-3 py-2 text-right tabular-nums">{formatHours(day.travelMinutes)}</td>
         <td className="px-3 py-2 text-right tabular-nums">{formatHours(day.onsiteMinutes)}</td>
+        <td className={`px-3 py-2 text-right tabular-nums ${day.unverifiedMinutes ? 'font-semibold text-amber-700 dark:text-amber-300' : ''}`}>
+          {formatHours(day.unverifiedMinutes)}
+        </td>
         <td className="px-3 py-2 text-right tabular-nums">{formatHours(day.lunchDeductedMinutes)}</td>
         <td className="px-3 py-2 text-right font-bold tabular-nums">{formatHours(day.paidMinutes)}</td>
         <td className="px-3 py-2 text-right tabular-nums text-rose-700 dark:text-rose-300">
@@ -563,7 +567,7 @@ function DayRows({
       </tr>
       {open && (
         <tr className="bg-slate-50 dark:bg-slate-950/40">
-          <td colSpan={12} className="px-3 py-3">{children}</td>
+          <td colSpan={13} className="px-3 py-3">{children}</td>
         </tr>
       )}
     </>

@@ -12,7 +12,51 @@
 
 export const PAYROLL_TIME_ZONE = 'America/Phoenix';
 
-export type PayrollSegmentKind = 'shop' | 'driving' | 'job' | 'lunch';
+/** 'unverified': claimed time with no location to classify it. Paid, flagged. */
+export type PayrollSegmentKind = 'shop' | 'driving' | 'job' | 'lunch' | 'unverified';
+
+/**
+ * The first four come from the phone (stored in shifts.clock_in_flags). The
+ * last two are worked out here from shifts.clock_in_received_at, the server's
+ * own time when the shift row first arrived: the phone can't set it.
+ */
+export type ClockInFlagName =
+  | 'late_clock_in'
+  | 'backdated'
+  | 'off_site_start'
+  | 'no_location'
+  | 'received_late'
+  | 'phone_clock_ahead';
+
+export const CLOCK_IN_FLAG_TEXT: Record<ClockInFlagName, string> = {
+  late_clock_in: 'late clock-in',
+  backdated: 'backdated start',
+  off_site_start: 'started away from shop',
+  no_location: 'no location at start',
+  received_late: 'server got the clock-in late',
+  phone_clock_ahead: 'phone clock ahead of server',
+};
+
+/**
+ * Worked out from shifts.clock_out_received_at, the server's own time when
+ * the clock-out first arrived. Same rules as the clock-in check.
+ */
+export type ClockOutFlagName = 'clock_out_received_late' | 'clock_out_phone_clock_ahead';
+
+export const CLOCK_OUT_FLAG_TEXT: Record<ClockOutFlagName, string> = {
+  clock_out_received_late: 'server got the clock-out late',
+  clock_out_phone_clock_ahead: 'phone clock ahead of server at clock-out',
+};
+
+/** A clock time this far after the server's time means the phone clock runs fast. */
+export const PHONE_CLOCK_AHEAD_MS = 2 * 60_000;
+
+/**
+ * Flag a clock-in or clock-out the server received more than this many
+ * minutes after the phone's time (offline sync, or a phone sending an
+ * earlier time). A fixed rule, not a payroll setting.
+ */
+export const RECEIVED_GRACE_MINUTES = 45;
 
 export interface PayrollShiftRow {
   id: string;
@@ -21,6 +65,17 @@ export interface PayrollShiftRow {
   ended_at: string | null;
   end_reason: 'clock_out' | 'auto_stop' | null;
   owner_edited_at?: string | null;
+  /** Late clock-in: when Start was actually tapped. Null for a normal start. */
+  clock_in_tapped_at?: string | null;
+  clock_in_flags?: string[] | null;
+  clock_in_note?: string | null;
+  start_job_id?: number | string | null;
+  clock_in_reviewed_at?: string | null;
+  clock_in_reviewed_by?: string | null;
+  /** Server time the row first arrived (set by the database, never the phone). */
+  clock_in_received_at?: string | null;
+  /** Server time the clock-out first arrived (set by the database, never the phone). */
+  clock_out_received_at?: string | null;
 }
 
 export interface PayrollSegmentRow {
@@ -33,6 +88,8 @@ export interface PayrollSegmentRow {
   started_at: string;
   ended_at: string | null;
   owner_edited_at?: string | null;
+  /** Rebuilt from saved location points for a backdated gap. */
+  backfilled?: boolean | null;
 }
 
 export interface PayrollJobInfo {
@@ -51,6 +108,13 @@ export interface PayrollSettings {
   payPeriodLengthDays: number;
   /** Any first day of a pay period (YYYY-MM-DD, Phoenix). Periods repeat from it. */
   payPeriodAnchorDate: string;
+  /**
+   * Company lunch window, minutes after Phoenix midnight. When set and lunch
+   * is unpaid, any part of a shift inside the window counts as lunch even if
+   * the phone never wrote a lunch row (for example a shift that clocked in
+   * during the window). Null turns the carve-out off.
+   */
+  lunchWindow?: { startMinute: number; endMinute: number } | null;
 }
 
 export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
@@ -61,7 +125,27 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   travelAlertMinutes: 90,
   payPeriodLengthDays: 14,
   payPeriodAnchorDate: '2026-10-22',
+  lunchWindow: { startMinute: 11 * 60, endMinute: 11 * 60 + 30 },
 };
+
+function clockMinutes(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const match = /^(\d{1,2}):(\d{2})/.exec(raw.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function lunchWindowFromRow(row: Record<string, unknown>): PayrollSettings['lunchWindow'] {
+  if (row.lunch_enabled === false) return null;
+  const startMinute = clockMinutes(row.lunch_start);
+  const endMinute = clockMinutes(row.lunch_end);
+  if (startMinute == null || endMinute == null) return DEFAULT_PAYROLL_SETTINGS.lunchWindow;
+  if (endMinute <= startMinute) return null;
+  return { startMinute, endMinute };
+}
 
 export function payrollSettingsFromRow(row: Record<string, unknown> | null | undefined): PayrollSettings {
   if (!row) return { ...DEFAULT_PAYROLL_SETTINGS };
@@ -79,10 +163,18 @@ export function payrollSettingsFromRow(row: Record<string, unknown> | null | und
       ? length
       : DEFAULT_PAYROLL_SETTINGS.payPeriodLengthDays,
     payPeriodAnchorDate: /^\d{4}-\d{2}-\d{2}$/.test(anchor) ? anchor : DEFAULT_PAYROLL_SETTINGS.payPeriodAnchorDate,
+    lunchWindow: lunchWindowFromRow(row),
   };
 }
 
-export type AnomalyKind = 'auto_stop' | 'open_shift' | 'long_travel' | 'unpinned_job';
+export type AnomalyKind =
+  | 'auto_stop'
+  | 'open_shift'
+  | 'long_travel'
+  | 'unpinned_job'
+  | 'late_clock_in'
+  | 'late_clock_out'
+  | 'unverified_time';
 
 export interface PayrollAnomaly {
   kind: AnomalyKind;
@@ -109,6 +201,23 @@ export interface PayrollShiftSummary {
   clockOut: string | null;
   endReason: 'clock_out' | 'auto_stop' | null;
   edited: boolean;
+  /** Late / backdated / off-site start. Empty for a normal start. */
+  clockInFlags: ClockInFlagName[];
+  /** When Start was tapped, if it differs from clock-in or the start was flagged. */
+  tappedAt: string | null;
+  clockInNote: string | null;
+  startJobId: string | null;
+  /**
+   * A payroll admin reviewed the clock times (review panel or a clock-time
+   * save). Clears both the clock-in and the clock-out flags.
+   */
+  clockInReviewed: boolean;
+  /** Server time the clock-in arrived. Null before the column existed. */
+  receivedAt: string | null;
+  /** Clock-out received late / phone clock ahead. Empty when fine or unchecked. */
+  clockOutFlags: ClockOutFlagName[];
+  /** Server time the clock-out arrived. Null while open or before the column existed. */
+  clockOutReceivedAt: string | null;
 }
 
 export interface PayrollSegmentView extends PayrollSegmentRow {
@@ -129,6 +238,8 @@ export interface PayrollDay {
   onsiteMinutes: number;
   lunchMinutes: number;
   lunchDeductedMinutes: number;
+  /** Claimed time with no location. Paid, and flagged for review. */
+  unverifiedMinutes: number;
   paidMinutes: number;
   /** Part of this day's paid time that falls past the weekly threshold. */
   overtimeMinutes: number;
@@ -228,14 +339,52 @@ export function formatHours(minutes: number): string {
 
 // ── Core ───────────────────────────────────────────────────────────────────
 
-function clipMs(segment: PayrollSegmentRow, shift: PayrollShiftRow, nowMs: number): number {
+/**
+ * Each segment's paid span inside its shift. Rows can overlap when a phone
+ * opened a new segment without closing the last one, or never closed one at
+ * clock-out. Every row is cut to the shift's clock-in/clock-out and ends no
+ * later than the next row starts, so no minute is counted twice. An open row
+ * runs to the shift end (or now, while the shift is still open).
+ */
+export function segmentSpans(
+  ordered: PayrollSegmentRow[],
+  shift: PayrollShiftRow,
+  nowMs: number,
+): Array<{ start: number; end: number }> {
   const shiftStart = Date.parse(shift.started_at);
   const shiftEnd = shift.ended_at ? Date.parse(shift.ended_at) : nowMs;
-  const start = Math.max(Date.parse(segment.started_at), shiftStart);
-  const rawEnd = segment.ended_at ? Date.parse(segment.ended_at) : shiftEnd;
-  const end = Math.min(rawEnd, shiftEnd);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
-  return end - start;
+  return ordered.map((segment, index) => {
+    const start = Math.max(Date.parse(segment.started_at), shiftStart);
+    let end = Math.min(segment.ended_at ? Date.parse(segment.ended_at) : shiftEnd, shiftEnd);
+    const next = ordered[index + 1];
+    if (next) {
+      const nextStart = Math.max(Date.parse(next.started_at), shiftStart);
+      if (Number.isFinite(nextStart)) end = Math.min(end, nextStart);
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return { start: 0, end: 0 };
+    return { start, end };
+  });
+}
+
+/** Lunch windows (ms) on every Phoenix day the span touches. */
+function lunchWindowsFor(startMs: number, endMs: number, settings: PayrollSettings): Array<[number, number]> {
+  const window = settings.lunchWindow;
+  if (!window || !(endMs > startMs)) return [];
+  const out: Array<[number, number]> = [];
+  let ymd = phoenixWorkDate(startMs);
+  const last = phoenixWorkDate(endMs);
+  for (let guard = 0; guard < 14 && ymd <= last; guard += 1) {
+    const midnight = Date.parse(phoenixDayStartIso(ymd));
+    out.push([midnight + window.startMinute * 60_000, midnight + window.endMinute * 60_000]);
+    ymd = addDaysYmd(ymd, 1);
+  }
+  return out;
+}
+
+function overlapMs(start: number, end: number, windows: Array<[number, number]>): number {
+  let total = 0;
+  for (const [a, b] of windows) total += Math.max(0, Math.min(end, b) - Math.max(start, a));
+  return total;
 }
 
 function jobKey(segment: PayrollSegmentRow): string {
@@ -244,6 +393,56 @@ function jobKey(segment: PayrollSegmentRow): string {
 }
 
 const NO_JOB_TRAVEL = 'travel:none';
+
+const PHONE_FLAG_NAMES: ClockInFlagName[] = ['late_clock_in', 'backdated', 'off_site_start', 'no_location'];
+
+/** 'late': phone time more than the grace before the server got it; 'ahead': phone time after it. */
+function receivedGap(phoneIso: string | null | undefined, receivedIso: string | null | undefined): 'late' | 'ahead' | null {
+  const receivedMs = receivedIso ? Date.parse(receivedIso) : NaN;
+  const phoneMs = phoneIso ? Date.parse(phoneIso) : NaN;
+  if (!Number.isFinite(receivedMs) || !Number.isFinite(phoneMs)) return null;
+  if (phoneMs < receivedMs - RECEIVED_GRACE_MINUTES * 60_000) return 'late';
+  if (phoneMs > receivedMs + PHONE_CLOCK_AHEAD_MS) return 'ahead';
+  return null;
+}
+
+/**
+ * Server-side check of the clock-in time: compare the phone's tap time (or
+ * clock-in, for a normal start) with when the server actually received the
+ * row. Never blocks, moves the time, or changes pay; it only flags the shift
+ * for review.
+ */
+export function receivedCheckFlags(
+  shift: Pick<PayrollShiftRow, 'started_at' | 'clock_in_tapped_at' | 'clock_in_received_at'>,
+): ClockInFlagName[] {
+  const gap = receivedGap(shift.clock_in_tapped_at || shift.started_at, shift.clock_in_received_at);
+  if (gap === 'late') return ['received_late'];
+  if (gap === 'ahead') return ['phone_clock_ahead'];
+  return [];
+}
+
+/**
+ * The same check for the clock-out: the phone's clock-out time against when
+ * the server first saw it. An auto-stop ends at the safety-stop time, which
+ * the phone only notices at its next location sample, so it is only checked
+ * for a phone clock running ahead (auto-stops have their own flag anyway).
+ */
+export function clockOutCheckFlags(
+  shift: Pick<PayrollShiftRow, 'ended_at' | 'end_reason' | 'clock_out_received_at'>,
+): ClockOutFlagName[] {
+  const gap = receivedGap(shift.ended_at, shift.clock_out_received_at);
+  if (gap === 'late' && shift.end_reason !== 'auto_stop') return ['clock_out_received_late'];
+  if (gap === 'ahead') return ['clock_out_phone_clock_ahead'];
+  return [];
+}
+
+function clockInFlagsOf(shift: PayrollShiftRow): ClockInFlagName[] {
+  const raw = Array.isArray(shift.clock_in_flags) ? shift.clock_in_flags : [];
+  return [
+    ...PHONE_FLAG_NAMES.filter(flag => raw.includes(flag)),
+    ...receivedCheckFlags(shift),
+  ];
+}
 
 export interface BuildPayrollInput {
   shifts: PayrollShiftRow[];
@@ -266,7 +465,7 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
     segmentsByShift.set(segment.shift_id, list);
   }
 
-  type DayAcc = PayrollDay & { msShop: number; msTravel: number; msOnsite: number; msLunch: number; jobMap: Map<string, { travel: number; onsite: number; line: PayrollJobLine }> };
+  type DayAcc = PayrollDay & { msShop: number; msTravel: number; msOnsite: number; msLunch: number; msUnverified: number; jobMap: Map<string, { travel: number; onsite: number; line: PayrollJobLine }> };
   const days = new Map<string, DayAcc>();
 
   const shifts = [...input.shifts].sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
@@ -286,6 +485,7 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
         onsiteMinutes: 0,
         lunchMinutes: 0,
         lunchDeductedMinutes: 0,
+        unverifiedMinutes: 0,
         paidMinutes: 0,
         overtimeMinutes: 0,
         jobs: [],
@@ -295,20 +495,58 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
         msTravel: 0,
         msOnsite: 0,
         msLunch: 0,
+        msUnverified: 0,
         jobMap: new Map(),
       };
       days.set(key, day);
     }
 
     const shiftEdited = Boolean(shift.owner_edited_at);
+    const flags = clockInFlagsOf(shift);
+    const outFlags = clockOutCheckFlags(shift);
+    const reviewed = Boolean(shift.clock_in_reviewed_at);
     day.shifts.push({
       id: shift.id,
       clockIn: shift.started_at,
       clockOut: shift.ended_at,
       endReason: shift.end_reason,
       edited: shiftEdited,
+      clockInFlags: flags,
+      tappedAt: shift.clock_in_tapped_at ?? null,
+      clockInNote: shift.clock_in_note ?? null,
+      startJobId: shift.start_job_id != null ? String(shift.start_job_id) : null,
+      clockInReviewed: reviewed,
+      receivedAt: shift.clock_in_received_at ?? null,
+      clockOutFlags: outFlags,
+      clockOutReceivedAt: shift.clock_out_received_at ?? null,
     });
     if (shiftEdited) day.edited = true;
+
+    if (flags.length > 0) {
+      const what = flags.map(flag => CLOCK_IN_FLAG_TEXT[flag]).join(', ');
+      const tapped = shift.clock_in_tapped_at && shift.clock_in_tapped_at !== shift.started_at
+        ? `; clock-in ${formatPhoenixClock(shift.started_at)}, tapped Start ${formatPhoenixClock(shift.clock_in_tapped_at)}`
+        : `; clock-in ${formatPhoenixClock(shift.started_at)}`;
+      const received = flags.includes('received_late') || flags.includes('phone_clock_ahead')
+        ? `; server received ${formatPhoenixClock(shift.clock_in_received_at ?? null)}`
+        : '';
+      const note = shift.clock_in_note?.trim() ? ` — ${shift.clock_in_note.trim()}` : '';
+      day.anomalies.push({
+        kind: 'late_clock_in',
+        shiftId: shift.id,
+        resolved: reviewed,
+        message: `${what.charAt(0).toUpperCase()}${what.slice(1)}${tapped}${received}${note}${reviewed ? ' (reviewed)' : ''}`,
+      });
+    }
+    if (outFlags.length > 0) {
+      const what = outFlags.map(flag => CLOCK_OUT_FLAG_TEXT[flag]).join(', ');
+      day.anomalies.push({
+        kind: 'late_clock_out',
+        shiftId: shift.id,
+        resolved: reviewed,
+        message: `${what.charAt(0).toUpperCase()}${what.slice(1)}; clock-out ${formatPhoenixClock(shift.ended_at)}; server received ${formatPhoenixClock(shift.clock_out_received_at ?? null)}${reviewed ? ' (reviewed)' : ''}`,
+      });
+    }
 
     if (shift.end_reason === 'auto_stop') {
       day.anomalies.push({
@@ -331,16 +569,37 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
     const ordered = [...(segmentsByShift.get(shift.id) ?? [])]
       .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
     const flaggedJobs = new Set<string>();
+    const spans = segmentSpans(ordered, shift, nowMs);
+    const shiftSpanEnd = shift.ended_at ? Date.parse(shift.ended_at) : nowMs;
+    const lunchWindows = lunchWindowsFor(Date.parse(shift.started_at), shiftSpanEnd, settings);
 
     ordered.forEach((segment, index) => {
-      const ms = clipMs(segment, shift, nowMs);
+      const span = spans[index];
+      let ms = span.end - span.start;
+      // Company lunch is carved out of work rows even when the phone wrote no
+      // lunch row (e.g. clocked in during the window).
+      if (segment.kind !== 'lunch' && ms > 0) {
+        const carved = overlapMs(span.start, span.end, lunchWindows);
+        if (carved > 0) {
+          ms -= carved;
+          day!.msLunch += carved;
+        }
+      }
       const minutes = Math.round(ms / 60_000);
       if (segment.owner_edited_at) day!.edited = true;
 
       let travelToJob: string | null = null;
+      let travelSource: PayrollSegmentRow | null = null;
       if (segment.kind === 'driving') {
         const next = ordered.slice(index + 1).find(item => item.kind !== 'lunch');
-        if (next?.kind === 'job') travelToJob = jobKey(next);
+        if (next?.kind === 'job') {
+          travelToJob = jobKey(next);
+          travelSource = next;
+        } else if (segment.job_id != null && String(segment.job_id) !== '') {
+          // Driving to the job picked at clock-in.
+          travelToJob = jobKey(segment);
+          travelSource = segment;
+        }
       }
       day!.segments.push({ ...segment, minutes, travelToJob });
 
@@ -375,6 +634,17 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
         case 'lunch':
           day!.msLunch += ms;
           break;
+        case 'unverified':
+          day!.msUnverified += ms;
+          if (minutes > 0) {
+            day!.anomalies.push({
+              kind: 'unverified_time',
+              segmentId: segment.id,
+              resolved: Boolean(segment.owner_edited_at),
+              message: `Unverified ${formatHours(minutes)} h ${formatPhoenixClock(segment.started_at)}–${formatPhoenixClock(segment.ended_at)}: no location history; set it to shop, travel, or a job.`,
+            });
+          }
+          break;
         case 'job': {
           day!.msOnsite += ms;
           lineFor(jobKey(segment), segment).onsite += ms;
@@ -393,7 +663,7 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
         case 'driving': {
           day!.msTravel += ms;
           const target = travelToJob
-            ? lineFor(travelToJob, ordered.slice(index + 1).find(item => item.kind === 'job') ?? null)
+            ? lineFor(travelToJob, travelSource)
             : lineFor(NO_JOB_TRAVEL, null);
           target.travel += ms;
           if (minutes > settings.travelAlertMinutes) {
@@ -416,6 +686,7 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
     const travel = Math.round(day.msTravel / 60_000);
     const onsite = Math.round(day.msOnsite / 60_000);
     const lunch = Math.round(day.msLunch / 60_000);
+    const unverified = Math.round(day.msUnverified / 60_000);
     const jobsList = [...day.jobMap.values()].map(entry => ({
       ...entry.line,
       travelMinutes: Math.round(entry.travel / 60_000),
@@ -425,8 +696,8 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
       if (b.key === NO_JOB_TRAVEL) return -1;
       return (b.onsiteMinutes + b.travelMinutes) - (a.onsiteMinutes + a.travelMinutes);
     });
-    const { msShop, msTravel, msOnsite, msLunch, jobMap, ...rest } = day;
-    void msShop; void msTravel; void msOnsite; void msLunch; void jobMap;
+    const { msShop, msTravel, msOnsite, msLunch, msUnverified, jobMap, ...rest } = day;
+    void msShop; void msTravel; void msOnsite; void msLunch; void msUnverified; void jobMap;
     finished.push({
       ...rest,
       shopMinutes: shop,
@@ -434,7 +705,9 @@ export function buildPayroll(input: BuildPayrollInput): { days: PayrollDay[]; we
       onsiteMinutes: onsite,
       lunchMinutes: lunch,
       lunchDeductedMinutes: settings.lunchPaid ? 0 : lunch,
-      paidMinutes: shop + travel + onsite + (settings.lunchPaid ? lunch : 0),
+      unverifiedMinutes: unverified,
+      // No approval needed: unverified time is paid and flagged.
+      paidMinutes: shop + travel + onsite + unverified + (settings.lunchPaid ? lunch : 0),
       jobs: jobsList,
     });
   }
@@ -508,6 +781,8 @@ export const PAYROLL_CSV_HEADER = [
   'Overtime hrs',
   'Approved',
   'Flags',
+  // Last, so existing column positions do not move. Included in Paid hrs.
+  'Unverified hrs',
 ];
 
 export function payrollCsv(weeks: PayrollWeek[], options: PayrollCsvOptions): string {
@@ -536,6 +811,7 @@ export function payrollCsv(weeks: PayrollWeek[], options: PayrollCsvOptions): st
         formatHours(day.overtimeMinutes),
         approved.has(`${day.userId}|day|${day.workDate}`) ? 'yes' : 'no',
         day.anomalies.map(anomaly => anomaly.message).join(' | '),
+        formatHours(day.unverifiedMinutes),
       ]);
       for (const job of day.jobs) {
         rows.push([
@@ -555,6 +831,7 @@ export function payrollCsv(weeks: PayrollWeek[], options: PayrollCsvOptions): st
           '',
           '',
           job.pinned === false ? 'unpinned job' : '',
+          '',
         ]);
       }
     }
@@ -575,6 +852,7 @@ export function payrollCsv(weeks: PayrollWeek[], options: PayrollCsvOptions): st
       formatHours(week.overtimeMinutes),
       approved.has(`${week.userId}|week|${week.weekStart}`) ? 'yes' : 'no',
       week.overtime ? 'overtime' : '',
+      formatHours(week.days.reduce((sum, day) => sum + day.unverifiedMinutes, 0)),
     ]);
   }
   return rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n';

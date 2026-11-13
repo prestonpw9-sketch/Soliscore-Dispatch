@@ -20,9 +20,21 @@ export function shiftRow(userId: string, state: MachineState): OutboxRow | null 
       battery_end: shift.batteryEnd,
       start_latitude: shift.startLatitude,
       start_longitude: shift.startLongitude,
+      // Only flagged starts send these, so a normal start still syncs to a
+      // database without the late clock-in migration.
+      ...(shift.clockIn ? {
+        clock_in_tapped_at: shift.clockIn.tappedAt,
+        clock_in_flags: shift.clockIn.flags,
+        clock_in_note: shift.clockIn.note,
+        start_job_id: numericJobId(shift.clockIn.startJobId),
+      } : {}),
       updated_at: new Date().toISOString(),
     },
   };
+}
+
+function numericJobId(jobId: string | null): number | null {
+  return jobId && /^\d+$/.test(jobId) ? Number(jobId) : null;
 }
 
 export function rowsFromTransition(userId: string, prev: MachineState, next: MachineState): OutboxRow[] {
@@ -45,7 +57,7 @@ export function rowsFromTransition(userId: string, prev: MachineState, next: Mac
         shift_id: segment.shiftId,
         user_id: userId,
         kind: segment.kind,
-        job_id: segment.jobId && /^\d+$/.test(segment.jobId) ? Number(segment.jobId) : null,
+        job_id: numericJobId(segment.jobId),
         job_name: segment.jobName,
         started_at: segment.startedAt,
         ended_at: segment.endedAt,
@@ -55,6 +67,7 @@ export function rowsFromTransition(userId: string, prev: MachineState, next: Mac
         end_longitude: segment.endLongitude,
         battery_start: segment.batteryStart,
         battery_end: segment.batteryEnd,
+        ...(segment.backfilled ? { backfilled: true } : {}),
         updated_at: new Date().toISOString(),
       },
     });

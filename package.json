@@ -10,12 +10,14 @@
     "test:e2e": "playwright test",
     "test:edge-security": "node --experimental-strip-types scripts/edge-security-checks.ts",
     "test:geofence": "node --experimental-strip-types scripts/geofence-checks.ts",
-    "test:shift": "node --experimental-strip-types scripts/shift-checks.ts && node --experimental-strip-types scripts/start-locate-checks.ts && node --experimental-strip-types scripts/lunch-checks.ts",
+    "test:shift": "node --experimental-strip-types scripts/shift-checks.ts && node --experimental-strip-types scripts/start-locate-checks.ts && node --experimental-strip-types scripts/lunch-checks.ts && node --experimental-strip-types scripts/reconcile-checks.ts",
     "test:geocode": "node --experimental-strip-types scripts/geocode-checks.ts",
     "test:payroll": "node --experimental-strip-types scripts/payroll-checks.ts",
     "deploy:gemini": "supabase functions deploy gemini-chat --project-ref keyldymctpsvdjllliio",
     "test:daymap": "node --experimental-strip-types scripts/day-map-checks.ts",
-    "test:back": "node --experimental-strip-types scripts/back-checks.ts"
+    "test:back": "node --experimental-strip-types scripts/back-checks.ts",
+    "test:late-clockin": "node --experimental-strip-types scripts/late-clockin-checks.ts",
+    "test:reminder": "node --experimental-strip-types scripts/clock-in-reminder-checks.ts"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",

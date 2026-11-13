@@ -47,7 +47,31 @@ export interface ShiftSample {
   batteryPercent: number | null;
 }
 
+export interface ClockInReminderSpec {
+  hour: number;
+  minute: number;
+  /** 1 = Monday … 7 = Sunday. */
+  weekdays: number[];
+  /** Android Clock alarm label. */
+  label: string;
+  /** iOS notification title and body. */
+  title: string;
+  body: string;
+}
+
 export interface JobGeofencePlugin {
+  /**
+   * Android: adds a repeating alarm to the phone's Clock app (ACTION_SET_ALARM).
+   * iOS: schedules repeating local notifications (apps can't add Clock alarms).
+   * Optional: builds before the reminder shipped don't have it.
+   */
+  setClockInReminder?(options: ClockInReminderSpec): Promise<{ method: 'clock-app' | 'notification' }>;
+  /** iOS removes the notifications. Android can't delete a Clock alarm: removed is false. */
+  cancelClockInReminder?(options: { label: string }): Promise<{ removed: boolean }>;
+  /** iOS: drop today's notification if it's still ahead. Android: no-op. */
+  skipClockInReminderToday?(): Promise<{ skipped: boolean }>;
+  /** Android: open the Clock app's alarm list. */
+  openClockAlarms?(): Promise<void>;
   checkAccess(): Promise<AccessStatus>;
   requestAccess(): Promise<AccessStatus>;
   /** Asks for background location after Start. Must not be awaited on the start path. */

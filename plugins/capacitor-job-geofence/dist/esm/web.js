@@ -39,4 +39,20 @@ export class JobGeofenceWeb extends WebPlugin {
   async getCurrentPosition() {
     throw new Error('plugin-missing');
   }
+
+  async setClockInReminder() {
+    throw new Error('plugin-missing');
+  }
+
+  async cancelClockInReminder() {
+    return { removed: false };
+  }
+
+  async skipClockInReminderToday() {
+    return { skipped: false };
+  }
+
+  async openClockAlarms() {
+    throw new Error('plugin-missing');
+  }
 }

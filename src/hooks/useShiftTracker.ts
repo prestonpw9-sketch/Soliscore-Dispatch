@@ -1,23 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Job } from '@/lib/data';
 import { geolocationFromBridge, isNativeDispatchApp, jobGeofenceFromBridge, loadJobGeofence } from '@/lib/geofence/nativeClient';
-import { jobSitesForArrival } from '@/lib/geofence/sites';
+import { distanceMeters } from '@/lib/geofence/distance';
+import { arrivalJobLabel, clampRadius, jobSitesForArrival, type JobSite } from '@/lib/geofence/sites';
 import { loadWorkHours, phoenixToday, saveWorkHours, type WorkHoursConfig } from '@/lib/geofence/workHours';
 import { useAuth } from '@/lib/AuthContext';
-import { step } from '@/lib/shift/machine';
+import {
+  checkClaimedStart,
+  claimedStartFromClock,
+  formatPhoenixTime,
+  isLateStart,
+  lateStartFromSettingsRow,
+  startNeedsPrompt,
+  type LateStartConfig,
+} from '@/lib/shift/lateStart';
+import { skipClockInReminderToday } from '@/lib/shift/reminderNative';
+import { countsAsInside, step } from '@/lib/shift/machine';
 import { rowsFromTransition, shopRow } from '@/lib/shift/rows';
 import {
   SHIFT_BATTERY_EVERY_MS,
   SHIFT_SPEED_SUSTAIN_MS,
   loadConsent,
   loadDwellMs,
+  loadLateStart,
   loadLunch,
   loadMachine,
   loadOutbox,
   loadShop,
+  STATE_KEY,
   loadSpeedMph,
   saveConsent,
   saveDwellMs,
+  saveLateStart,
   saveLunch,
   saveMachine,
   saveShop,
@@ -33,7 +47,6 @@ import {
   locateFailureMessage,
   locationRequestCancelledMessage,
   nativeFailureReason,
-  notAtShopMessage,
   otherStartErrorMessage,
   permissionCheckTimeoutMessage,
   permissionDeniedMessage,
@@ -43,9 +56,33 @@ import {
   type StartFix,
 } from '@/lib/shift/locate';
 import { lunchFromSettingsRow, type LunchConfig } from '@/lib/shift/lunch';
+import { reconcile, repairLocal, type ServerSegmentRow, type ServerShiftRow } from '@/lib/shift/reconcile';
 import { enqueueAndSync, syncOutbox } from '@/lib/shift/sync';
 import { supabase } from '@/lib/supabase';
-import type { Fix, MachineState, ShopLocation, TimeSegment } from '@/lib/shift/types';
+import type { ClockInOptions, Fix, MachineState, ShopLocation, TimeSegment } from '@/lib/shift/types';
+
+/** Shown when the worker is away from the shop, late, or has no location. */
+export interface StartPrompt {
+  offSite: boolean;
+  late: boolean;
+  noFix: boolean;
+  /** Meters from the shop, when known. */
+  distanceM: number | null;
+  /** Why there is no location, when there is none. */
+  locationProblem: string | null;
+  /** "I started earlier" needs the server columns. */
+  canBackdate: boolean;
+  /** "4:00 AM" */
+  earliestLabel: string;
+  /** "07:42" for the time input's max. */
+  nowHhmm: string;
+  error: string | null;
+  busy: boolean;
+}
+
+export type StartChoice =
+  | { mode: 'now'; reason?: string }
+  | { mode: 'earlier'; time: string; reason?: string };
 
 export interface ShiftTracker {
   tracking: boolean;
@@ -70,6 +107,46 @@ export interface ShiftTracker {
   cancelStart: () => void;
   clockOut: () => void;
   starting: boolean;
+  lateStart: LateStartConfig;
+  /** Active jobs to pick at clock-in. */
+  startJobs: Array<{ id: string; label: string }>;
+  startJobId: string;
+  setStartJobId: (jobId: string) => void;
+  startPrompt: StartPrompt | null;
+  confirmStart: (choice: StartChoice) => void;
+  dismissStartPrompt: () => void;
+}
+
+function hhmmPhoenix(atMs: number): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Phoenix',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(atMs));
+}
+
+function jobLabel(job: Job): string {
+  const name = job.customerName?.trim() || 'Job';
+  const address = job.address?.trim();
+  return address ? `${name} — ${address}` : name;
+}
+
+/** The picked job's fence, when it has a pin and is not already in today's list. */
+function siteForJob(jobs: Job[], jobId: string | null | undefined, sites: JobSite[]): JobSite | null {
+  if (!jobId || sites.some(site => site.id === jobId)) return null;
+  const job = jobs.find(item => item.id === jobId);
+  const latitude = job?.latitude;
+  const longitude = job?.longitude;
+  if (!job || typeof latitude !== 'number' || typeof longitude !== 'number') return null;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    id: job.id,
+    name: arrivalJobLabel(job.customerName),
+    latitude,
+    longitude,
+    radiusMeters: clampRadius(job.geofenceRadiusM ?? null),
+  };
 }
 
 async function readBatteryPercent(): Promise<number | null> {
@@ -221,14 +298,54 @@ function readCoarseFix(): Promise<StartFix> {
   });
 }
 
+/**
+ * Location points the phone already has for a backdated gap. The native
+ * tracker only queues points while a shift is open (and the queue is drained
+ * at every start), and neither Android nor iOS lets an app read the OS
+ * location history, so this is usually empty. The start fix itself counts
+ * when it was a cached reading from inside the gap. Nothing is invented.
+ */
+async function readGapHistory(fromMs: number, toMs: number, startFix: StartFix | null): Promise<Fix[]> {
+  const points: Fix[] = [];
+  if (isNativeDispatchApp()) {
+    try {
+      const plugin = await loadJobGeofence();
+      if (plugin) {
+        const drained = await withDeadline(() => plugin.drainSamples(), 3_000);
+        if (!isTimedOut(drained) && !isCancelled(drained)) {
+          for (const sample of drained?.samples ?? []) points.push(sample);
+        }
+      }
+    } catch (err) {
+      console.error('Reading saved location points failed:', err);
+    }
+  }
+  if (startFix && Number.isFinite(startFix.at) && startFix.at < toMs - 60_000) {
+    points.push({
+      at: startFix.at,
+      latitude: startFix.latitude,
+      longitude: startFix.longitude,
+      speedMps: startFix.speedMps,
+      accuracyM: startFix.accuracyM,
+      batteryPercent: null,
+    });
+  }
+  return points
+    .filter(point => point.at >= fromMs && point.at < toMs)
+    .sort((a, b) => a.at - b.at);
+}
+
 export function useShiftTracker(jobs: Job[]): ShiftTracker {
   const { session, isOwner } = useAuth();
-  const [machine, setMachine] = useState<MachineState>(() => loadMachine());
+  const [machine, setMachine] = useState<MachineState>(() => repairLocal(loadMachine()));
   const [shop, setShop] = useState<ShopLocation | null>(() => loadShop());
   const [safety, setSafety] = useState<WorkHoursConfig>(() => loadWorkHours());
   const [dwellMs, setDwellMs] = useState(() => loadDwellMs());
   const [speedMph, setSpeedMph] = useState(() => loadSpeedMph());
   const [lunch, setLunch] = useState<LunchConfig>(() => loadLunch());
+  const [lateStart, setLateStart] = useState<LateStartConfig>(() => loadLateStart());
+  const [startJobId, setStartJobId] = useState('');
+  const [startPrompt, setStartPrompt] = useState<StartPrompt | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'offline'>(
     () => (loadOutbox().length ? 'pending' : 'synced'),
@@ -249,17 +366,37 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
   speedRef.current = speedMph;
   const lunchRef = useRef(lunch);
   lunchRef.current = lunch;
+  const lateRef = useRef(lateStart);
+  lateRef.current = lateStart;
+  const jobsRef = useRef(jobs);
+  jobsRef.current = jobs;
+  const startJobRef = useRef(startJobId);
+  startJobRef.current = startJobId;
+  /** Location (or none) read for a start that is waiting on the prompt. */
+  const pendingStartRef = useRef<{ fix: StartFix | null; battery: number | null } | null>(null);
   const userId = session?.user.id ?? null;
   const userRef = useRef(userId);
   userRef.current = userId;
   const lastSpeed = useRef<number | null>(null);
 
-  const sites = useMemo(
-    () => jobSitesForArrival(jobs, phoenixToday()),
-    [jobs],
-  );
+  // Today's fences, plus the job picked at clock-in if it has a pin.
+  const pickedJobId = machine.shift && !machine.shift.endedAt ? machine.shift.clockIn?.startJobId ?? null : null;
+  const sites = useMemo(() => {
+    const today = jobSitesForArrival(jobs, phoenixToday());
+    const picked = siteForJob(jobs, pickedJobId, today);
+    return picked ? [...today, picked] : today;
+  }, [jobs, pickedJobId]);
   const sitesRef = useRef(sites);
   sitesRef.current = sites;
+
+  const startJobs = useMemo(() => {
+    const today = phoenixToday();
+    const onToday = (job: Job) => Boolean(job.date) && job.date <= today && (job.endDate ?? job.date) >= today;
+    return jobs
+      .filter(job => job.status !== 'completed')
+      .sort((a, b) => Number(onToday(b)) - Number(onToday(a)) || jobLabel(a).localeCompare(jobLabel(b)))
+      .map(job => ({ id: job.id, label: jobLabel(job) }));
+  }, [jobs]);
 
   const config = useCallback(() => ({
     shop: shopRef.current,
@@ -270,6 +407,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     batteryEveryMs: SHIFT_BATTERY_EVERY_MS,
     safety: safetyRef.current,
     lunch: lunchRef.current,
+    lateStart: lateRef.current,
   }), []);
 
   const publish = useCallback((prev: MachineState, next: MachineState) => {
@@ -297,21 +435,159 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     publish(prev, result.state);
   }, [config, publish]);
 
-  const begin = useCallback(async () => {
-    if (startingRef.current) return;
-    const shopNow = shopRef.current;
-    if (!shopNow) {
-      setNotice(otherStartErrorMessage('no-shop'));
+  /** Open the start prompt (away from the shop, late, or no location). */
+  const openPrompt = useCallback((
+    fix: StartFix | null,
+    battery: number | null,
+    details: { offSite: boolean; late: boolean; distanceM: number | null; locationProblem: string | null },
+  ) => {
+    const rules = lateRef.current;
+    pendingStartRef.current = { fix, battery };
+    setNotice(null);
+    setStartPrompt({
+      ...details,
+      noFix: fix == null,
+      canBackdate: rules.ready,
+      earliestLabel: formatPhoenixTime(claimedStartFromClock(
+        `${String(Math.floor(rules.earliestMinute / 60)).padStart(2, '0')}:${String(rules.earliestMinute % 60).padStart(2, '0')}`,
+        Date.now(),
+        rules,
+      ) ?? Date.now()),
+      nowHhmm: hhmmPhoenix(Date.now()),
+      error: null,
+      busy: false,
+    });
+  }, []);
+
+  /** Location could not be read. Clock-in still goes ahead once the server allows unlocated starts. */
+  const locationFailed = useCallback((message: string) => {
+    if (!lateRef.current.ready) {
+      setNotice(message);
       return;
     }
+    openPrompt(null, null, {
+      offSite: true,
+      late: isLateStart(Date.now(), lateRef.current),
+      distanceM: null,
+      locationProblem: message,
+    });
+  }, [openPrompt]);
+
+  /** Clock in with the location read in `begin` (or none). */
+  const commitStart = useCallback(async (choice: StartChoice) => {
+    const pending = pendingStartRef.current;
+    if (!pending) return;
+    if (machineRef.current.shift && !machineRef.current.shift.endedAt) {
+      setStartPrompt(null);
+      setNotice(otherStartErrorMessage('already-started'));
+      return;
+    }
+    const rules = lateRef.current;
+    const tapAt = Date.now();
+    const jobId = startJobRef.current || null;
+    const job = jobId ? jobsRef.current.find(item => item.id === jobId) ?? null : null;
+    const located = pending.fix;
+    const fix: Fix = located
+      ? {
+        at: tapAt,
+        latitude: located.latitude,
+        longitude: located.longitude,
+        speedMps: located.speedMps,
+        accuracyM: located.accuracyM,
+        batteryPercent: pending.battery,
+      }
+      : { at: tapAt, latitude: NaN, longitude: NaN, speedMps: null, accuracyM: null, batteryPercent: pending.battery };
+
+    const options: ClockInOptions = {
+      jobId,
+      jobName: job ? arrivalJobLabel(job.customerName) : null,
+      noFix: !located,
+      reason: choice.reason?.trim() || null,
+    };
+    if (choice.mode === 'earlier') {
+      const claimed = claimedStartFromClock(choice.time, tapAt, rules);
+      const previous = machineRef.current.shift?.endedAt ? Date.parse(machineRef.current.shift.endedAt) : null;
+      const check = claimed == null
+        ? { ok: false as const, message: 'Pick the time you started.' }
+        : checkClaimedStart(claimed, tapAt, rules, previous);
+      if (check.ok === false) {
+        setStartPrompt(prompt => (prompt ? { ...prompt, error: check.message } : prompt));
+        return;
+      }
+      setStartPrompt(prompt => (prompt ? { ...prompt, error: null, busy: true } : prompt));
+      options.claimedStartAt = check.startAt;
+      options.history = await readGapHistory(check.startAt, tapAt, located);
+    }
+
+    const prev = machineRef.current;
+    const pickedSite = siteForJob(jobsRef.current, jobId, sitesRef.current);
+    const result = step(
+      prev,
+      { type: 'clock-in', fix, options },
+      { ...config(), sites: pickedSite ? [...sitesRef.current, pickedSite] : sitesRef.current },
+      () => crypto.randomUUID(),
+    );
+    if (result.error === 'bad-start-time') {
+      setStartPrompt(prompt => (prompt ? { ...prompt, error: result.message ?? 'Pick a different start time.', busy: false } : prompt));
+      return;
+    }
+    if (result.error) {
+      setStartPrompt(null);
+      setNotice(result.error === 'late-start-unavailable'
+        ? 'Could not start without a location yet. Try again in a moment.'
+        : otherStartErrorMessage(result.error));
+      return;
+    }
+    pendingStartRef.current = null;
+    setStartPrompt(null);
+    setStartJobId('');
+    lastSpeed.current = fix.speedMps;
+    publish(prev, result.state);
+
+    const startedAt = result.state.shift ? Date.parse(result.state.shift.startedAt) : tapAt;
+    const parts = [`Shift started at ${formatPhoenixTime(startedAt)}.`];
+    if (choice.mode === 'earlier' && startedAt < tapAt) {
+      parts.push((result.historyPoints ?? 0) > 0
+        ? 'The time before you tapped Start was filled in from saved locations.'
+        : 'No saved locations cover the time before you tapped Start, so it is marked unverified for a supervisor to check.');
+    }
+    if (!located) parts.push('No location yet. Time is marked unverified until the phone gets a fix.');
+    const summary = parts.join(' ');
+
+    if (isNativeDispatchApp()) {
+      // Already clocked in: today's 6:00 reminder is not needed (iPhone only; best effort).
+      void skipClockInReminderToday();
+      setNotice(`${summary} Allow all the time when the phone asks so tracking continues with the screen off. While-in-use still records this shift with the app open.`);
+      try {
+        const plugin = await loadJobGeofence();
+        if (plugin?.requestBackgroundAccess) {
+          void withDeadline(() => plugin.requestBackgroundAccess(), 8_000).then(outcome => {
+            if (isTimedOut(outcome)) {
+              setNotice(`${summary} The background location prompt timed out. Tracking continues while the app is open. To allow all the time: Settings, Apps, ITDG Dispatch, Permissions, Location.`);
+            }
+          });
+        }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'unknown error';
+        setNotice(`${summary} Background location was not requested (${detail}). Tracking continues while the app is open.`);
+      }
+    } else {
+      setNotice(choice.mode === 'earlier' || !located || result.offSite ? summary : null);
+    }
+  }, [config, publish]);
+
+  const begin = useCallback(async () => {
+    if (startingRef.current) return;
     if (machineRef.current.shift && !machineRef.current.shift.endedAt) {
       setNotice(otherStartErrorMessage('already-started'));
       return;
     }
+    const shopNow = shopRef.current;
     const abort = new AbortController();
     startAbortRef.current = abort;
     startingRef.current = true;
     setStarting(true);
+    setStartPrompt(null);
     setNotice('Getting your location…');
     try {
       const bridge = isNativeDispatchApp() ? bridgeCap() : undefined;
@@ -331,16 +607,16 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
           return;
         }
         if (isTimedOut(access)) {
-          setNotice(permissionCheckTimeoutMessage());
+          locationFailed(permissionCheckTimeoutMessage());
           return;
         }
         if ('failed' in access) {
           if (access.failed.reason !== 'plugin-missing') {
-            setNotice(locateFailureMessage(access.failed.reason));
+            locationFailed(locateFailureMessage(access.failed.reason));
             return;
           }
         } else if (access.status.location !== 'granted') {
-          setNotice(permissionDeniedMessage());
+          locationFailed(permissionDeniedMessage());
           return;
         }
       } else if (capacitorGeo?.requestPermissions) {
@@ -357,11 +633,11 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
           return;
         }
         if (!isTimedOut(access) && 'failed' in access && access.failed.reason === 'denied') {
-          setNotice(permissionDeniedMessage());
+          locationFailed(permissionDeniedMessage());
           return;
         }
         if (!isTimedOut(access) && !('failed' in access) && access.status.location === 'denied') {
-          setNotice(permissionDeniedMessage());
+          locationFailed(permissionDeniedMessage());
           return;
         }
       }
@@ -386,7 +662,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
           return readCoarseFix();
         },
       }, {
-        accuracyGoalM: shopNow.radiusMeters,
+        accuracyGoalM: shopNow?.radiusMeters ?? 90,
         highAccuracyMs: 15_000,
         coarseMs: 10_000,
         signal: abort.signal,
@@ -397,58 +673,31 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
         return;
       }
       if (isTimedOut(located)) {
-        setNotice(gpsTimeoutMessage());
+        locationFailed(gpsTimeoutMessage());
         return;
       }
       if (located.ok === false) {
-        setNotice(locateFailureMessage(located.reason));
+        locationFailed(locateFailureMessage(located.reason));
         return;
       }
 
       const batteryReading = await withDeadline(() => readBatteryPercent(), 3_000, abort.signal);
       const battery = typeof batteryReading === 'number' ? batteryReading : null;
-      const fix: Fix = {
-        at: Date.now(),
-        latitude: located.fix.latitude,
-        longitude: located.fix.longitude,
-        speedMps: located.fix.speedMps,
-        accuracyM: located.fix.accuracyM,
-        batteryPercent: battery,
-      };
-      const prev = machineRef.current;
-      const result = step(prev, { type: 'clock-in', fix }, config(), () => crypto.randomUUID());
-      if (result.error === 'not-at-shop') {
-        setNotice(notAtShopMessage(
-          result.distanceM ?? 0,
-          result.accuracyM ?? fix.accuracyM ?? null,
-          shopNow.radiusMeters,
-        ));
-        return;
-      }
-      if (result.error) {
-        setNotice(otherStartErrorMessage(result.error));
-        return;
-      }
-      lastSpeed.current = fix.speedMps;
-      publish(prev, result.state);
-      if (isNativeDispatchApp()) {
-        setNotice('Shift started. Allow all the time when the phone asks so tracking continues with the screen off. While-in-use still records this shift with the app open.');
-        try {
-          const plugin = await loadJobGeofence();
-          if (plugin?.requestBackgroundAccess) {
-            void withDeadline(() => plugin.requestBackgroundAccess(), 8_000).then(result => {
-              if (isTimedOut(result)) {
-                setNotice('Shift started. The background location prompt timed out. Tracking continues while the app is open. To allow all the time: Settings, Apps, ITDG Dispatch, Permissions, Location.');
-              }
-            });
-          }
-        } catch (err) {
-          const detail = err instanceof Error ? err.message : 'unknown error';
-          setNotice(`Shift started, but background location was not requested (${detail}). Tracking continues while the app is open.`);
-        }
-      } else {
+      // Never blocked by location: at the shop and on time starts right away;
+      // anything else asks Start now / I started earlier.
+      const distanceM = shopNow
+        ? distanceMeters(located.fix.latitude, located.fix.longitude, shopNow.latitude, shopNow.longitude)
+        : null;
+      const atShop = shopNow != null && distanceM != null
+        && countsAsInside(distanceM, shopNow.radiusMeters, located.fix.accuracyM);
+      const late = lateRef.current.ready && isLateStart(Date.now(), lateRef.current);
+      pendingStartRef.current = { fix: located.fix, battery };
+      if (!startNeedsPrompt({ atShop, late })) {
         setNotice(null);
+        await commitStart({ mode: 'now' });
+        return;
       }
+      openPrompt(located.fix, battery, { offSite: !atShop, late, distanceM, locationProblem: null });
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'unknown error';
       setNotice(`Could not start the shift (${detail}). Try again.`);
@@ -456,7 +705,7 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
       startingRef.current = false;
       setStarting(false);
     }
-  }, [config, publish]);
+  }, [commitStart, locationFailed, openPrompt]);
 
   const requestStart = useCallback(() => {
     if (startingRef.current) return;
@@ -479,8 +728,9 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     const last = machineRef.current.lastSample;
     const fix: Fix = {
       at: Date.now(),
-      latitude: position?.latitude ?? last?.latitude ?? 0,
-      longitude: position?.longitude ?? last?.longitude ?? 0,
+      // NaN = unknown; the machine stores null rather than a 0,0 point.
+      latitude: position?.latitude ?? last?.latitude ?? NaN,
+      longitude: position?.longitude ?? last?.longitude ?? NaN,
       speedMps: position?.speedMps ?? 0,
       accuracyM: position?.accuracyM ?? null,
       batteryPercent: battery,
@@ -565,6 +815,93 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     };
   }, [applyFix, machine.shift?.id, machine.shift?.endedAt]);
 
+  // Another tab or window wrote the shift: use its copy so two copies never
+  // keep writing separate segments for one shift.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STATE_KEY) return;
+      const next = repairLocal(loadMachine());
+      machineRef.current = next;
+      setMachine(next);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Line the phone's copy up with the server on sign-in and whenever the app
+  // comes back to the front: shows Stop for a shift that is open on the
+  // server, and closes a shift the owner already ended.
+  useEffect(() => {
+    const uid = session?.user.id;
+    if (!uid) return undefined;
+    let cancelled = false;
+    const check = () => {
+      void (async () => {
+        try {
+          if (loadOutbox().length) {
+            const status = await syncOutbox();
+            if (status !== 'synced') return; // server copy would be stale
+          }
+          const local = machineRef.current;
+          // '*' so the late clock-in columns come along once they exist.
+          const openQuery = supabase
+            .from('shifts')
+            .select('*')
+            .eq('user_id', uid)
+            .is('ended_at', null)
+            .order('started_at', { ascending: false })
+            .limit(1);
+          const openRaced = await withDeadline(() => openQuery, 10_000);
+          if (cancelled || isTimedOut(openRaced) || isCancelled(openRaced) || openRaced.error) return;
+          const openShift = (openRaced.data?.[0] as ServerShiftRow | undefined) ?? null;
+
+          let localShiftRow: ServerShiftRow | null = null;
+          if (local.shift && !local.shift.endedAt) {
+            const own = supabase
+              .from('shifts')
+              .select('id, started_at, ended_at, end_reason')
+              .eq('id', local.shift.id)
+              .limit(1);
+            const ownRaced = await withDeadline(() => own, 10_000);
+            if (cancelled || isTimedOut(ownRaced) || isCancelled(ownRaced) || ownRaced.error) return;
+            localShiftRow = (ownRaced.data?.[0] as ServerShiftRow | undefined) ?? null;
+          }
+
+          let openSegments: ServerSegmentRow[] = [];
+          if (openShift && !(local.shift && !local.shift.endedAt)) {
+            const segQuery = supabase
+              .from('time_segments')
+              .select('*')
+              .eq('shift_id', openShift.id)
+              .order('started_at', { ascending: true });
+            const segRaced = await withDeadline(() => segQuery, 10_000);
+            if (cancelled || isTimedOut(segRaced) || isCancelled(segRaced) || segRaced.error) return;
+            openSegments = (segRaced.data ?? []) as ServerSegmentRow[];
+          }
+
+          if (cancelled || machineRef.current !== local) return; // moved on meanwhile
+          const next = reconcile(local, { localShiftRow, openShift, openSegments }, Date.now());
+          if (!next) return;
+          // Publishing closes any rows the server still has open.
+          publish(local, next);
+          if (next.shift && !next.shift.endedAt) setNotice('Picked up your open shift from the server.');
+          else setNotice('This shift was already clocked out.');
+        } catch (err) {
+          console.error('Shift check with the server failed:', err);
+        }
+      })();
+    };
+    check();
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', check);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', check);
+    };
+  }, [session?.user.id, publish]);
+
   useEffect(() => {
     const refresh = () => { void syncOutbox().then(setSyncStatus); };
     window.addEventListener('online', refresh);
@@ -643,6 +980,38 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     };
   }, [session?.user.id]);
 
+  // Late / off-site clock-in rules. A read that fails (columns not there yet)
+  // leaves them unconfirmed, so the phone offers Start now only.
+  useEffect(() => {
+    if (!session?.user.id) return undefined;
+    let cancelled = false;
+    const pullLateStart = () => {
+      void (async () => {
+        try {
+          const query = supabase
+            .from('payroll_settings')
+            .select('normal_start_time, late_grace_minutes, backdate_earliest_time')
+            .limit(1);
+          const raced = await withDeadline(() => query, 10_000);
+          if (isTimedOut(raced) || isCancelled(raced)) return;
+          const { data, error } = raced;
+          if (cancelled || error || !data?.length) return;
+          const next = lateStartFromSettingsRow(data[0] as Record<string, unknown>);
+          saveLateStart(next);
+          setLateStart(next);
+        } catch (err) {
+          console.error('Late clock-in setting load failed:', err);
+        }
+      })();
+    };
+    pullLateStart();
+    window.addEventListener('online', pullLateStart);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', pullLateStart);
+    };
+  }, [session?.user.id]);
+
   const saveShopAndSync = (next: ShopLocation) => {
     saveShop(next);
     setShop(next);
@@ -687,6 +1056,17 @@ export function useShiftTracker(jobs: Job[]): ShiftTracker {
     },
     clockOut: () => { void clockOut(); },
     starting,
+    lateStart,
+    startJobs,
+    startJobId,
+    setStartJobId,
+    startPrompt,
+    confirmStart: choice => { void commitStart(choice); },
+    dismissStartPrompt: () => {
+      pendingStartRef.current = null;
+      setStartPrompt(null);
+      setNotice('Start cancelled.');
+    },
   };
 }
 
