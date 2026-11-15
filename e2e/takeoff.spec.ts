@@ -33,7 +33,8 @@ test.describe('owner', () => {
     await page.locator('input[type="number"]').first().fill('4');
 
     await page.getByRole('button', { name: 'Print takeoff materials' }).click();
-    await expect(page.getByRole('heading', { name: 'Takeoff materials' })).toBeVisible();
+    await expect(page.getByRole('radio', { name: 'Both' })).toBeChecked();
+    await expect(page.getByRole('heading', { name: 'Takeoff materials & summary', exact: true })).toBeVisible();
     const sheet = page.locator('.takeoff-print-sheet');
     await expect(sheet).toContainText('ITDG Plumbing');
     await expect(sheet).toContainText('Mesa Rough Takeoff');
@@ -42,25 +43,46 @@ test.describe('owner', () => {
     await expect(sheet).toContainText('8 PVC DWV HXH 90 ELL');
     await expect(sheet).toContainText('PAGE 1 TOTAL');
     await expect(sheet).toContainText('TOTAL MATERIAL');
+    await expect(sheet).toContainText('Page 4 — Summary');
+    await expect(sheet).toContainText('Final Bid Waterfall');
+    await expect(sheet).toContainText('FINAL BID');
     await expect(sheet).not.toContainText('8 PVC DWV HXHXH COMB WYE');
     await mkdir('/opt/cursor/artifacts', { recursive: true });
     await sheet.screenshot({ path: `/opt/cursor/artifacts/takeoff-print-${info.project.name}.png` });
 
+    await page.getByRole('radio', { name: 'Summary (Page 4)' }).check();
+    await expect(page.getByRole('heading', { name: 'Takeoff summary', exact: true })).toBeVisible();
+    await expect(sheet).toContainText('ITDG Plumbing');
+    await expect(sheet).toContainText('Page 1 (H81 + I79)');
+    await expect(sheet).toContainText('BASE BID');
+    await expect(sheet).toContainText('FINAL BID');
+    await expect(sheet).not.toContainText('8 PVC DWV HXH 90 ELL');
+    await page.locator('.takeoff-print-summary').getByText('FINAL BID', { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `/opt/cursor/artifacts/takeoff-summary-print-${info.project.name}.png`,
+    });
+
+    await page.getByRole('radio', { name: 'Materials (Pages 1-3)' }).check();
+    await expect(page.getByRole('heading', { name: 'Takeoff materials', exact: true })).toBeVisible();
+    await expect(sheet).toContainText('8 PVC DWV HXH 90 ELL');
+    await expect(sheet).not.toContainText('FINAL BID');
+
+    await page.getByRole('radio', { name: 'Both' }).check();
     await page.evaluate(() => {
       (window as unknown as { __printed: number }).__printed = 0;
       window.print = () => {
         (window as unknown as { __printed: number }).__printed += 1;
       };
     });
-    await page.getByRole('button', { name: 'Print this materials list' }).click();
+    await page.getByRole('button', { name: 'Print this takeoff' }).click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __printed?: number }).__printed ?? 0)).toBe(1);
 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Save PDF' }).click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe('mesa-rough-takeoff-materials.pdf');
+    expect(download.suggestedFilename()).toBe('mesa-rough-takeoff-materials-summary.pdf');
     await page.getByRole('button', { name: 'Back to estimate' }).click();
-    await expect(page.getByRole('heading', { name: 'Takeoff materials' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Takeoff materials & summary', exact: true })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Save Bid' }).click();
     await expect(page.getByRole('button', { name: 'Delete saved takeoff' })).toBeVisible();
@@ -97,8 +119,10 @@ test.describe('owner', () => {
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(savedRow).toBeVisible();
     await page.getByRole('button', { name: 'Print materials for Second Takeoff' }).click();
-    await expect(page.getByRole('heading', { name: 'Takeoff materials' })).toBeVisible();
+    await expect(page.getByRole('radio', { name: 'Both' })).toBeChecked();
+    await expect(page.getByRole('heading', { name: 'Takeoff materials & summary', exact: true })).toBeVisible();
     await expect(page.locator('.takeoff-print-sheet')).toContainText('Second Takeoff');
+    await expect(page.locator('.takeoff-print-sheet')).toContainText('FINAL BID');
     await page.getByRole('button', { name: 'Back to estimate' }).click();
     await page.getByRole('button', { name: 'Delete Second Takeoff' }).click();
     await page.getByRole('button', { name: 'Delete takeoff' }).click();
