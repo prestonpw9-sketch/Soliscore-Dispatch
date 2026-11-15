@@ -3,6 +3,7 @@ import { money } from './calc.ts';
 import {
   collectTakeoffMaterials,
   formatQty,
+  TAKEOFF_PRINT_COMPANY,
   type MaterialKind,
   type MaterialLine,
   type TakeoffMaterialsSheet,
@@ -153,7 +154,7 @@ export function buildSheetPdf(sheet: TakeoffMaterialsSheet): jsPDF {
     y += height + gap;
   };
 
-  textBlock('SOLIDCORE PLUMBING', 14, 'bold', 2);
+  textBlock(TAKEOFF_PRINT_COMPANY, 14, 'bold', 2);
   textBlock('Takeoff materials', 12, 'bold', 8);
   textBlock(sheet.project, 12, 'bold', 2);
   if (sheet.customer) textBlock(`GC / Owner: ${sheet.customer}`, 10, 'normal', 2);

@@ -8,6 +8,7 @@ import {
   collectTakeoffMaterials,
   formatQty,
   materialsPdfFilename,
+  TAKEOFF_PRINT_COMPANY,
   type MaterialKind,
   type MaterialLine,
   type TakeoffMaterialsSheet,
@@ -115,7 +116,7 @@ export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps
 function MaterialsSheet({ sheet }: { sheet: TakeoffMaterialsSheet }) {
   return (
     <>
-      <p className="text-xs font-bold tracking-wide text-slate-500">SOLIDCORE PLUMBING</p>
+      <p className="text-xs font-bold tracking-wide text-slate-500">{TAKEOFF_PRINT_COMPANY}</p>
       <h1 id="takeoff-print-title" className="mt-1 text-2xl font-black text-slate-950">
         Takeoff materials
       </h1>

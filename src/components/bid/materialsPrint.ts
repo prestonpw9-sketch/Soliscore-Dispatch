@@ -14,6 +14,9 @@ import {
 } from './calc.ts';
 import type { BidDocument, FixtureRow, LineItem } from './types.ts';
 
+/** Company line on the takeoff materials print sheet and its PDF. */
+export const TAKEOFF_PRINT_COMPANY = 'ITDG Plumbing';
+
 export type TakeoffRole = 'owner' | 'office' | 'crew';
 
 /**

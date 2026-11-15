@@ -35,6 +35,7 @@ test.describe('owner', () => {
     await page.getByRole('button', { name: 'Print takeoff materials' }).click();
     await expect(page.getByRole('heading', { name: 'Takeoff materials' })).toBeVisible();
     const sheet = page.locator('.takeoff-print-sheet');
+    await expect(sheet).toContainText('ITDG Plumbing');
     await expect(sheet).toContainText('Mesa Rough Takeoff');
     await expect(sheet).toContainText('GC / Owner: Mesa Builder');
     await expect(sheet).toContainText('Nov 15, 2026');

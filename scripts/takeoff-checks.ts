@@ -11,6 +11,7 @@ import {
   formatTakeoffDate,
   interpretTakeoffDelete,
   materialsPdfFilename,
+  TAKEOFF_PRINT_COMPANY,
 } from '../src/components/bid/materialsPrint.ts';
 import type { BidDocument } from '../src/components/bid/types.ts';
 
@@ -121,6 +122,9 @@ const pdf = buildMaterialsPdf(doc);
 const bytes = Buffer.from(pdf.output('arraybuffer'));
 assert.equal(bytes.subarray(0, 5).toString('latin1'), '%PDF-');
 const source = bytes.toString('latin1');
+assert.equal(TAKEOFF_PRINT_COMPANY, 'ITDG Plumbing');
+assert.ok(source.includes('ITDG Plumbing'));
+assert.equal(source.includes('SOLIDCORE'), false);
 assert.ok(source.includes('Mesa Rough Takeoff'));
 assert.ok(source.includes('8 PVC DWV HXH 90 ELL'));
 assert.ok(source.includes('TOTAL MATERIAL'));
