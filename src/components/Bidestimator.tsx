@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Plus, Trash2, Save, FolderOpen, FileText, FilePlus,
-  BookOpen, Loader2, X,
+  BookOpen, Loader2, Printer, X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import ProposalModal from './proposal/ProposalModal';
 import ChangeOrderModal from './proposal/ChangeOrderModal';
+import DeleteTakeoffDialog from './bid/DeleteTakeoffDialog';
+import TakeoffPrintView from './bid/TakeoffPrintView';
+import { canMutateFullTakeoff, interpretTakeoffDelete } from './bid/materialsPrint';
 import type {
   BidDocument,
   FixtureRow,
@@ -78,7 +81,8 @@ const redBtn =
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function BidEstimator() {
-  const { isOwner } = useAuth();
+  const { isOwner, role } = useAuth();
+  const canDeleteTakeoff = canMutateFullTakeoff(role);
   const [activeTab, setActiveTab] = useState<TabType>('page1');
   const [doc, setDoc] = useState<BidDocument>(() => makeBlankDocument());
   const [dirty, setDirty] = useState(false);
@@ -90,9 +94,15 @@ export default function BidEstimator() {
   const [proposalOpen, setProposalOpen] = useState(false);
   const [changeOrderOpen, setChangeOrderOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  useBackHandler(pickerOpen, () => setPickerOpen(false));
   const [savedBids, setSavedBids] = useState<SavedBidRow[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [printDoc, setPrintDoc] = useState<BidDocument | null>(null);
+  useBackHandler(pickerOpen, () => setPickerOpen(false));
+  useBackHandler(printDoc != null, () => setPrintDoc(null));
+  useBackHandler(pendingDelete != null, () => { if (!deleting) setPendingDelete(null); });
   const skipDirtyRef = useRef(true); // ignore initial blank document as "dirty"
   const hydratedRef = useRef(false);
 
@@ -369,6 +379,55 @@ export default function BidEstimator() {
     setSaveError(null);
   }
 
+  function requestDelete(target: { id: string; name: string }) {
+    if (!canDeleteTakeoff) return;
+    setDeleteError(null);
+    setPendingDelete(target);
+  }
+
+  function confirmDelete() {
+    const target = pendingDelete;
+    if (!target || deleting) return;
+    if (!canDeleteTakeoff) {
+      setDeleteError('Only an owner can delete a saved takeoff.');
+      return;
+    }
+    void (async () => {
+      setDeleting(true);
+      setDeleteError(null);
+      try {
+        const { data, error } = await supabase
+          .from('project_bids')
+          .delete()
+          .eq('id', target.id)
+          .select('id');
+        const outcome = interpretTakeoffDelete(
+          error ? getErrorMessage(error, 'Could not delete that takeoff.') : null,
+          (data ?? []).map(row => String(row.id)),
+        );
+        if (outcome === 'failed') {
+          setDeleteError(getErrorMessage(error, 'Could not delete that takeoff.'));
+          return;
+        }
+        if (outcome === 'blocked') {
+          setDeleteError('That takeoff could not be deleted. Only an owner can remove a saved estimate, and it may already be gone.');
+          return;
+        }
+        setSavedBids(prev => prev.filter(row => row.id !== target.id));
+        setSaveSuccess(false);
+        if (doc.id === target.id) {
+          setDoc(current => (current.id === target.id ? { ...current, id: undefined } : current));
+          setStatusNote(`Deleted “${target.name}”. This sheet is still on screen as an unsaved copy.`);
+        } else {
+          setStatusNote(`Deleted “${target.name}”.`);
+        }
+        setPendingDelete(null);
+      } finally {
+        setDeleting(false);
+      }
+    })();
+  }
+
   function handleLoadPriceBook() {
     void (async () => {
       if (dirty && !window.confirm('Load the master price book? Unsaved changes will be replaced.')) {
@@ -502,6 +561,18 @@ export default function BidEstimator() {
               className="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50">
               <Save className="w-4 h-4" /> {saving ? 'Saving…' : dirty ? 'Save Bid' : 'Saved'}
             </button>
+            <button type="button" onClick={() => setPrintDoc(doc)}
+              aria-label="Print takeoff materials"
+              className="inline-flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+              <Printer className="w-4 h-4" /> Print
+            </button>
+            {canDeleteTakeoff && doc.id && (
+              <button type="button" onClick={() => requestDelete({ id: doc.id as string, name: doc.project || 'Untitled' })}
+                aria-label="Delete saved takeoff"
+                className="inline-flex items-center gap-1.5 border border-red-300 text-red-700 dark:border-red-800 dark:text-red-300 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors">
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
+            )}
             {isOwner && (
               <>
                 <button type="button" onClick={() => void handleOpenProposal()} disabled={saving}
@@ -625,32 +696,71 @@ export default function BidEstimator() {
                 const total = row.total_cost != null
                   ? `$${Number(row.total_cost).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
                   : '—';
+                const name = row.project_name || 'Untitled';
+                const loaded = rowToDoc(row);
                 return (
-                  <button
+                  <div
                     key={row.id}
-                    type="button"
-                    onClick={() => handleOpenSaved(row)}
-                    className="w-full text-left px-4 py-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 border border-transparent hover:border-slate-200 dark:hover:border-slate-700 mb-1.5 transition-colors"
+                    className="flex items-stretch gap-1 mb-1.5 rounded-xl border border-transparent hover:border-slate-200 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-bold text-slate-900 dark:text-white truncate">
-                          {row.project_name || 'Untitled'}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-0.5 truncate">
-                          {row.client_name ? `${row.client_name} · ` : ''}{when}
-                        </p>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenSaved(row)}
+                      className="flex-1 min-w-0 text-left px-4 py-3 rounded-xl"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 dark:text-white truncate">{name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5 truncate">
+                            {row.client_name ? `${row.client_name} · ` : ''}{when}
+                          </p>
+                        </div>
+                        <span className="text-sm font-semibold text-teal-700 dark:text-teal-300 tabular-nums shrink-0">
+                          {total}
+                        </span>
                       </div>
-                      <span className="text-sm font-semibold text-teal-700 dark:text-teal-300 tabular-nums shrink-0">
-                        {total}
-                      </span>
+                    </button>
+                    <div className="flex items-center gap-1 pr-2 shrink-0">
+                      {loaded && (
+                        <button
+                          type="button"
+                          aria-label={`Print materials for ${name}`}
+                          onClick={() => setPrintDoc(loaded)}
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                      )}
+                      {canDeleteTakeoff && !row.is_master && (
+                        <button
+                          type="button"
+                          aria-label={`Delete ${name}`}
+                          onClick={() => requestDelete({ id: row.id, name })}
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
           </div>
         </div>
+      )}
+
+      {pendingDelete && (
+        <DeleteTakeoffDialog
+          name={pendingDelete.name}
+          busy={deleting}
+          error={deleteError}
+          onCancel={() => { if (!deleting) setPendingDelete(null); }}
+          onConfirm={confirmDelete}
+        />
+      )}
+      {printDoc && (
+        <TakeoffPrintView doc={printDoc} onClose={() => setPrintDoc(null)} />
       )}
     </div>
   );

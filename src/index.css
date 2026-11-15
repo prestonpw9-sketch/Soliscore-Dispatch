@@ -163,3 +163,44 @@ html.truescale-active #root {
     opacity: 1;
   }
 }
+
+/* Full takeoff materials. :has() limits this to the print sheet so other
+   window.print callers (quick bid) keep their own layout. */
+@media print {
+  @page {
+    size: letter;
+    margin: 0.5in;
+  }
+
+  body:has(.takeoff-print-root) > *:not(.takeoff-print-root) {
+    display: none !important;
+  }
+
+  .takeoff-print-root {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    height: auto !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  .takeoff-print-toolbar {
+    display: none !important;
+  }
+
+  .takeoff-print-sheet {
+    box-shadow: none !important;
+    margin: 0 !important;
+    max-width: none !important;
+  }
+
+  .takeoff-print-sheet tr,
+  .takeoff-print-sheet h2 {
+    break-inside: avoid;
+  }
+
+  .takeoff-print-sheet thead {
+    display: table-header-group;
+  }
+}
