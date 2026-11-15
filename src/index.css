@@ -203,4 +203,8 @@ html.truescale-active #root {
   .takeoff-print-sheet thead {
     display: table-header-group;
   }
+
+  .takeoff-summary-break {
+    break-before: page;
+  }
 }

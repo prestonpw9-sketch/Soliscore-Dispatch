@@ -8,9 +8,13 @@ import { buildMaterialsPdf } from '../src/components/bid/materialsPdf.ts';
 import {
   canMutateFullTakeoff,
   collectTakeoffMaterials,
+  collectTakeoffSummary,
   formatTakeoffDate,
   interpretTakeoffDelete,
   materialsPdfFilename,
+  TAKEOFF_PRINT_COMPANY,
+  takeoffPdfFilename,
+  takeoffPrintTitle,
 } from '../src/components/bid/materialsPrint.ts';
 import type { BidDocument } from '../src/components/bid/types.ts';
 
@@ -65,16 +69,16 @@ const doc: BidDocument = {
     { id: 'fx0', qty: 0, item: 'UNUSED WC', fixture: 1, trim: 1, trim2: 1, misc: 1 },
   ],
   summary: {
-    laborHours: [{ label: 'Rough', hours: 0 }],
+    laborHours: [{ label: 'Rough', hours: 8 }],
     laborRate: 65,
     overheadPct: 0.1,
     profitPct: 0.1,
-    subs: [],
-    siteWorkLine: 0,
-    preLien: 0,
-    travel: 0,
-    engineering: 0,
-    salesTaxPct: 0,
+    subs: [{ label: 'Excavation', amount: 100 }],
+    siteWorkLine: 40,
+    preLien: 50,
+    travel: 20,
+    engineering: 30,
+    salesTaxPct: 0.087,
     taxBaseOverride: null,
     bidFactor: 1,
     notes: 'No street parking',
@@ -121,11 +125,70 @@ const pdf = buildMaterialsPdf(doc);
 const bytes = Buffer.from(pdf.output('arraybuffer'));
 assert.equal(bytes.subarray(0, 5).toString('latin1'), '%PDF-');
 const source = bytes.toString('latin1');
+assert.equal(TAKEOFF_PRINT_COMPANY, 'ITDG Plumbing');
+assert.equal(takeoffPrintTitle('materials'), 'Takeoff materials');
+assert.equal(takeoffPrintTitle('summary'), 'Takeoff summary');
+assert.equal(takeoffPrintTitle('both'), 'Takeoff materials & summary');
+assert.equal(materialsPdfFilename('Mesa Rough Takeoff'), 'mesa-rough-takeoff-materials.pdf');
+assert.equal(takeoffPdfFilename('Mesa Rough Takeoff', 'summary'), 'mesa-rough-takeoff-summary.pdf');
+assert.equal(takeoffPdfFilename('Mesa Rough Takeoff', 'both'), 'mesa-rough-takeoff-materials-summary.pdf');
+
+const totals = calcSummary(doc);
+const summary = collectTakeoffSummary(doc);
+const byKey = (key: string) => summary.waterfall.find(line => line.key === key);
+assert.equal(byKey('pg1')?.amount, totals.pg1);
+assert.equal(byKey('pg2')?.amount, totals.pg2);
+assert.equal(byKey('pg3')?.amount, totals.pg3);
+assert.equal(byKey('totalMaterial')?.amount, totals.totalMaterial);
+assert.equal(byKey('labor')?.label, 'Labor (8 hrs × $65)');
+assert.equal(byKey('labor')?.amount, totals.laborCost);
+assert.equal(byKey('i16')?.amount, totals.i16);
+assert.equal(byKey('overhead')?.label, 'Overhead (10%)');
+assert.equal(byKey('overhead')?.amount, totals.overhead);
+assert.equal(byKey('i18')?.label, 'Subtotal');
+assert.equal(byKey('i18')?.amount, totals.i18);
+assert.equal(byKey('profit')?.label, 'Profit (10%)');
+assert.equal(byKey('profit')?.amount, totals.profit);
+assert.equal(byKey('i20')?.amount, totals.i20);
+assert.notEqual(byKey('i18')?.amount, byKey('i20')?.amount);
+assert.equal(byKey('subs')?.label, 'Site work subs (×1.15)');
+assert.equal(byKey('subs')?.amount, totals.subsTotal);
+assert.equal(summary.subs[0]?.label, 'Excavation');
+assert.equal(summary.subs[0]?.amount, 100);
+assert.equal(summary.siteWorkLine, 40);
+assert.equal(byKey('base')?.amount, totals.baseBid);
+assert.equal(byKey('i28')?.amount, totals.i28);
+assert.equal(byKey('i31')?.amount, totals.i31);
+assert.equal(byKey('tax')?.label, 'Sales tax (8.7%)');
+assert.equal(byKey('tax')?.amount, totals.salesTax);
+assert.equal(summary.finalBid, totals.finalBid);
+assert.equal(summary.labor.find(line => line.key === 'hours')?.value, String(totals.laborHours));
+assert.equal(summary.notes, 'No street parking');
+
+assert.ok(source.includes('ITDG Plumbing'));
+assert.equal(source.includes('SOLIDCORE'), false);
+assert.ok(source.includes('Takeoff materials & summary'));
 assert.ok(source.includes('Mesa Rough Takeoff'));
 assert.ok(source.includes('8 PVC DWV HXH 90 ELL'));
 assert.ok(source.includes('TOTAL MATERIAL'));
+assert.ok(source.includes('FINAL BID'));
+assert.ok(source.includes('Page 4'));
 assert.ok(source.includes('No street parking'));
-assert.equal(pdf.getNumberOfPages() >= 1, true);
+assert.ok(source.includes(money(totals.finalBid)));
+assert.equal(pdf.getNumberOfPages() >= 2, true);
 assert.ok(source.includes(money(page1.lines[0].total)) || source.includes(money(page1.lines[0].total).replace('.', '')));
+
+const summaryPdf = Buffer.from(buildMaterialsPdf(doc, 'summary').output('arraybuffer')).toString('latin1');
+assert.ok(summaryPdf.includes('ITDG Plumbing'));
+assert.ok(summaryPdf.includes('Takeoff summary'));
+assert.ok(summaryPdf.includes('FINAL BID'));
+assert.ok(summaryPdf.includes('BASE BID'));
+assert.equal(summaryPdf.includes('8 PVC DWV HXH 90 ELL'), false);
+
+const materialsPdf = Buffer.from(buildMaterialsPdf(doc, 'materials').output('arraybuffer')).toString('latin1');
+assert.ok(materialsPdf.includes('Takeoff materials'));
+assert.equal(materialsPdf.includes('Takeoff materials & summary'), false);
+assert.ok(materialsPdf.includes('8 PVC DWV HXH 90 ELL'));
+assert.equal(materialsPdf.includes('FINAL BID'), false);
 
 console.log('takeoff checks passed');

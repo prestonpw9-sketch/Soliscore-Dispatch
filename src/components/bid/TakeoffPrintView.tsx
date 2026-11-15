@@ -6,11 +6,17 @@ import { downloadPdfFile, sharePdfFile } from './materialsFile';
 import { buildMaterialsPdf } from './materialsPdf';
 import {
   collectTakeoffMaterials,
+  collectTakeoffSummary,
   formatQty,
-  materialsPdfFilename,
+  TAKEOFF_PRINT_COMPANY,
+  TAKEOFF_PRINT_OPTIONS,
+  takeoffPdfFilename,
+  takeoffPrintTitle,
   type MaterialKind,
   type MaterialLine,
   type TakeoffMaterialsSheet,
+  type TakeoffPrintScope,
+  type TakeoffSummaryPrint,
 } from './materialsPrint';
 import type { BidDocument } from './types';
 import { isNativeDispatchApp } from '@/lib/geofence/nativeClient';
@@ -23,6 +29,11 @@ interface TakeoffPrintViewProps {
 
 export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps) {
   const sheet = collectTakeoffMaterials(doc);
+  const summary = collectTakeoffSummary(doc);
+  const [scope, setScope] = useState<TakeoffPrintScope>('both');
+  const title = takeoffPrintTitle(scope);
+  const showMaterials = scope !== 'summary';
+  const showSummary = scope !== 'materials';
   const native = isNativeDispatchApp();
   const [message, setMessage] = useState<string | null>(null);
   const [pdfLink, setPdfLink] = useState<{ url: string; filename: string } | null>(null);
@@ -30,7 +41,7 @@ export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps
 
   useEffect(() => {
     const previousTitle = document.title;
-    document.title = `Takeoff materials - ${sheet.project}`;
+    document.title = `${title} - ${sheet.project}`;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
@@ -39,7 +50,7 @@ export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps
       document.title = previousTitle;
       document.removeEventListener('keydown', onKey);
     };
-  }, [onClose, sheet.project]);
+  }, [onClose, sheet.project, title]);
 
   useEffect(() => {
     return () => {
@@ -48,8 +59,8 @@ export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps
   }, [pdfLink]);
 
   function savePdf() {
-    const filename = materialsPdfFilename(sheet.project);
-    const blob = buildMaterialsPdf(doc).output('blob');
+    const filename = takeoffPdfFilename(sheet.project, scope);
+    const blob = buildMaterialsPdf(doc, scope).output('blob');
     void (async () => {
       const shared = await sharePdfFile(blob, filename);
       if (shared === 'cancelled') return;
@@ -78,10 +89,25 @@ export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps
         >
           <X className="h-4 w-4" /> Back to estimate
         </button>
+        <fieldset className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-0 p-0">
+          <legend className="sr-only">What to print</legend>
+          {TAKEOFF_PRINT_OPTIONS.map(option => (
+            <label key={option.scope} className="inline-flex min-h-11 items-center gap-1.5 text-sm font-semibold text-slate-800">
+              <input
+                type="radio"
+                name="takeoff-print-scope"
+                value={option.scope}
+                checked={scope === option.scope}
+                onChange={() => setScope(option.scope)}
+              />
+              {option.label}
+            </label>
+          ))}
+        </fieldset>
         <button
           type="button"
           onClick={() => window.print()}
-          aria-label="Print this materials list"
+          aria-label="Print this takeoff"
           className="inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-black"
         >
           <Printer className="h-4 w-4" /> Print
@@ -105,7 +131,17 @@ export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps
         )}
       </div>
       <article className="takeoff-print-sheet mx-auto my-4 max-w-[8.5in] bg-white px-6 py-8 shadow-lg print:my-0 print:max-w-none print:px-0 print:py-0 print:shadow-none">
-        <MaterialsSheet sheet={sheet} />
+        <p className="text-xs font-bold tracking-wide text-slate-500">{TAKEOFF_PRINT_COMPANY}</p>
+        <h1 id="takeoff-print-title" className="mt-1 text-2xl font-black text-slate-950">{title}</h1>
+        <p className="mt-3 text-lg font-bold text-slate-950">{sheet.project}</p>
+        {sheet.customer && (
+          <p className="text-sm text-slate-800">GC / Owner: {sheet.customer}</p>
+        )}
+        <p className="text-sm text-slate-700">{sheet.dateLabel}</p>
+        {showMaterials && <MaterialsSheet sheet={sheet} />}
+        {showSummary && (
+          <SummarySheet summary={summary} breakBefore={showMaterials} />
+        )}
       </article>
     </div>,
     document.body,
@@ -115,15 +151,6 @@ export default function TakeoffPrintView({ doc, onClose }: TakeoffPrintViewProps
 function MaterialsSheet({ sheet }: { sheet: TakeoffMaterialsSheet }) {
   return (
     <>
-      <p className="text-xs font-bold tracking-wide text-slate-500">SOLIDCORE PLUMBING</p>
-      <h1 id="takeoff-print-title" className="mt-1 text-2xl font-black text-slate-950">
-        Takeoff materials
-      </h1>
-      <p className="mt-3 text-lg font-bold text-slate-950">{sheet.project}</p>
-      {sheet.customer && (
-        <p className="text-sm text-slate-800">GC / Owner: {sheet.customer}</p>
-      )}
-      <p className="text-sm text-slate-700">{sheet.dateLabel}</p>
       <p className="mt-3 text-xs text-slate-500">
         Quantities entered on the estimate. Blank price-book rows are left off. Totals include the same markups as the estimate sheet.
       </p>
@@ -157,13 +184,55 @@ function MaterialsSheet({ sheet }: { sheet: TakeoffMaterialsSheet }) {
           <AmountRow key={total.label} label={total.label} amount={total.amount} strong={total.strong} />
         ))}
       </section>
-      {sheet.notes && (
-        <section className="mt-6">
-          <h2 className="mb-1 text-base font-bold">Notes</h2>
-          <p className="whitespace-pre-wrap text-sm text-slate-800">{sheet.notes}</p>
-        </section>
-      )}
     </>
+  );
+}
+
+function SummarySheet({ summary, breakBefore }: { summary: TakeoffSummaryPrint; breakBefore: boolean }) {
+  return (
+    <section className={`takeoff-print-summary mt-8 ${breakBefore ? 'takeoff-summary-break' : ''}`}>
+      <h2 className="mb-3 text-base font-bold">Page 4 — Summary</h2>
+      <h3 className="mb-1 text-sm font-bold">Labor Hours</h3>
+      {summary.labor.map(line => (
+        <TextRow key={line.key} label={line.label} value={line.value} />
+      ))}
+      <h3 className="mb-1 mt-4 text-sm font-bold">Markups</h3>
+      {summary.markups.map(line => (
+        <TextRow key={line.key} label={line.label} value={line.value} />
+      ))}
+      <h3 className="mb-1 mt-4 text-sm font-bold">Site Work Subs (×1.15)</h3>
+      {summary.subs.map(line => (
+        <AmountRow key={line.key} label={line.label} amount={line.amount} />
+      ))}
+      <AmountRow label="Sitework line (direct)" amount={summary.siteWorkLine} />
+      <h3 className="mb-1 mt-4 text-sm font-bold">Adders</h3>
+      {summary.adders.map(line => (
+        <TextRow key={line.key} label={line.label} value={line.value} />
+      ))}
+      <h3 className="mb-1 mt-4 text-sm font-bold">Final Bid Waterfall</h3>
+      {summary.waterfall.map(line => (
+        <AmountRow key={line.key} label={line.label} amount={line.amount} strong={line.strong} />
+      ))}
+      <div className="mt-3 flex justify-between gap-4 border-t-2 border-slate-900 pt-2 text-lg font-black">
+        <span>FINAL BID</span>
+        <span className="tabular-nums">${money(summary.finalBid)}</span>
+      </div>
+      {summary.notes && (
+        <div className="mt-4">
+          <h3 className="mb-1 text-sm font-bold">Notes</h3>
+          <p className="whitespace-pre-wrap text-sm text-slate-800">{summary.notes}</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TextRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4 text-sm text-slate-700">
+      <span>{label}</span>
+      <span className="tabular-nums">{value}</span>
+    </div>
   );
 }
 

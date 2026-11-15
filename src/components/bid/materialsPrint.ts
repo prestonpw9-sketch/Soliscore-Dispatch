@@ -11,8 +11,12 @@ import {
   calcSummary,
   fixtureRowTotal,
   lineTotal,
+  money,
 } from './calc.ts';
 import type { BidDocument, FixtureRow, LineItem } from './types.ts';
+
+/** Company line on the takeoff materials print sheet and its PDF. */
+export const TAKEOFF_PRINT_COMPANY = 'ITDG Plumbing';
 
 export type TakeoffRole = 'owner' | 'office' | 'crew';
 
@@ -54,13 +58,132 @@ export function formatQty(n: number): string {
   return String(n);
 }
 
-export function materialsPdfFilename(project: string): string {
+export type TakeoffPrintScope = 'materials' | 'summary' | 'both';
+
+export const TAKEOFF_PRINT_OPTIONS: { scope: TakeoffPrintScope; label: string }[] = [
+  { scope: 'materials', label: 'Materials (Pages 1-3)' },
+  { scope: 'summary', label: 'Summary (Page 4)' },
+  { scope: 'both', label: 'Both' },
+];
+
+export function takeoffPrintTitle(scope: TakeoffPrintScope): string {
+  switch (scope) {
+    case 'materials':
+      return 'Takeoff materials';
+    case 'summary':
+      return 'Takeoff summary';
+    case 'both':
+      return 'Takeoff materials & summary';
+    default: {
+      const neverScope: never = scope;
+      return neverScope;
+    }
+  }
+}
+
+function projectSlug(project: string): string {
   const slug = project
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return `${slug || 'takeoff'}-materials.pdf`;
+  return slug || 'takeoff';
+}
+
+export function takeoffPdfFilename(project: string, scope: TakeoffPrintScope): string {
+  const suffix = scope === 'materials'
+    ? 'materials'
+    : scope === 'summary'
+      ? 'summary'
+      : 'materials-summary';
+  return `${projectSlug(project)}-${suffix}.pdf`;
+}
+
+export function materialsPdfFilename(project: string): string {
+  return takeoffPdfFilename(project, 'materials');
+}
+
+export interface SummaryTextLine {
+  key: string;
+  label: string;
+  value: string;
+}
+
+export interface SummaryAmountLine {
+  key: string;
+  label: string;
+  amount: number;
+  strong?: boolean;
+}
+
+/** Page 4 as the estimate sheet shows it. Dollar totals come from calcSummary. */
+export interface TakeoffSummaryPrint {
+  labor: SummaryTextLine[];
+  markups: SummaryTextLine[];
+  subs: SummaryAmountLine[];
+  siteWorkLine: number;
+  adders: SummaryTextLine[];
+  waterfall: SummaryAmountLine[];
+  finalBid: number;
+  notes: string;
+}
+
+export function collectTakeoffSummary(doc: BidDocument): TakeoffSummaryPrint {
+  const inputs = doc.summary;
+  const totals = calcSummary(doc);
+  return {
+    labor: [
+      ...inputs.laborHours.map((hour, index) => ({
+        key: `hour-${index}`,
+        label: hour.label,
+        value: formatQty(hour.hours),
+      })),
+      { key: 'rate', label: 'Rate ($/hr)', value: formatQty(inputs.laborRate) },
+      { key: 'hours', label: 'Total hours', value: formatQty(totals.laborHours) },
+      { key: 'labor-cost', label: 'Labor cost', value: `$${money(totals.laborCost)}` },
+    ],
+    markups: [
+      { key: 'overhead-pct', label: 'Overhead (decimal)', value: formatQty(inputs.overheadPct) },
+      { key: 'profit-pct', label: 'Profit (decimal)', value: formatQty(inputs.profitPct) },
+    ],
+    subs: inputs.subs.map((sub, index) => ({
+      key: `sub-${index}`,
+      label: sub.label,
+      amount: sub.amount,
+    })),
+    siteWorkLine: inputs.siteWorkLine,
+    adders: [
+      { key: 'prelien', label: 'Pre-lien', value: `$${money(inputs.preLien)}` },
+      { key: 'travel', label: 'Travel', value: `$${money(inputs.travel)}` },
+      { key: 'engineering', label: 'Engineering', value: `$${money(inputs.engineering)}` },
+      { key: 'tax-rate', label: 'Sales tax rate (decimal)', value: formatQty(inputs.salesTaxPct) },
+      {
+        key: 'tax-base',
+        label: 'Tax base override (blank = material)',
+        value: inputs.taxBaseOverride == null ? 'material' : `$${money(inputs.taxBaseOverride)}`,
+      },
+      { key: 'factor', label: 'Bid factor (÷, default 1)', value: formatQty(inputs.bidFactor) },
+    ],
+    waterfall: [
+      { key: 'pg1', label: 'Page 1 (H81 + I79)', amount: totals.pg1 },
+      { key: 'pg2', label: 'Page 2 (F74)', amount: totals.pg2 },
+      { key: 'pg3', label: 'Page 3 (P58)', amount: totals.pg3 },
+      { key: 'totalMaterial', label: 'TOTAL MATERIAL', amount: totals.totalMaterial, strong: true },
+      { key: 'labor', label: `Labor (${totals.laborHours} hrs × $${inputs.laborRate})`, amount: totals.laborCost },
+      { key: 'i16', label: 'Material + Labor', amount: totals.i16 },
+      { key: 'overhead', label: `Overhead (${(inputs.overheadPct * 100).toFixed(0)}%)`, amount: totals.overhead },
+      { key: 'i18', label: 'Subtotal', amount: totals.i18 },
+      { key: 'profit', label: `Profit (${(inputs.profitPct * 100).toFixed(0)}%)`, amount: totals.profit },
+      { key: 'i20', label: 'Subtotal', amount: totals.i20 },
+      { key: 'subs', label: 'Site work subs (×1.15)', amount: totals.subsTotal },
+      { key: 'base', label: 'BASE BID', amount: totals.baseBid, strong: true },
+      { key: 'i28', label: '+ Pre-lien', amount: totals.i28 },
+      { key: 'i31', label: '+ Travel + Engineering', amount: totals.i31 },
+      { key: 'tax', label: `Sales tax (${(inputs.salesTaxPct * 100).toFixed(1)}%)`, amount: totals.salesTax },
+    ],
+    finalBid: totals.finalBid,
+    notes: (inputs.notes ?? '').trim(),
+  };
 }
 
 export type MaterialKind = 'material' | 'pipe' | 'fixture';

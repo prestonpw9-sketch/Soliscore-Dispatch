@@ -2,10 +2,15 @@ import { jsPDF } from 'jspdf';
 import { money } from './calc.ts';
 import {
   collectTakeoffMaterials,
+  collectTakeoffSummary,
   formatQty,
+  TAKEOFF_PRINT_COMPANY,
+  takeoffPrintTitle,
   type MaterialKind,
   type MaterialLine,
   type TakeoffMaterialsSheet,
+  type TakeoffPrintScope,
+  type TakeoffSummaryPrint,
 } from './materialsPrint.ts';
 import type { BidDocument } from './types.ts';
 
@@ -111,18 +116,29 @@ function cellText(line: MaterialLine, key: CellKey): string {
 function pdfText(value: string): string {
   return value
     .replace(/×/g, 'x')
+    .replace(/÷/g, '/')
     .replace(/[—–]/g, '-')
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'");
 }
 
-export function buildMaterialsPdf(doc: BidDocument): jsPDF {
-  return buildSheetPdf(collectTakeoffMaterials(doc));
+export function buildMaterialsPdf(doc: BidDocument, scope: TakeoffPrintScope = 'both'): jsPDF {
+  return buildSheetPdf(
+    collectTakeoffMaterials(doc),
+    scope === 'materials' ? null : collectTakeoffSummary(doc),
+    takeoffPrintTitle(scope),
+    scope !== 'summary',
+  );
 }
 
-export function buildSheetPdf(sheet: TakeoffMaterialsSheet): jsPDF {
+export function buildSheetPdf(
+  sheet: TakeoffMaterialsSheet,
+  summary: TakeoffSummaryPrint | null,
+  title: string,
+  includeMaterials: boolean,
+): jsPDF {
   const pdf = new jsPDF({ unit: 'pt', format: 'letter' });
-  pdf.setProperties({ title: `Takeoff materials - ${pdfText(sheet.project)}` });
+  pdf.setProperties({ title: `${title} - ${pdfText(sheet.project)}` });
   let y = MARGIN;
 
   const newPage = () => {
@@ -131,7 +147,7 @@ export function buildSheetPdf(sheet: TakeoffMaterialsSheet): jsPDF {
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(8);
     pdf.setTextColor(90);
-    pdf.text(pdfText(`${sheet.project} - materials`), MARGIN, y);
+    pdf.text(pdfText(`${sheet.project} - ${title}`), MARGIN, y);
     y += 16;
     pdf.setTextColor(0);
   };
@@ -153,41 +169,45 @@ export function buildSheetPdf(sheet: TakeoffMaterialsSheet): jsPDF {
     y += height + gap;
   };
 
-  textBlock('SOLIDCORE PLUMBING', 14, 'bold', 2);
-  textBlock('Takeoff materials', 12, 'bold', 8);
+  textBlock(TAKEOFF_PRINT_COMPANY, 14, 'bold', 2);
+  textBlock(title, 12, 'bold', 8);
   textBlock(sheet.project, 12, 'bold', 2);
   if (sheet.customer) textBlock(`GC / Owner: ${sheet.customer}`, 10, 'normal', 2);
   textBlock(sheet.dateLabel, 10, 'normal', 8);
-  textBlock(
-    'Quantities entered on the estimate. Blank price-book rows are left off. Totals include the same markups as the estimate sheet.',
-    8,
-    'normal',
-    12,
-  );
 
-  if (sheet.sections.length === 0) {
-    textBlock('No material quantities on this takeoff yet.', 11, 'bold', 10);
-  }
-
-  for (const section of sheet.sections) {
-    textBlock(section.title, 11, 'bold', 4);
-    drawTable(pdf, section.kind, section.lines, ensure, () => y, next => { y = next; });
-    for (const adjustment of section.adjustments) {
-      drawAmountRow(pdf, adjustment.label, money(adjustment.amount), false, ensure, () => y, next => { y = next; });
+  if (includeMaterials) {
+    textBlock(
+      'Quantities entered on the estimate. Blank price-book rows are left off. Totals include the same markups as the estimate sheet.',
+      8,
+      'normal',
+      12,
+    );
+    if (sheet.sections.length === 0) {
+      textBlock('No material quantities on this takeoff yet.', 11, 'bold', 10);
     }
-    drawAmountRow(pdf, section.totalLabel, money(section.total), true, ensure, () => y, next => { y = next; });
-    y += 8;
+    for (const section of sheet.sections) {
+      textBlock(section.title, 11, 'bold', 4);
+      drawTable(pdf, section.kind, section.lines, ensure, () => y, next => { y = next; });
+      for (const adjustment of section.adjustments) {
+        drawAmountRow(pdf, adjustment.label, money(adjustment.amount), false, ensure, () => y, next => { y = next; });
+      }
+      drawAmountRow(pdf, section.totalLabel, money(section.total), true, ensure, () => y, next => { y = next; });
+      y += 8;
+    }
+    textBlock('Material totals', 11, 'bold', 4);
+    for (const total of sheet.totals) {
+      drawAmountRow(pdf, total.label, money(total.amount), total.strong, ensure, () => y, next => { y = next; });
+    }
   }
 
-  textBlock('Material totals', 11, 'bold', 4);
-  for (const total of sheet.totals) {
-    drawAmountRow(pdf, total.label, money(total.amount), total.strong, ensure, () => y, next => { y = next; });
-  }
-
-  if (sheet.notes) {
-    y += 8;
-    textBlock('Notes', 11, 'bold', 2);
-    textBlock(sheet.notes, 9, 'normal', 4);
+  if (summary) {
+    if (includeMaterials) {
+      pdf.addPage();
+      y = MARGIN;
+      textBlock(TAKEOFF_PRINT_COMPANY, 14, 'bold', 2);
+      textBlock(sheet.project, 11, 'bold', 8);
+    }
+    drawSummary(pdf, summary, textBlock, ensure, () => y, next => { y = next; });
   }
 
   const pages = pdf.getNumberOfPages();
@@ -249,6 +269,36 @@ function drawCells(
     x += col.width;
   });
   setY(y + rowH);
+}
+
+function drawSummary(
+  pdf: jsPDF,
+  summary: TakeoffSummaryPrint,
+  textBlock: (text: string, size: number, style: 'normal' | 'bold', gap: number) => void,
+  ensure: (height: number) => void,
+  getY: () => number,
+  setY: (y: number) => void,
+) {
+  const line = (label: string, value: string, strong = false) => {
+    drawAmountRow(pdf, label, value, strong, ensure, getY, setY);
+  };
+  textBlock('Page 4 — Summary', 12, 'bold', 6);
+  textBlock('Labor Hours', 11, 'bold', 3);
+  for (const item of summary.labor) line(item.label, item.value);
+  textBlock('Markups', 11, 'bold', 3);
+  for (const item of summary.markups) line(item.label, item.value);
+  textBlock('Site Work Subs (×1.15)', 11, 'bold', 3);
+  for (const item of summary.subs) line(item.label, `$${money(item.amount)}`);
+  line('Sitework line (direct)', `$${money(summary.siteWorkLine)}`);
+  textBlock('Adders', 11, 'bold', 3);
+  for (const item of summary.adders) line(item.label, item.value);
+  textBlock('Final Bid Waterfall', 11, 'bold', 4);
+  for (const item of summary.waterfall) line(item.label, `$${money(item.amount)}`, item.strong === true);
+  line('FINAL BID', `$${money(summary.finalBid)}`, true);
+  if (summary.notes) {
+    textBlock('Notes', 11, 'bold', 2);
+    textBlock(summary.notes, 9, 'normal', 4);
+  }
 }
 
 function drawAmountRow(
