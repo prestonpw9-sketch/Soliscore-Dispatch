@@ -7,7 +7,7 @@ import type {
   LineItem,
   Page2Section,
   SummaryInputs,
-} from './types';
+} from './types.ts';
 
 export function lineTotal(l: LineItem): number {
   return l.qty * l.price * l.mult;
