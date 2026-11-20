@@ -13,6 +13,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { formatEmergencyPageMessage, loadCrewDirectory, notifyCrew } from "https://cdn.jsdelivr.net/gh/prestonpw9-sketch/Soliscore-Dispatch@8cbab1d6a7eb2f8b17f16e3350dd8df69deccbeb/supabase/functions/_shared/twilio.ts";
 import { phonesMatch } from "https://cdn.jsdelivr.net/gh/prestonpw9-sketch/Soliscore-Dispatch@8cbab1d6a7eb2f8b17f16e3350dd8df69deccbeb/supabase/functions/_shared/phone.ts";
 import { shouldSkipSuperintendentAi } from "../_shared/crewInbound.ts";
+import { shouldSuppressReactionReply } from "../_shared/smsReaction.ts";
 import {
   formatBoardSpan,
   phoenixNowLabel,
@@ -129,6 +130,12 @@ export async function handleInboundSms(req: Request, deps: SmsDeps): Promise<Res
         console.log("crew inbound — skipping superintendent job AI", { name: crewSender.name, onCall: crewSender.emergency_contact });
         return emptyTwiml();
       }
+    }
+    // Log tapbacks / reactions from anyone, and short acks from crew, but do not auto-reply.
+    if (shouldSuppressReactionReply(incomingMessage, Boolean(crewSender))) {
+      if (incomingMessage) await supabase.from("dispatch_messages").insert([{ phone_number: phoneNumber, message: incomingMessage, direction: "inbound" }]);
+      console.log("inbound reaction/ack — skipping superintendent job AI", { isDirectoryCrew: Boolean(crewSender) });
+      return emptyTwiml();
     }
     const { data: previousMessages } = await supabase.from("dispatch_messages").select("message, direction").eq("phone_number", phoneNumber).order("created_at", { ascending: false }).limit(6);
     const history = (previousMessages || []).reverse().map((row: { direction: string; message: string }) => ({ role: row.direction === "inbound" ? "user" : "assistant", content: row.message }));

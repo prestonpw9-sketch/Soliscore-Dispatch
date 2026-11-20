@@ -20,7 +20,7 @@
     "test:late-clockin": "node --experimental-strip-types scripts/late-clockin-checks.ts",
     "test:reminder": "node --experimental-strip-types scripts/clock-in-reminder-checks.ts",
     "test:sms-schedule": "node --experimental-strip-types scripts/sms-schedule-checks.ts",
-    "test:sms-deno": "deno test --allow-env --allow-read supabase/functions/super-processor/"
+    "test:sms-deno": "deno test --allow-env --allow-read supabase/functions/super-processor/ supabase/functions/_shared/smsReaction.test.ts"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",
