@@ -31,7 +31,10 @@ function seed(extraJobs: any[] = []) {
       { id: "t3", job_id: 105, start_date: "2026-11-20", end_date: "2026-11-20" },
       { id: "t9", job_id: 90, start_date: "2026-11-18", end_date: "2026-11-19" },
     ],
-    technicians: [{ id: "tech-1", name: "On Call Ollie", role: "plumber", phone: "+15205550101", emergency_contact: true }],
+    technicians: [
+      { id: "tech-1", name: "On Call Ollie", role: "plumber", phone: "+15205550101", emergency_contact: true },
+      { id: "tech-2", name: "Crew Chris", role: "plumber", phone: "+15205550102", emergency_contact: false },
+    ],
     dispatch_messages: [],
     dispatch_schedule_alerts: [],
     sms_opt_outs: [],
@@ -276,4 +279,60 @@ Deno.test("OpenAI error reply unchanged", async () => {
   const db = seed();
   const r = await run(db, KACHINA_TEXT, { error: { message: "rate limited" } });
   assertEquals(r.msg, "System Offline: rate limited");
+});
+
+const CREW = "+15205550102";
+const CREW_THUMBS_UP =
+  "\u200A\u200B👍\u200B to “\u200ATomorrow 11/19/2026 new hours winter hours in effect 7am to 3:30pm back to 5 day's a week eight hour day's\u200A”\u200A";
+
+Deno.test("crew tapback is logged and gets no AI reply", async () => {
+  const db = seed();
+  const r = await run(db, CREW_THUMBS_UP, { content: "Got it, noted the new winter hours." }, CREW);
+  assertEquals(r.msg, null);
+  assertStringIncludes(r.xml, "<Response></Response>");
+  assertEquals(r.ai.calls.length, 0);
+  const msgs = db.table("dispatch_messages");
+  assertEquals(msgs.length, 1);
+  assertEquals(msgs[0].direction, "inbound");
+  assertEquals(msgs[0].phone_number, CREW);
+  assertEquals(msgs[0].message, CREW_THUMBS_UP);
+});
+
+Deno.test("tapback from a non-crew number is logged and gets no AI reply", async () => {
+  const db = seed();
+  const r = await run(db, 'Liked "Tomorrow 11/19/2026 new hours"', { content: "Got it, noted the new winter hours." });
+  assertEquals(r.msg, null);
+  assertStringIncludes(r.xml, "<Response></Response>");
+  assertEquals(r.ai.calls.length, 0);
+  assertEquals(db.table("dispatch_messages").map((m) => m.direction), ["inbound"]);
+});
+
+Deno.test("crew short acknowledgement is logged and gets no AI reply", async () => {
+  const db = seed();
+  const r = await run(db, "thanks", { content: "You're welcome — anything else?" }, CREW);
+  assertEquals(r.msg, null);
+  assertEquals(r.ai.calls.length, 0);
+  assertEquals(db.table("dispatch_messages").map((m) => m.direction), ["inbound"]);
+});
+
+Deno.test("customer short acknowledgement still reaches the AI", async () => {
+  const db = seed();
+  const r = await run(db, "thanks", { content: "Happy to help. If you have a plumbing request, let me know." });
+  assertEquals(r.msg, "Happy to help. If you have a plumbing request, let me know.");
+  assertEquals(r.ai.calls.length, 1);
+});
+
+Deno.test("real question from non-on-call crew still reaches the AI", async () => {
+  const db = seed();
+  const r = await run(db, "Need a toilet at lot 12 Stone Canyon tomorrow", { content: "I need a bit more detail before I can put that on the board." }, CREW);
+  assertEquals(r.msg, "I need a bit more detail before I can put that on the board.");
+  assertEquals(r.ai.calls.length, 1);
+  assertEquals(db.table("dispatch_messages").filter((m) => m.direction === "inbound").length, 1);
+});
+
+Deno.test("STOP still wins over a message that is also an acknowledgement shape", async () => {
+  const db = seed();
+  const r = await run(db, "STOP", { content: "should not be called" }, CREW);
+  assertStringIncludes(r.msg!, "You are unsubscribed");
+  assertEquals(r.ai.calls.length, 0);
 });
